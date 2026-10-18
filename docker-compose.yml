@@ -1,0 +1,28 @@
+# docker compose up --build   →   http://localhost:9988
+services:
+  havre:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      HAVRE_BIND: 0.0.0.0:8080
+      HAVRE_WEB_DIR: /srv/havre/web
+      HAVRE_DATA_DIR: /srv/havre/data
+      # Your time zone: nightly backups run at their time in it (Settings › Backups).
+      TZ: ${TZ:-Europe/Paris}
+    volumes:
+      # Havre's local copy of your mailbox. Survives rebuilds and restarts.
+      - havre-data:/srv/havre/data
+      # Backups land in /srv/havre/data/backups, on the same disk. To keep them
+      # elsewhere (a NAS, another disk), mount that folder there, e.g.:
+      # - /mnt/nas/havre-backups:/srv/havre/data/backups
+      # Claude Code's sign-in (Settings › AI), kept across rebuilds.
+      - havre-claude:/home/havre
+    ports:
+      - "9988:8080"
+    restart: unless-stopped
+
+volumes:
+  havre-data:
+  havre-claude:

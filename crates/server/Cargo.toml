@@ -1,0 +1,24 @@
+[package]
+name = "havre-server"
+description = "Havre's HTTP server: JSON API + serves the web UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "havre"
+path = "src/main.rs"
+
+[dependencies]
+havre-core.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+dotenvy.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

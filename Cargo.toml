@@ -1,0 +1,65 @@
+# Havre — Cargo workspace.
+# Each folder in `crates/` is a separate crate (a Rust package).
+# Shared dependency versions live here so every crate uses the same ones.
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/server", "crates/cli"]
+# Havre Desktop is a workspace of its own (it needs the system's web view).
+exclude = ["desktop/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/maelbel/havre"
+
+[workspace.dependencies]
+havre-core = { path = "crates/core" }
+
+# Async runtime
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "process", "io-util"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+
+# Mail
+async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
+mail-parser = "0.11"
+utf7-imap = "0.3"        # folder names use "modified UTF-7" (RFC 3501)
+ammonia = "4"            # HTML sanitizer for email bodies
+
+# Local storage: SQLite, one file, nothing to install.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+unicode-normalization = "0.1"   # "Réunion" and "reunion" match the same search
+
+# HTTP client for "Sign in with Microsoft" (OAuth). rustls + ring, like IMAP.
+sha2 = "0.10"
+argon2 = "0.5"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+icalendar = { version = "0.17", features = ["parser", "recurrence"] }
+roxmltree = "0.21"
+lettre = { version = "0.11", default-features = false }
+hickory-resolver = "0.24"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+base64 = "0.22"
+
+# Encrypting stored mail passwords
+chacha20poly1305 = "0.10"
+hex = "0.4"
+
+# TLS — `ring` backend only, so it builds on Windows without extra tools (no cmake/nasm).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+webpki-roots = "1"
+
+# Web server
+axum = "0.8"
+tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+
+# Serialization, errors, config, logs
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }

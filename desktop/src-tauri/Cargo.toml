@@ -1,0 +1,44 @@
+# Havre Desktop — a window onto your Havre server (Tauri 2).
+#
+# Its own workspace on purpose: building it needs the system's web view
+# (WebView2 on Windows, WebKitGTK on Linux), which the server doesn't. So
+# `cargo build` at the repository root never compiles it; build it from
+# `desktop/` with `pnpm tauri build` (see desktop/README.md).
+[workspace]
+
+[package]
+name = "havre-desktop"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Havre Desktop"
+publish = false
+
+[lib]
+# Tauri's convention: the app is a library (`run()`), main.rs only calls it.
+name = "havre_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# Plugins: each is a small, separately-audited piece of Tauri.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] } # one window, links reach it
+tauri-plugin-deep-link = "2"        # mailto: links
+tauri-plugin-notification = "2"     # "New mail from Claire"
+tauri-plugin-autostart = "2"        # "Open at login"
+tauri-plugin-window-state = "2"     # remembers the window's size and place
+tauri-plugin-opener = "2"           # opens other sites in your browser
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+# Checking that an address really is a Havre server (rustls: no OpenSSL to install).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+[profile.release]
+# A smaller app: one codegen unit, link-time optimization, no debug symbols.
+codegen-units = 1
+lto = true
+strip = true

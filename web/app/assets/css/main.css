@@ -1,0 +1,170 @@
+/*
+ * Havre design tokens — the same values as the mockup.
+ * Dark is the default; `<html data-theme="light">` switches to light.
+ * Every component uses these variables, never raw colors.
+ */
+:root {
+  --bg: #121210;
+  --panel: #171714;
+  --raise: #1f1e1a;
+  --line: #292823;
+  --line2: #36342e;
+  --text: #ede9df;
+  --muted: #a6a194;
+  --faint: #8c887c;
+  --accent: #e3bc6a;
+  --on-accent: #1a1408;
+  --sel: #24231e;
+  --hover: #1d1c18;
+  --ok: #9cc59a;
+  --danger: #e0a27a;
+  --c-work: #86a9d1;
+  --c-personal: #a9c79c;
+  --c-lyon: #e3bc6a;
+  --c-hol: #c99ab0;
+
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+  --font-serif: 'Newsreader Variable', Georgia, serif;
+
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg: #f3f1ea;
+  --panel: #faf9f5;
+  --raise: #ffffff;
+  --line: #e3dfd3;
+  --line2: #d6d1c3;
+  --text: #1c1b17;
+  --muted: #5d5950;
+  --faint: #6f6b61;
+  --accent: #8c5e0e;
+  --on-accent: #ffffff;
+  --sel: #ece8dc;
+  --hover: #f1eee6;
+  --ok: #3f7a3d;
+  --danger: #9a4a1c;
+  --c-work: #3e6a9e;
+  --c-personal: #4f7c43;
+  --c-lyon: #9a6a12;
+  --c-hol: #9a5675;
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#__nuxt {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Small shared helpers */
+.mono {
+  font-family: var(--font-mono);
+}
+
+.serif {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 9px;
+  border: 1px solid var(--line2);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-decoration: none;
+}
+.btn:hover {
+  background: var(--hover);
+}
+.btn.small {
+  height: 30px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+.btn-primary {
+  border: 0;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 500;
+}
+.btn-primary:hover {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}

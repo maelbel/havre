@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect to your Havre</title>
+<link rel="stylesheet" href="connect.css">
+<script src="connect.js" defer></script>
+</head>
+<body>
+<main>
+  <div class="logo" role="img" aria-label="Havre">
+    <svg aria-hidden="true" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 15v-4.5a5.5 5.5 0 0 1 11 0V15"/><path d="M3.5 19c1.5-1 2.75-1 4.25 0s2.75 1 4.25 0 2.75-1 4.25 0 2.75 1 4.25 0"/></svg>
+  </div>
+  <p class="eyebrow">Havre Desktop</p>
+  <h1>Connect to your Havre</h1>
+  <p class="lead">Havre runs on your server; this app opens it in its own window, with notifications and a tray icon. Your mail stays on the server.</p>
+  <form id="form" novalidate>
+    <label for="address">Your Havre’s address</label>
+    <input id="address" name="address" type="text" inputmode="url" autocomplete="url" spellcheck="false"
+      placeholder="havre.home.lan:8080" required>
+    <p id="error" class="error" role="alert" hidden></p>
+    <button id="connect" type="submit">Connect</button>
+  </form>
+  <p class="hint">The address you open Havre with in a browser — for example <code>http://192.168.1.20:8080</code>, or <code>http://localhost:9988</code> with Docker on this computer.</p>
+</main>
+</body>
+</html>

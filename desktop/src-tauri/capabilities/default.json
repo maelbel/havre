@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "connect-page",
+  "description": "The bundled \"Connect to your Havre\" page. The server's own pages get their (smaller) set at run time: see `server_capability` in src/lib.rs.",
+  "windows": ["main"],
+  "local": true,
+  "permissions": ["core:default", "allow-connect", "allow-desktop-info"]
+}

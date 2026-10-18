@@ -1,0 +1,9 @@
+# Keep the build context small and avoid copying host-built files
+# (e.g. Windows node_modules) into the Linux image.
+target/
+web/node_modules/
+web/.nuxt/
+web/.output/
+.env
+.git/
+data/

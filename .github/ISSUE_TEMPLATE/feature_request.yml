@@ -1,0 +1,34 @@
+name: Feature request
+description: An idea to make Havre better.
+title: "[Idea]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would it solve?
+      description: Describe the situation, not the solution yet — e.g. "I lose track of meetings that repeat every two weeks".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Mail, Agenda, People, Today, Tasks, Notes, Files, AI, Ctrl+K, Settings, Havre Desktop, Docker / install, A new app, Other]
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Other apps that do it, workarounds you use today.
+  - type: checkboxes
+    id: roadmap
+    attributes:
+      label: Roadmap
+      options:
+        - label: I checked docs/ROADMAP.md and it isn't already planned.

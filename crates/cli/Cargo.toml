@@ -1,0 +1,18 @@
+[package]
+name = "havre-cli"
+description = "Command-line tool to try Havre's core without the UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "havre-cli"
+path = "src/main.rs"
+
+[dependencies]
+havre-core.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+dotenvy.workspace = true
+tracing-subscriber.workspace = true

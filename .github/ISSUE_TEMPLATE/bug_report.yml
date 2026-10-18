@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in Havre doesn't work as it should.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. **Security problems go through a private report instead** (see SECURITY.md).
+        Please remove any personal data (email addresses, message contents, passwords, tokens) from what you paste.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Mail
+        2. Select two messages
+        3. Press E
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Mail, Agenda, People, Today, Tasks, Notes, Files, AI, Ctrl+K, Settings, Havre Desktop, Docker / install, Other]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Havre version or commit
+      description: Shown in the App library's status card, or `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run Havre?
+      options: [Docker, From source (cargo run), Havre Desktop, Other]
+  - type: input
+    id: provider
+    attributes:
+      label: Mail / calendar provider (if it matters)
+      placeholder: e.g. Microsoft 365, Gmail, Fastmail (IMAP), Nextcloud (CalDAV)
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and system
+      placeholder: e.g. Firefox 142 on Windows 11
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Server logs (`RUST_LOG=havre=debug`) or the browser console. No passwords or tokens.
+      render: shell
