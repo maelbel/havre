@@ -80,10 +80,14 @@ function statusText(a: Account) {
               Havre keeps a copy of each mailbox on this server. Passwords and sign-ins are stored encrypted.
             </p>
           </div>
-          <button v-if="!demo && editing !== 'new'" type="button" class="btn btn-primary" @click="editing = 'new'">
-            <HIcon name="plus" :size="15" :stroke-width="2" />
+          <UButton
+            v-if="!demo && editing !== 'new'"
+            icon="i-havre-plus"
+            type="button"
+            @click="editing = 'new'"
+          >
             Add account
-          </button>
+          </UButton>
         </div>
 
         <p v-if="demo" class="notice">
@@ -132,25 +136,35 @@ function statusText(a: Account) {
               </div>
             </div>
             <div v-if="!demo" class="buttons">
-              <button
+              <UButton
                 v-if="a.auth !== 'password' && needsReconnect(a) && reconnecting !== a.id"
+                size="sm"
                 type="button"
-                class="btn btn-primary small"
                 @click="reconnecting = a.id"
               >
                 Reconnect
-              </button>
-              <NuxtLink :to="{ path: '/mail', query: { account: a.id } }" class="btn small">Open</NuxtLink>
-              <button type="button" class="btn small" @click="editing = a.id">Edit</button>
-              <button
+              </UButton>
+              <UButton
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :to="{ path: '/mail', query: { account: a.id } }"
+              >
+                Open
+              </UButton>
+              <UButton color="neutral" variant="outline" size="sm" type="button" @click="editing = a.id">
+                Edit
+              </UButton>
+              <UButton
+                :color="confirmRemove === a.id ? 'error' : 'neutral'"
+                variant="outline"
+                size="sm"
                 type="button"
-                class="btn small"
-                :class="{ danger: confirmRemove === a.id }"
                 :title="confirmRemove === a.id ? 'Your mail stays on the server' : undefined"
                 @click="remove(a)"
               >
                 {{ confirmRemove === a.id ? 'Remove from Havre?' : 'Remove' }}
-              </button>
+              </UButton>
             </div>
             <OAuthSignIn
               v-if="reconnecting === a.id && a.auth !== 'password'"
@@ -260,16 +274,6 @@ code {
 .buttons {
   display: flex;
   gap: 6px;
-}
-.btn.small {
-  height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
-}
-.btn.danger {
-  border-color: color-mix(in oklab, var(--danger) 50%, transparent);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
 }
 .empty {
   margin: 0;

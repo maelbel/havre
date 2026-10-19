@@ -94,12 +94,18 @@ async function setInDock(on: boolean) {
           <div class="faint small">{{ appDetail(app, system) }}</div>
         </div>
         <template v-if="app.enabled">
-          <NuxtLink :to="app.route" class="btn">Open</NuxtLink>
-          <button type="button" class="btn quiet" :class="{ danger: confirmRemove }" :disabled="busy" @click="setInDock(false)">
+          <UButton color="neutral" variant="outline" :to="app.route">Open</UButton>
+          <UButton
+            :color="confirmRemove ? 'error' : 'neutral'"
+            :variant="confirmRemove ? 'outline' : 'ghost'"
+            type="button"
+            :disabled="busy"
+            @click="setInDock(false)"
+          >
             {{ confirmRemove ? 'Click again to remove' : 'Remove from the dock' }}
-          </button>
+          </UButton>
         </template>
-        <button v-else type="button" class="btn btn-primary" :disabled="busy" @click="setInDock(true)">Add to your dock</button>
+        <UButton v-else type="button" :disabled="busy" @click="setInDock(true)">Add to your dock</UButton>
       </header>
       <p class="desc">{{ app.description }}</p>
 
@@ -147,7 +153,7 @@ async function setInDock(on: boolean) {
       <section v-if="about?.keys.length" aria-labelledby="app-keys">
         <h3 id="app-keys" class="eyebrow">Keys</h3>
         <div class="keys">
-          <span v-for="[k, what] in about.keys" :key="k"><kbd class="mono">{{ k }}</kbd> {{ what }}</span>
+          <span v-for="[k, what] in about.keys" :key="k"><UKbd :value="k" /> {{ what }}</span>
         </div>
       </section>
     </div>
@@ -186,18 +192,6 @@ h2 {
   font-weight: 400;
   font-size: 32px;
   letter-spacing: -0.015em;
-}
-.btn {
-  text-decoration: none;
-}
-.btn.quiet {
-  border-color: transparent;
-  background: transparent;
-  color: var(--muted);
-}
-.btn.danger {
-  color: var(--danger);
-  border-color: var(--danger);
 }
 .desc {
   margin: -14px 0 0;
@@ -262,13 +256,6 @@ dd {
   gap: 8px 20px;
   font-size: 13px;
   color: var(--muted);
-}
-kbd {
-  font-size: 11.5px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid var(--line2);
-  color: var(--text);
 }
 @media (max-width: 720px) {
   .facts {

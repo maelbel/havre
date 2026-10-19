@@ -105,7 +105,7 @@ Building from source, configuration, HTTPS and backups are covered in the [insta
 ## Built with
 
 [Rust](https://www.rust-lang.org) · [Axum](https://github.com/tokio-rs/axum) · [Tokio](https://tokio.rs) ·
-[sqlx](https://github.com/launchbadge/sqlx) and SQLite · [Nuxt](https://nuxt.com) and [Vue](https://vuejs.org) ·
+[sqlx](https://github.com/launchbadge/sqlx) and SQLite · [Nuxt](https://nuxt.com), [Vue](https://vuejs.org) and [Nuxt UI](https://ui.nuxt.com) ·
 [Tauri](https://tauri.app)
 
 ## Roadmap

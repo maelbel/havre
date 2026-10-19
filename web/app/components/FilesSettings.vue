@@ -31,14 +31,15 @@ async function choose(depth: number) {
 
 <template>
   <div class="files-settings">
-    <fieldset :disabled="saving || !progress">
-      <legend class="strong">How far back to look</legend>
-      <label v-for="c in CHOICES" :key="c.depth" class="choice" :class="{ on: progress?.depth === c.depth }">
-        <input type="radio" name="files-depth" :checked="progress?.depth === c.depth" @change="choose(c.depth)" />
-        <span class="grow">{{ c.label }}</span>
-        <span v-if="c.note" class="faint small">{{ c.note }}</span>
-      </label>
-    </fieldset>
+    <URadioGroup
+      :model-value="progress?.depth"
+      :items="CHOICES.map((c) => ({ label: c.label, value: c.depth, description: c.note }))"
+      legend="How far back to look"
+      variant="card"
+      :disabled="saving || !progress"
+      :ui="{ legend: 'font-medium mb-2', fieldset: 'gap-2' }"
+      @update:model-value="(d) => choose(d as number)"
+    />
     <p class="muted small">
       To find files, Havre downloads each email once (a little every few minutes), notes its attachments, then lets the
       copy go. Your mail server keeps the files.
@@ -54,33 +55,6 @@ async function choose(depth: number) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-fieldset {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-legend {
-  padding: 0;
-  margin-bottom: 4px;
-  font-size: 13.5px;
-  font-weight: 500;
-}
-.choice {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  font-size: 13.5px;
-  cursor: pointer;
-}
-.choice.on {
-  border-color: var(--accent);
 }
 .grow {
   flex: 1;

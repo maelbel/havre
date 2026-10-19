@@ -48,32 +48,25 @@ function add() {
     fresh.value = ''
   })
 }
-function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('close')
-}
 </script>
 
 <template>
-  <div class="backdrop" @mousedown.self="emit('close')" @keydown="onKey">
-    <div class="sheet" role="dialog" aria-label="Labels">
-      <header>
-        <div>
-          <div class="eyebrow">Mail</div>
-          <h3 class="serif">Labels</h3>
-        </div>
-        <button type="button" class="icon-btn" aria-label="Close" @click="emit('close')"><HIcon name="close" :size="15" /></button>
-      </header>
-      <p class="lead">
-        Labels are Havre's: they work on every account and follow a message when it moves. Your phone's mail app
-        doesn't see them.
-      </p>
+  <!-- Esc and the backdrop close it (UModal). -->
+  <UModal
+    :open="true"
+    title="Labels"
+    description="Labels are Havre's: they work on every account and follow a message when it moves. Your phone's mail app doesn't see them."
+    @update:open="(open) => !open && emit('close')"
+  >
+    <template #body>
       <ul class="list">
         <li v-for="l in state.labels" :key="l.id">
           <span class="hash mono" :style="{ color: `var(--c-${l.color})` }" aria-hidden="true">#</span>
-          <input
+          <UInput
             v-model="names[l.id]"
-            type="text"
             :aria-label="`Name of ${l.name}`"
+            variant="ghost"
+            class="grow"
             maxlength="40"
             @blur="rename(l)"
             @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
@@ -92,55 +85,28 @@ function onKey(e: KeyboardEvent) {
             />
           </span>
           <span class="mono faint count">{{ l.count }}</span>
-          <button type="button" class="del" :class="{ armed: confirmDelete === l.id }" @click="remove(l)">
+          <UButton
+            :color="confirmDelete === l.id ? 'error' : 'neutral'"
+            variant="ghost"
+            size="xs"
+            type="button"
+            @click="remove(l)"
+          >
             {{ confirmDelete === l.id ? 'Delete?' : 'Delete' }}
-          </button>
+          </UButton>
         </li>
       </ul>
-      <form class="add" @submit.prevent="add">
-        <input v-model="fresh" type="text" placeholder="New label" aria-label="New label" maxlength="40" />
-        <button type="submit" class="btn btn-primary small" :disabled="!fresh.trim()">Add</button>
+    </template>
+    <template #footer>
+      <form class="add w-full" @submit.prevent="add">
+        <UInput v-model="fresh" placeholder="New label" aria-label="New label" maxlength="40" class="grow" />
+        <UButton size="sm" type="submit" :disabled="!fresh.trim()">Add</UButton>
       </form>
-    </div>
-  </div>
+    </template>
+  </UModal>
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  background: rgb(0 0 0 / 0.45);
-}
-.sheet {
-  width: min(520px, 100%);
-  max-height: min(80vh, 680px);
-  overflow: auto;
-  padding: 24px;
-  border-radius: 16px;
-  border: 1px solid var(--line);
-  background: var(--raise);
-  box-shadow: 0 24px 60px rgb(0 0 0 / 0.35);
-}
-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-h3 {
-  margin: 4px 0 0;
-  font-size: 24px;
-  font-weight: 400;
-}
-.lead {
-  margin: 10px 0 16px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--muted);
-}
 .list {
   list-style: none;
   margin: 0;
@@ -156,26 +122,6 @@ h3 {
 .hash {
   width: 12px;
   text-align: center;
-}
-.list input,
-.add input {
-  flex: 1;
-  min-width: 0;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  outline: none;
-}
-.list input:hover,
-.list input:focus,
-.add input {
-  border-color: var(--line2);
-  background: var(--bg);
 }
 .colors {
   display: flex;
@@ -199,24 +145,12 @@ h3 {
 .faint {
   color: var(--faint);
 }
-.del {
-  border: 0;
-  background: none;
-  color: var(--faint);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.del:hover,
-.del.armed {
-  color: var(--danger);
-}
 .add {
   display: flex;
   gap: 8px;
-  margin-top: 12px;
 }
-.btn.small {
-  height: 32px;
+.grow {
+  flex: 1;
+  min-width: 0;
 }
 </style>

@@ -34,23 +34,19 @@ function who(source: string) {
   return source === 'havre' ? 'Havre' : source
 }
 
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('close')
-}
 </script>
 
 <template>
-  <div class="backdrop" @click.self="emit('close')" @keydown="onKeydown">
-    <div class="sheet" role="dialog" aria-label="Assistant activity" tabindex="-1">
-      <header>
-        <div>
-          <div class="eyebrow">Last 90 days</div>
-          <h3>Assistant activity</h3>
-        </div>
-        <button type="button" class="btn small" aria-label="Close" @click="emit('close')"><HIcon name="close" :size="14" /></button>
-      </header>
+  <UModal
+    :open="true"
+    title="Assistant activity"
+    description="Last 90 days"
+    :ui="{ content: 'max-w-[640px]' }"
+    @update:open="(open) => !open && emit('close')"
+  >
+    <template #body>
       <p v-if="loading" class="faint">Loading…</p>
-      <p v-else-if="error" class="error"><HIcon name="alert" :size="14" /> {{ error }}</p>
+      <UAlert v-else-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" />
       <p v-else-if="!items.length" class="faint">Nothing yet. Summaries, briefs, questions and what you confirm show up here.</p>
       <ol v-else class="list">
         <li v-for="a in items" :key="a.id">
@@ -59,45 +55,14 @@ function onKeydown(e: KeyboardEvent) {
             <span class="action">{{ a.action }}</span>
             <span v-if="a.detail" class="muted detail">{{ a.detail }}</span>
           </span>
-          <span class="pill mono">{{ who(a.source) }}</span>
+          <UBadge color="neutral" variant="outline" size="sm" class="font-mono">{{ who(a.source) }}</UBadge>
         </li>
       </ol>
-    </div>
-  </div>
+    </template>
+  </UModal>
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  background: color-mix(in srgb, #000 45%, transparent);
-}
-.sheet {
-  width: min(640px, 100%);
-  max-height: min(80vh, 720px);
-  overflow: auto;
-  padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--raise);
-  box-shadow: 0 24px 60px rgb(0 0 0 / 0.35);
-}
-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 16px;
-}
-h3 {
-  margin: 4px 0 0;
-  font-family: var(--font-serif);
-  font-weight: 400;
-  font-size: 24px;
-}
 .eyebrow {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -132,13 +97,6 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.pill {
-  font-size: 10.5px;
-  padding: 2px 8px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
 }
 @media (max-width: 560px) {
   .list li {

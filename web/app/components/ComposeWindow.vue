@@ -20,7 +20,9 @@ const dragging = ref(false)
 const uploading = ref(0)
 
 const toInput = ref<{ focus: () => void } | null>(null)
-const bodyInput = ref<HTMLTextAreaElement | null>(null)
+const bodyRef = ref<{ textareaRef: HTMLTextAreaElement | null } | null>(null)
+/** The message text's own element (the cursor goes to the top, focus checks). */
+const bodyInput = computed(() => bodyRef.value?.textareaRef ?? null)
 const fileInput = ref<HTMLInputElement | null>(null)
 
 const account = computed(() => accounts.data.value.find((a) => a.id === form.account))
@@ -121,7 +123,7 @@ const { status: ai } = useAiStatus()
 const aiOpen = ref(false)
 const aiInstruction = ref('')
 const aiBusy = ref(false)
-const aiInput = ref<HTMLInputElement | null>(null)
+const aiInput = ref<{ inputRef: HTMLInputElement | null } | null>(null)
 const aiUndo = ref<string | null>(null)
 let aiAbort: AbortController | null = null
 
@@ -133,7 +135,7 @@ function quoteStart(body: string) {
 
 function openAi() {
   aiOpen.value = !aiOpen.value
-  if (aiOpen.value) nextTick(() => aiInput.value?.focus())
+  if (aiOpen.value) nextTick(() => aiInput.value?.inputRef?.focus())
 }
 
 async function writeWithAi() {
@@ -303,6 +305,11 @@ onMounted(() => window.addEventListener('pagehide', onUnload))
 onBeforeUnmount(() => window.removeEventListener('pagehide', onUnload))
 
 const isMac = import.meta.client && /Mac|iPhone|iPad/.test(navigator.platform)
+
+// "From": each account, with the name it sends as.
+const fromItems = computed(() =>
+  accounts.data.value.map((a) => ({ label: a.sender_name ? `${a.sender_name} <${a.email}>` : a.email, value: a.id })),
+)
 </script>
 
 <template>
@@ -321,29 +328,40 @@ const isMac = import.meta.client && /Mac|iPhone|iPad/.test(navigator.platform)
       <h2>{{ title }}</h2>
       <span v-if="status === 'saving'" class="status">Saving…</span>
       <span v-else-if="status === 'saved'" class="status">Saved</span>
-      <button
+      <UButton
+        :icon="havreIcon(composer.minimized ? 'chevron' : 'minus')"
+        color="neutral"
+        variant="ghost"
+        size="sm"
+        square
         type="button"
-        class="icon-btn small"
         :aria-label="composer.minimized ? 'Open' : 'Minimize'"
         @click.stop="toggleMinimize"
-      >
-        <HIcon :name="composer.minimized ? 'chevron' : 'minus'" :size="16" />
-      </button>
-      <button type="button" class="icon-btn small" aria-label="Close (kept in Drafts)" @click.stop="close">
-        <HIcon name="close" :size="16" />
-      </button>
+      />
+      <UButton
+        icon="i-havre-close"
+        color="neutral"
+        variant="ghost"
+        size="sm"
+        square
+        type="button"
+        aria-label="Close (kept in Drafts)"
+        @click.stop="close"
+      />
     </header>
 
     <template v-if="!composer.minimized">
       <div v-if="loading" class="loading"><span class="spinner" aria-hidden="true" /></div>
       <form v-else class="body" @submit.prevent="send">
         <div class="row">
-          <label for="compose-from">From</label>
-          <select id="compose-from" v-model.number="form.account">
-            <option v-for="a in accounts.data.value" :key="a.id" :value="a.id">
-              {{ a.sender_name ? `${a.sender_name} <${a.email}>` : a.email }}
-            </option>
-          </select>
+          <label for="compose-from" class="lbl">From</label>
+          <USelect
+            id="compose-from"
+            v-model="form.account"
+            :items="fromItems"
+            variant="none"
+            class="grow"
+          />
         </div>
         <p v-if="account && !account.can_send" class="warn">
           This account must be reconnected before it can send (Microsoft asks to allow sending).
@@ -352,44 +370,63 @@ const isMac = import.meta.client && /Mac|iPhone|iPad/.test(navigator.platform)
 
         <RecipientInput ref="toInput" v-model="form.to" label="To">
           <span class="cc-toggles">
-            <button v-if="!showCc" type="button" class="link" @click="showCc = true">Cc</button>
-            <button v-if="!showBcc" type="button" class="link" @click="showBcc = true">Bcc</button>
+            <UButton v-if="!showCc" color="neutral" variant="link" size="sm" class="p-0" @click="showCc = true">Cc</UButton>
+            <UButton v-if="!showBcc" color="neutral" variant="link" size="sm" class="p-0" @click="showBcc = true">Bcc</UButton>
           </span>
         </RecipientInput>
         <RecipientInput v-if="showCc" v-model="form.cc" label="Cc" />
         <RecipientInput v-if="showBcc" v-model="form.bcc" label="Bcc" />
 
         <div class="row">
-          <label for="compose-subject" class="sr-only">Subject</label>
-          <input id="compose-subject" v-model="form.subject" type="text" class="subject" placeholder="Subject" />
+          <UInput
+            v-model="form.subject"
+            variant="none"
+            placeholder="Subject"
+            aria-label="Subject"
+            class="grow"
+            :ui="{ base: 'subject px-0' }"
+          />
         </div>
 
         <div v-if="aiOpen" class="ai-bar" @keydown="onAiKey">
-          <HIcon name="sparkle" :size="15" />
-          <input
+          <UInput
             ref="aiInput"
             v-model="aiInstruction"
-            type="text"
+            icon="i-havre-sparkle"
+            variant="none"
             aria-label="What should the AI write?"
             :placeholder="draft?.kind === 'new' ? 'What is the message about?' : 'What do you want to answer? (e.g. yes for Thursday)'"
             :disabled="aiBusy"
+            :ui="{ leadingIcon: 'text-primary' }"
+            class="grow"
             @keydown.enter.prevent="writeWithAi"
           />
-          <button v-if="aiBusy" type="button" class="btn small" @click="aiAbort?.abort()">Stop</button>
-          <button v-else type="button" class="btn btn-primary small" @click="writeWithAi">Write</button>
+          <UButton
+            v-if="aiBusy"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            type="button"
+            @click="aiAbort?.abort()"
+          >
+            Stop
+          </UButton>
+          <UButton v-else size="sm" type="button" @click="writeWithAi">Write</UButton>
         </div>
         <p v-if="aiUndo !== null" class="ai-undo">
           Written by AI — check it before sending.
-          <button type="button" class="link" @click="undoAi">Undo</button>
+          <UButton color="primary" variant="link" size="sm" class="p-0" @click="undoAi">Undo</UButton>
         </p>
 
-        <textarea
-          ref="bodyInput"
+        <UTextarea
+          ref="bodyRef"
           v-model="form.body"
-          class="text"
+          variant="none"
           aria-label="Message text"
           placeholder="Write your message…"
           spellcheck="true"
+          class="text"
+          :ui="{ base: 'message px-4 py-3.5' }"
         />
 
         <ul v-if="draft?.attachments.length || uploading" class="files">
@@ -397,52 +434,60 @@ const isMac = import.meta.client && /Mac|iPhone|iPad/.test(navigator.platform)
             <HIcon name="paperclip" :size="14" />
             <span class="fname">{{ a.filename }}</span>
             <span class="fsize">{{ size(a.size) }}</span>
-            <button type="button" class="remove" :aria-label="`Remove ${a.filename}`" @click="dropAttachment(a.id)">
-              <HIcon name="close" :size="13" />
-            </button>
+            <UButton
+              icon="i-havre-close"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              square
+              :aria-label="`Remove ${a.filename}`"
+              @click="dropAttachment(a.id)"
+            />
           </li>
           <li v-if="uploading" class="file uploading"><span class="spinner small" aria-hidden="true" /> Adding…</li>
         </ul>
 
-        <div v-if="error" class="error" role="alert">
-          <HIcon name="alert" :size="16" />
-          <span>{{ error }}</span>
-        </div>
+        <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" class="error" />
 
         <footer>
-          <button type="submit" class="btn btn-primary" :disabled="sending || (account && !account.can_send)">
-            <span v-if="sending" class="spinner on-accent" aria-hidden="true" />
-            <HIcon v-else name="send" :size="15" />
+          <UButton icon="i-havre-send" type="submit" :loading="sending" :disabled="sending || (account && !account.can_send)">
             {{ sending ? 'Sending…' : 'Send' }}
-          </button>
-          <kbd class="hint mono">{{ isMac ? '⌘' : 'Ctrl' }} Enter</kbd>
-          <button type="button" class="icon-btn" aria-label="Attach files" title="Attach files" @click="fileInput?.click()">
-            <HIcon name="paperclip" :size="17" />
-          </button>
-          <button
-            v-if="ai.enabled"
+          </UButton>
+          <span class="hint"><UKbd :value="isMac ? '⌘' : 'Ctrl'" /> <UKbd value="Enter" /></span>
+          <UButton
+            icon="i-havre-paperclip"
+            color="neutral"
+            variant="ghost"
+            square
             type="button"
-            class="icon-btn"
-            :class="{ on: aiOpen }"
+            aria-label="Attach files"
+            title="Attach files"
+            @click="fileInput?.click()"
+          />
+          <UButton
+            v-if="ai.enabled"
+            icon="i-havre-sparkle"
+            :color="aiOpen ? 'primary' : 'neutral'"
+            :variant="aiOpen ? 'soft' : 'ghost'"
+            square
+            type="button"
             aria-label="Write with AI"
             title="Write with AI"
             @click="openAi"
-          >
-            <HIcon name="sparkle" :size="17" />
-          </button>
+          />
           <input ref="fileInput" type="file" multiple hidden @change="addFiles(($event.target as HTMLInputElement).files)" />
           <span class="spacer" />
-          <button
+          <UButton
+            icon="i-havre-trash"
+            :color="confirmDiscard ? 'error' : 'neutral'"
+            variant="ghost"
             type="button"
-            class="icon-btn"
-            :class="{ danger: confirmDiscard }"
             :aria-label="confirmDiscard ? 'Click again to discard' : 'Discard draft'"
             :title="confirmDiscard ? 'Click again to discard' : 'Discard draft'"
             @click="discard"
           >
-            <HIcon name="trash" :size="17" />
             <span v-if="confirmDiscard" class="confirm">Discard?</span>
-          </button>
+          </UButton>
         </footer>
       </form>
       <div v-if="dragging" class="dropzone" aria-hidden="true">Drop files to attach them</div>
@@ -499,10 +544,6 @@ h2 {
   color: var(--faint);
   margin-right: 4px;
 }
-.icon-btn.small {
-  width: 30px;
-  height: 30px;
-}
 .loading {
   flex: 1;
   display: grid;
@@ -522,50 +563,18 @@ h2 {
   padding: 0 16px;
   border-bottom: 1px solid var(--line);
 }
-.row label {
+.lbl {
   min-width: 34px;
   font-size: 13px;
   color: var(--faint);
 }
-select {
-  flex: 1;
-  min-width: 0;
-  height: 38px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  outline: none;
-  cursor: pointer;
-}
-select option {
-  background: var(--raise);
-}
-.subject {
-  flex: 1;
-  height: 40px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
+:deep(.subject) {
   font-size: 14.5px;
   font-weight: 500;
-  outline: none;
 }
 .cc-toggles {
   display: flex;
   gap: 10px;
-}
-.link {
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
-}
-.link:hover {
-  color: var(--text);
 }
 .warn {
   margin: 0;
@@ -576,16 +585,17 @@ select option {
 }
 .text {
   flex: 1;
-  min-height: 120px;
-  padding: 14px 16px;
-  border: 0;
+  min-height: 0;
+  display: flex;
+  /* The text fills the window from the top (UTextarea centres by default). */
+  align-items: stretch;
+}
+:deep(.message) {
+  flex: 1;
   resize: none;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
+  min-height: 120px;
   font-size: 14.5px;
   line-height: 1.6;
-  outline: none;
 }
 .files {
   display: flex;
@@ -622,35 +632,8 @@ select option {
 .fsize {
   color: var(--faint);
 }
-.remove {
-  display: inline-flex;
-  width: 22px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-}
-.remove:hover {
-  background: var(--hover);
-  color: var(--text);
-}
 .error {
-  display: flex;
-  gap: 10px;
   margin: 0 16px 8px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
-  font-size: 13px;
-  line-height: 1.5;
-}
-.error span {
-  color: var(--text);
 }
 footer {
   display: flex;
@@ -659,27 +642,12 @@ footer {
   padding: 10px 12px 12px 16px;
   border-top: 1px solid var(--line);
 }
-footer .btn-primary {
-  height: 36px;
-  padding: 0 16px;
-}
-footer .btn-primary:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
 .hint {
   font-size: 11px;
   color: var(--faint);
 }
 .spacer {
   flex: 1;
-}
-.icon-btn.danger {
-  width: auto;
-  padding: 0 10px;
-  gap: 6px;
-  color: var(--danger);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
 }
 .confirm {
   font-size: 12.5px;
@@ -707,12 +675,6 @@ footer .btn-primary:disabled {
 .spinner.small {
   width: 12px;
   height: 12px;
-}
-.spinner.on-accent {
-  width: 14px;
-  height: 14px;
-  border-color: color-mix(in oklab, var(--on-accent) 30%, transparent);
-  border-top-color: var(--on-accent);
 }
 @keyframes spin {
   to {
@@ -745,28 +707,9 @@ footer .btn-primary:disabled {
   background: color-mix(in oklab, var(--accent) 7%, var(--bg));
   color: var(--accent);
 }
-.ai-bar input {
-  flex: 1;
-  min-width: 0;
-  height: 32px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  outline: none;
-  font-size: 14px;
-}
-.ai-bar .btn.small {
-  height: 30px;
-  padding: 0 12px;
-  font-size: 13px;
-}
 .ai-undo {
   margin: 6px 16px 0;
   font-size: 12.5px;
   color: var(--muted);
-}
-.icon-btn.on {
-  color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
 }
 </style>

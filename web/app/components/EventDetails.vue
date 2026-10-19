@@ -124,9 +124,16 @@ function fileKindLabel(name: string, mime: string) {
       <div class="calname">
         <span class="sq" aria-hidden="true" />
         <span class="grow">{{ calendar?.name ?? 'Calendar' }}</span>
-        <button type="button" class="icon-btn small" aria-label="Close" @click="emit('close')">
-          <HIcon name="close" :size="15" />
-        </button>
+        <UButton
+          icon="i-havre-close"
+          color="neutral"
+          variant="ghost"
+          size="sm"
+          square
+          type="button"
+          aria-label="Close"
+          @click="emit('close')"
+        />
       </div>
       <h2 class="serif">{{ event.title }}</h2>
       <div class="facts">
@@ -134,26 +141,45 @@ function fileKindLabel(name: string, mime: string) {
         <span v-if="place"><HIcon name="pin" :size="15" /> {{ place }}</span>
       </div>
       <div v-if="event.join_url || !event.read_only" class="acts">
-        <a v-if="event.join_url" class="act primary" :href="event.join_url" target="_blank" rel="noopener">Join call</a>
-        <button v-if="!event.read_only" type="button" class="act" @click="emit('edit')">Edit</button>
+        <UButton
+          v-if="event.join_url"
+          color="primary"
+          variant="solid"
+          size="sm"
+          :href="event.join_url"
+          target="_blank"
+          rel="noopener"
+        >
+          Join call
+        </UButton>
+        <UButton
+          v-if="!event.read_only"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          type="button"
+          @click="emit('edit')"
+        >
+          Edit
+        </UButton>
       </div>
       <p v-if="event.read_only && why" class="faint small">{{ why }}</p>
     </div>
 
     <div v-if="event.my_response" class="rsvp" role="group" aria-label="Your answer">
       <span class="q">{{ event.my_response === 'needs_action' ? 'Going?' : `You answered: ${RESPONSE_LABELS[event.my_response]}` }}</span>
-      <button
+      <UButton
         v-for="a in answers"
         :key="a.response"
+        v-bind="responseButton(a.response, event.my_response === a.response)"
+        size="sm"
         type="button"
-        class="act"
-        :class="{ chosen: event.my_response === a.response }"
         :aria-pressed="event.my_response === a.response"
         :disabled="!!busy"
         @click="answer(a.response)"
       >
         {{ a.label }}
-      </button>
+      </UButton>
     </div>
 
     <section v-if="people.length" class="block">
@@ -182,9 +208,17 @@ function fileKindLabel(name: string, mime: string) {
           {{ n.snippet }}<template v-if="n.open_todos"> · {{ n.open_todos }} to-do{{ n.open_todos === 1 ? '' : 's' }}</template>
         </span>
       </NuxtLink>
-      <button type="button" class="act take" :class="{ dashed: eventNotes.length }" :disabled="making" @click="takeNotes">
-        <HIcon name="plus" :size="13" :stroke-width="1.8" />{{ eventNotes.length ? 'Another note' : 'Take notes' }}
-      </button>
+      <UButton
+        icon="i-havre-plus"
+        color="neutral"
+        variant="outline"
+        size="sm"
+        type="button"
+        :disabled="making"
+        @click="takeNotes"
+      >
+        {{ eventNotes.length ? 'Another note' : 'Take notes' }}
+      </UButton>
     </section>
 
     <section v-if="related?.messages.length" class="block">
@@ -250,10 +284,6 @@ function fileKindLabel(name: string, mime: string) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.icon-btn.small {
-  width: 28px;
-  height: 28px;
-}
 h2 {
   margin: 0;
   font-size: 26px;
@@ -278,37 +308,6 @@ h2 {
   display: flex;
   gap: 8px;
   margin-top: 8px;
-}
-.act {
-  display: inline-flex;
-  align-items: center;
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid var(--line2);
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-  text-decoration: none;
-  cursor: pointer;
-}
-.act:hover:not(:disabled) {
-  background: var(--hover);
-}
-.act.primary {
-  border: 0;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 500;
-}
-.act.primary:hover {
-  background: var(--accent);
-  filter: brightness(1.08);
-}
-.act.chosen {
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 16%, transparent);
 }
 .faint {
   color: var(--faint);
@@ -430,17 +429,6 @@ h2 {
 .accent-l {
   color: var(--accent);
   font-size: 12px;
-}
-.act.take {
-  align-self: flex-start;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
-}
-.act.take.dashed {
-  border-style: dashed;
-  color: var(--muted);
 }
 .file {
   display: inline-flex;

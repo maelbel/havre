@@ -19,6 +19,7 @@ const list = ref<number | null>(null)
 const busy = ref(false)
 
 const writable = computed(() => lists.value.filter((l) => !l.read_only))
+const listItems = computed(() => writable.value.map((l) => ({ label: `${l.owner} · ${l.name}`, value: l.id })))
 /** The email's account's main list, else the default one. */
 function defaultList() {
   const mine = writable.value.filter((l) => l.account === props.account)
@@ -90,40 +91,48 @@ const sender = computed(() => props.message.from?.name || props.message.from?.ad
   <PopMenu ref="pop" icon="task" label="Make a task" title="Task (T)">
     <template #default="{ close }">
       <form class="form" aria-label="New task from this email" @submit.prevent="add(close)">
-        <label class="field">
-          <span class="lab">Task</span>
-          <input v-model="title" type="text" required />
-        </label>
+        <UFormField label="Task" class="field">
+          <UInput v-model="title" required class="w-full" />
+        </UFormField>
         <div class="chips" role="group" aria-label="Due">
-          <button
+          <UButton
             v-for="c in chips"
             :key="c.id"
-            type="button"
-            class="chip"
+            :color="due === c.day ? 'primary' : 'neutral'"
+            :variant="due === c.day ? 'soft' : 'outline'"
+            size="sm"
+            class="rounded-full"
             :aria-pressed="due === c.day"
             @click="pick(c.day)"
           >
             {{ c.label }}
-          </button>
-          <button v-if="!picking" type="button" class="chip" :aria-pressed="!!pickedLabel" @click="picking = true">
+          </UButton>
+          <UButton
+            v-if="!picking"
+            :color="pickedLabel ? 'primary' : 'neutral'"
+            :variant="pickedLabel ? 'soft' : 'outline'"
+            size="sm"
+            class="rounded-full"
+            :aria-pressed="!!pickedLabel"
+            @click="picking = true"
+          >
             {{ pickedLabel ?? 'Pick a day…' }}
-          </button>
-          <input v-else v-model="pickIso" type="date" aria-label="Due day" class="date" @change="pickDay" />
+          </UButton>
+          <UInput v-else v-model="pickIso" type="date" size="sm" aria-label="Due day" @change="pickDay" />
         </div>
-        <label class="field row">
-          <span class="lab">List</span>
-          <select v-model="list">
-            <option v-for="l in writable" :key="l.id" :value="l.id">{{ l.owner }} · {{ l.name }}</option>
-          </select>
-        </label>
+        <UFormField label="List" orientation="horizontal" class="field">
+          <USelect :model-value="list ?? undefined" :items="listItems" class="w-full" @update:model-value="(v) => (list = v as number)" />
+        </UFormField>
         <p v-if="sameAccount" class="note">Same account as the email.</p>
         <p class="note link">
           <HIcon name="link" :size="12" />
           Linked to this email{{ sender ? ` and ${sender}` : '' }}
         </p>
         <div class="actions">
-          <button type="button" class="btn small ghost" @click="close">Cancel</button>
-          <button type="submit" class="btn small btn-primary" :disabled="busy || !title.trim()">Add task</button>
+          <UButton color="neutral" variant="ghost" size="sm" type="button" @click="close">
+            Cancel
+          </UButton>
+          <UButton size="sm" type="submit" :disabled="busy || !title.trim()">Add task</UButton>
         </div>
       </form>
     </template>
@@ -139,62 +148,10 @@ const sender = computed(() => props.message.from?.name || props.message.from?.ad
   flex-direction: column;
   gap: 10px;
 }
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.field.row {
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-}
-.lab {
-  font-size: 12px;
-  color: var(--faint);
-}
-input[type='text'],
-select,
-.date {
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--line2);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-  outline: none;
-  min-width: 0;
-}
-input[type='text']:focus {
-  border-color: var(--accent);
-}
-select {
-  flex: 1;
-}
-.date {
-  height: 30px;
-}
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-.chip {
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line2);
-  background: transparent;
-  color: var(--muted);
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.chip[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 16%, transparent);
-  color: var(--accent);
 }
 .note {
   margin: -4px 0 0;
@@ -210,9 +167,5 @@ select {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-.ghost {
-  border: 0;
-  color: var(--muted);
 }
 </style>

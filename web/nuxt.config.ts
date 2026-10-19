@@ -1,5 +1,10 @@
 // Havre web UI.
 //
+// Components come from Nuxt UI (built on Reka UI), themed with Havre's tokens
+// in `assets/css/main.css`. Nothing is fetched from other servers: icons are
+// Havre's own (`icons.ts`) bundled into the build, fonts are local files.
+import { havreIconCollection } from './icons'
+
 // SPA mode (`ssr: false`): `nuxt generate` outputs plain static files in
 // `.output/public`, which the Rust server serves. No Node.js in production,
 // and the same build will work inside Tauri later.
@@ -7,6 +12,35 @@ export default defineNuxtConfig({
   compatibilityDate: '2026-10-01',
   ssr: false,
   devtools: { enabled: true },
+
+  modules: ['@nuxt/ui'],
+
+  ui: {
+    // Fonts are the @fontsource files below; @nuxt/fonts would download
+    // from Google instead.
+    fonts: false,
+    theme: { colors: ['primary', 'neutral', 'success', 'error'] },
+  },
+
+  // Dark first; the choice is remembered under the key Havre always used.
+  // `dataValue` keeps `<html data-theme="…">` for Havre's own CSS, the class
+  // (`dark` / `light`) is what Nuxt UI reads.
+  colorMode: {
+    preference: 'dark',
+    fallback: 'dark',
+    classSuffix: '',
+    dataValue: 'theme',
+    storageKey: 'havre-theme',
+  },
+
+  icon: {
+    // Never ask the Iconify API: every icon used is in the build.
+    provider: 'none',
+    fallbackToApi: false,
+    serverBundle: false,
+    customCollections: [havreIconCollection()],
+    clientBundle: { scan: true, includeCustomCollections: true },
+  },
 
   css: [
     '@fontsource-variable/geist',

@@ -6,7 +6,6 @@
     </div>
     <ComposeWindow />
     <CommandPalette />
-    <ToastHost />
     <TaskReminders />
   </div>
 </template>

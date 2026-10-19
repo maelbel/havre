@@ -101,22 +101,29 @@ const restoreDocker = 'docker compose stop havre\ndocker compose run --rm havre 
             <template v-else>nightly backups are off</template>
           </div>
         </div>
-        <button type="button" class="btn" :disabled="running" @click="runNow">
+        <UButton color="neutral" variant="outline" type="button" :disabled="running" @click="runNow">
           {{ running ? 'Backing up…' : 'Back up now' }}
-        </button>
+        </UButton>
       </section>
 
       <fieldset>
         <legend class="eyebrow">Schedule</legend>
-        <label class="row">
-          <input v-model="form.enabled" type="checkbox" @change="save" />
-          <span class="grow"><span class="strong">Every night at</span></span>
-          <input v-model="form.time" type="time" class="time mono" aria-label="Backup time" @change="save" />
-        </label>
-        <label class="row">
+        <div class="row">
+          <UCheckbox v-model="form.enabled" label="Every night at" class="grow" @update:model-value="save" />
+          <TimeField v-model="form.time" label="Backup time" size="sm" @update:model-value="save" />
+        </div>
+        <div class="row">
           <span class="grow"><span class="strong">Keep the last</span><span class="muted"> — older ones are deleted</span></span>
-          <input v-model.number="form.keep" type="number" min="1" max="365" class="num mono" aria-label="Backups to keep" @change="save" />
-        </label>
+          <UInputNumber
+            v-model="form.keep"
+            :min="1"
+            :max="365"
+            size="sm"
+            class="w-28"
+            aria-label="Backups to keep"
+            @update:model-value="save"
+          />
+        </div>
         <p class="note">
           The server's own time zone (with Docker, set <code>TZ</code>, e.g. <code>TZ=Europe/Paris</code>).
         </p>
@@ -138,13 +145,30 @@ const restoreDocker = 'docker compose stop havre\ndocker compose run --rm havre 
               <span class="mono faint tiny">{{ f.name }}</span>
             </span>
             <span class="mono faint tiny">{{ bytes(f.size) }}</span>
-            <a class="mini" :href="`/api/backups/${encodeURIComponent(f.name)}`" :download="f.name">Download</a>
-            <button type="button" class="mini del" :class="{ armed: confirmDelete === f.name }" @click="remove(f.name)">
+            <UButton
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :href="`/api/backups/${encodeURIComponent(f.name)}`"
+              :download="f.name"
+            >
+              Download
+            </UButton>
+            <UButton
+              :color="confirmDelete === f.name ? 'error' : 'neutral'"
+              variant="outline"
+              size="xs"
+              type="button"
+              @click="remove(f.name)"
+            >
               {{ confirmDelete === f.name ? 'Delete?' : 'Delete' }}
-            </button>
+            </UButton>
           </li>
         </ol>
-        <p v-else class="note">None yet: <button type="button" class="link" @click="runNow">make the first one</button>.</p>
+        <p v-else class="note">
+          None yet:
+          <UButton color="primary" variant="link" class="p-0" @click="runNow">make the first one</UButton>.
+        </p>
       </section>
 
       <section class="block">
@@ -158,7 +182,15 @@ const restoreDocker = 'docker compose stop havre\ndocker compose run --rm havre 
         <p class="note">Show it, on the server:</p>
         <div class="code">
           <code>docker compose exec havre havre key</code>
-          <button type="button" class="mini" @click="copy('docker compose exec havre havre key')">Copy</button>
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="xs"
+            type="button"
+            @click="copy('docker compose exec havre havre key')"
+          >
+            Copy
+          </UButton>
         </div>
         <p class="note faint">Without Docker: <code>havre key</code>, or the <code>secret.key</code> file next to the database.</p>
       </section>
@@ -171,7 +203,9 @@ const restoreDocker = 'docker compose stop havre\ndocker compose run --rm havre 
         </p>
         <div class="code">
           <pre>{{ restoreDocker }}</pre>
-          <button type="button" class="mini" @click="copy(restoreDocker)">Copy</button>
+          <UButton color="neutral" variant="outline" size="xs" type="button" @click="copy(restoreDocker)">
+            Copy
+          </UButton>
         </div>
       </section>
 
@@ -182,7 +216,15 @@ const restoreDocker = 'docker compose stop havre\ndocker compose run --rm havre 
           <li v-for="c in calendars.data.value" :key="c.id">
             <span class="cdot" :style="{ background: c.color }" aria-hidden="true" />
             <span class="grow">{{ c.name }} <span class="faint">· {{ SOURCE_LABELS[c.source] }}</span></span>
-            <a class="mini" :href="`/api/agenda/calendars/${c.id}/export.ics`" download>Export .ics</a>
+            <UButton
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :href="`/api/agenda/calendars/${c.id}/export.ics`"
+              download
+            >
+              Export .ics
+            </UButton>
           </li>
         </ul>
       </section>
@@ -270,29 +312,6 @@ legend {
   border-radius: 10px;
   cursor: pointer;
 }
-.row:hover {
-  background: var(--hover);
-}
-.row input[type='checkbox'] {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-.time,
-.num {
-  height: 30px;
-  padding: 0 8px;
-  border-radius: 7px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 12.5px;
-  color-scheme: inherit;
-}
-.num {
-  width: 64px;
-}
 .block {
   display: flex;
   flex-direction: column;
@@ -342,28 +361,6 @@ code {
 .fname {
   font-weight: 500;
 }
-.mini {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--line2);
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 12.5px;
-  text-decoration: none;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.mini:hover {
-  background: var(--hover);
-}
-.del.armed {
-  border-color: var(--danger);
-  color: var(--danger);
-}
 .code {
   display: flex;
   align-items: flex-start;
@@ -388,14 +385,6 @@ code {
   flex: 0 0 9px;
   height: 9px;
   border-radius: 50%;
-}
-.link {
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--accent);
-  font: inherit;
-  cursor: pointer;
 }
 .error {
   display: flex;

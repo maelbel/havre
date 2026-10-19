@@ -1,26 +1,28 @@
-// Small notifications at the bottom of the screen ("Archived", errors…).
-export interface Toast {
-  id: number
-  message: string
-  tone: 'info' | 'error'
+// Small notifications at the bottom of the screen ("Archived", errors…),
+// drawn by Nuxt UI's toaster (in `UApp`, app.vue). Havre's pages keep this
+// one short call: `useToasts().show('Archived', { action: { label: 'Undo', run } })`.
+export interface ToastOptions {
+  tone?: 'info' | 'error'
   action?: { label: string; run: () => void }
+  /** Milliseconds on screen (errors stay a little longer). */
+  duration?: number
 }
 
-let nextId = 1
-
 export function useToasts() {
-  const toasts = useState<Toast[]>('toasts', () => [])
+  const toast = useToast()
 
-  function dismiss(id: number) {
-    toasts.value = toasts.value.filter((t) => t.id !== id)
+  function show(message: string, opts: ToastOptions = {}) {
+    const error = opts.tone === 'error'
+    toast.add({
+      title: message,
+      color: error ? 'error' : 'neutral',
+      icon: error ? 'i-havre-alert' : undefined,
+      duration: opts.duration ?? (error ? 7000 : 4000),
+      actions: opts.action
+        ? [{ label: opts.action.label, color: 'primary', variant: 'link', onClick: opts.action.run }]
+        : undefined,
+    })
   }
 
-  function show(message: string, opts: { tone?: Toast['tone']; action?: Toast['action']; duration?: number } = {}) {
-    const toast: Toast = { id: nextId++, message, tone: opts.tone ?? 'info', action: opts.action }
-    // Keep at most 3 on screen.
-    toasts.value = [...toasts.value.slice(-2), toast]
-    setTimeout(() => dismiss(toast.id), opts.duration ?? (toast.tone === 'error' ? 7000 : 4000))
-  }
-
-  return { toasts, show, dismiss }
+  return { show, dismiss: toast.remove }
 }

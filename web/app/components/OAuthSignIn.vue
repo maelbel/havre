@@ -249,11 +249,25 @@ onBeforeUnmount(() => {
       </p>
       <p v-else class="lead">Your browser blocked the {{ name }} window.</p>
       <div class="code-row">
-        <button type="button" class="btn small" :class="{ 'btn-primary': step === 'blocked' }" @click="reopen">
+        <UButton
+          trailing-icon="i-havre-external"
+          :color="step === 'blocked' ? 'primary' : 'neutral'"
+          :variant="step === 'blocked' ? 'solid' : 'outline'"
+          size="sm"
+          @click="reopen"
+        >
           {{ step === 'blocked' ? `Open the ${name} window` : 'Open it again' }}
-          <HIcon name="external" :size="14" />
-        </button>
-        <button v-if="canUseCode" type="button" class="btn small" @click="start('code')">Use a code instead</button>
+        </UButton>
+        <UButton
+          v-if="canUseCode"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          type="button"
+          @click="start('code')"
+        >
+          Use a code instead
+        </UButton>
       </div>
       <p v-if="provider === 'microsoft'" class="faint">
         Microsoft says the redirect URI doesn't match? Add <code class="uri">{{ callbackUrl }}</code> to the
@@ -273,14 +287,20 @@ onBeforeUnmount(() => {
       </p>
       <div class="code-row">
         <output class="code mono" aria-label="Code to enter">{{ started.user_code }}</output>
-        <button type="button" class="btn small" @click="copy">
-          <HIcon :name="copied ? 'check' : 'copy'" :size="15" />
+        <UButton
+          :icon="havreIcon(copied ? 'check' : 'copy')"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          type="button"
+          @click="copy"
+        >
           {{ copied ? 'Copied' : 'Copy' }}
-        </button>
-        <a class="btn btn-primary small" :href="started.verification_uri" target="_blank" rel="noopener">
+        </UButton>
+        <UButton size="sm" :href="started.verification_uri" target="_blank" rel="noopener">
           Open microsoft.com
           <HIcon name="external" :size="14" />
-        </a>
+        </UButton>
       </div>
       <p class="status" role="status">
         <span class="spinner" aria-hidden="true" />
@@ -288,24 +308,20 @@ onBeforeUnmount(() => {
       </p>
     </template>
 
-    <div v-if="error" class="error" role="alert">
-      <HIcon name="alert" :size="16" />
-      <span>{{ error }}</span>
-    </div>
+    <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" />
 
     <div class="actions">
-      <button
+      <UButton
         v-if="configured && canUseCode && step === 'failed' && mode === 'browser'"
+        color="neutral"
+        variant="outline"
         type="button"
-        class="btn"
         @click="start('code')"
       >
         Use a code instead
-      </button>
-      <button type="button" class="btn" @click="cancel">Cancel</button>
-      <button v-if="configured && step === 'failed'" type="button" class="btn btn-primary" @click="start()">
-        Try again
-      </button>
+      </UButton>
+      <UButton color="neutral" variant="outline" type="button" @click="cancel">Cancel</UButton>
+      <UButton v-if="configured && step === 'failed'" type="button" @click="start()">Try again</UButton>
     </div>
   </div>
 </template>
@@ -368,13 +384,6 @@ code {
   letter-spacing: 0.12em;
   user-select: all;
 }
-.btn.small {
-  height: 34px;
-  padding: 0 12px;
-  font-size: 13px;
-  gap: 6px;
-  text-decoration: none;
-}
 .status {
   display: flex;
   align-items: center;
@@ -396,19 +405,6 @@ code {
   to {
     transform: rotate(360deg);
   }
-}
-.error {
-  display: flex;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
-  font-size: 13.5px;
-  line-height: 1.5;
-}
-.error span {
-  color: var(--text);
 }
 .actions {
   display: flex;

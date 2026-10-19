@@ -137,31 +137,43 @@ const detail = (app: HavreApp) => appDetail(app, system.value)
             </div>
             <p v-if="partners(app).length" class="faint small">Works with {{ partners(app).join(' and ') }}.</p>
             <div class="controls">
-              <button
+              <UButton
+                icon="i-havre-back"
+                color="neutral"
+                variant="ghost"
+                size="sm"
+                square
                 type="button"
-                class="icon-btn small"
                 :aria-label="`Move ${app.name} up`"
                 title="Earlier in the dock"
                 :disabled="apps.indexOf(app) === 0 || !!busy || demo"
                 @click="move(app, -1)"
-              >
-                <HIcon name="back" :size="14" />
-              </button>
-              <button
+              />
+              <UButton
+                color="neutral"
+                variant="ghost"
+                size="sm"
+                square
                 type="button"
-                class="icon-btn small"
                 :aria-label="`Move ${app.name} down`"
                 title="Later in the dock"
                 :disabled="apps.indexOf(app) === apps.length - 1 || !!busy || demo"
                 @click="move(app, 1)"
               >
                 <HIcon name="back" :size="14" class="flip" />
-              </button>
+              </UButton>
               <span class="grow" />
               <NuxtLink :to="appSettingsPath(app)" class="settings-link" :aria-label="`${app.name} settings`">Settings</NuxtLink>
-              <button type="button" class="link-btn" :disabled="busy === app.id || demo" @click="toggle(app)">
+              <UButton
+                color="primary"
+                variant="link"
+                class="p-0"
+                type="button"
+                :disabled="busy === app.id || demo"
+                @click="toggle(app)"
+              >
                 Remove from dock
-              </button>
+              </UButton>
             </div>
           </li>
         </ol>
@@ -181,7 +193,7 @@ const detail = (app: HavreApp) => appDetail(app, system.value)
             </div>
             <div class="foot">
               <span class="faint small">{{ kinds(app).join(' · ') }}</span>
-              <button type="button" class="add" :aria-label="`Add ${app.name} to your dock`" :disabled="busy === app.id || demo" @click="toggle(app)">Add</button>
+              <UButton size="sm" :aria-label="`Add ${app.name} to your dock`" :loading="busy === app.id" :disabled="demo" @click="toggle(app)">Add</UButton>
             </div>
           </li>
           <li class="card plain dashed">
@@ -438,24 +450,8 @@ h2 {
 .settings-link:hover {
   color: var(--text);
 }
-.icon-btn.small {
-  width: 28px;
-  height: 28px;
-}
 .flip {
   transform: scaleX(-1);
-}
-.link-btn {
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--faint);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.link-btn:hover:not(:disabled) {
-  color: var(--danger);
 }
 .foot {
   display: flex;
@@ -463,21 +459,6 @@ h2 {
   justify-content: space-between;
   gap: 8px;
   margin-top: auto;
-}
-.add {
-  height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-}
-.add:hover {
-  filter: brightness(1.08);
 }
 button:disabled {
   opacity: 0.5;

@@ -46,6 +46,18 @@ export interface AgendaEvent {
 
 export type Response = 'accepted' | 'tentative' | 'declined'
 
+/**
+ * How an answer button looks (Accept / Maybe / Decline): the one you gave is
+ * filled in its colour (green, gold, red); otherwise Accept is the main button.
+ */
+export function responseButton(response: Response, chosen: boolean, main = false) {
+  if (chosen) {
+    const color = response === 'accepted' ? 'success' : response === 'declined' ? 'error' : 'primary'
+    return { color, variant: 'soft' } as const
+  }
+  return main ? ({ color: 'primary', variant: 'solid' } as const) : ({ color: 'neutral', variant: 'outline' } as const)
+}
+
 export const RESPONSE_LABELS: Record<string, string> = {
   accepted: 'Accepted',
   tentative: 'Maybe',

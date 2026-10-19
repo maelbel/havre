@@ -23,6 +23,15 @@ First version, not released yet (0.1.0).
 - **Ctrl+K** palette, **MCP** endpoint for AI apps (Claude Code and others), **Havre Desktop** (Windows, macOS,
   Linux), nightly **backups** with a recovery key, **Docker** image.
 
+### Changed
+
+- The web UI is built on [Nuxt UI](https://ui.nuxt.com) (buttons, fields, menus, dialogs, toasts, the Ctrl+K
+  palette, resizable panes), themed with Havre's colours; icons and fonts are still bundled, nothing is fetched.
+
+### Fixed
+
+- Opening `/login` while signed in, or with a `next` address pointing to another site, now goes to a Havre page.
+
 ### Security
 
 - Mail passwords, refresh tokens and API keys encrypted at rest; session and MCP tokens stored hashed.

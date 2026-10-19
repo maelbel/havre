@@ -25,12 +25,27 @@ const move = (n: number) => (shown.value = new Date(shown.value.getFullYear(), s
   <div class="mini">
     <div class="head">
       <span class="title">{{ title }}</span>
-      <button type="button" class="icon-btn small" aria-label="Previous month" @click="move(-1)">
-        <HIcon name="back" :size="14" />
-      </button>
-      <button type="button" class="icon-btn small flip" aria-label="Next month" @click="move(1)">
-        <HIcon name="back" :size="14" />
-      </button>
+      <UButton
+        icon="i-havre-back"
+        color="neutral"
+        variant="ghost"
+        size="sm"
+        square
+        type="button"
+        aria-label="Previous month"
+        @click="move(-1)"
+      />
+      <UButton
+        icon="i-havre-back"
+        color="neutral"
+        variant="ghost"
+        size="sm"
+        square
+        class="flip"
+        type="button"
+        aria-label="Next month"
+        @click="move(1)"
+      />
     </div>
     <div class="grid">
       <span v-for="(w, i) in initials" :key="i" class="w">{{ w }}</span>
@@ -70,10 +85,6 @@ const move = (n: number) => (shown.value = new Date(shown.value.getFullYear(), s
   font-size: 13px;
   font-weight: 500;
   text-transform: capitalize;
-}
-.icon-btn.small {
-  width: 26px;
-  height: 26px;
 }
 .flip {
   transform: scaleX(-1);

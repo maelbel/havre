@@ -184,41 +184,57 @@ async function remove() {
     toast.show(apiErrorMessage(err), { tone: 'error' })
   }
 }
+
+const listItems = computed(() => writable.value.map((l) => ({ label: `${l.owner} · ${l.name}`, value: l.id })))
+// The usual reminders, plus the one set elsewhere when it's none of those.
+const reminderItems = computed(() => [
+  ...REMINDERS.map((r) => ({ label: r.label, value: r.id as ReminderId })),
+  ...(reminder.value === 'custom' ? [{ label: customLabel.value, value: 'custom' as ReminderId }] : []),
+])
 </script>
 
 <template>
   <aside class="details" aria-label="Task details">
     <div class="head">
-      <button type="button" class="icon-btn back" aria-label="Back to the list" @click="emit('close')">
-        <HIcon name="back" :size="18" />
-      </button>
+      <UButton
+        icon="i-havre-back"
+        color="neutral"
+        variant="ghost"
+        square
+        class="back"
+        type="button"
+        aria-label="Back to the list"
+        @click="emit('close')"
+      />
       <span class="where">
         <span class="dot" :style="{ background: list?.color }" aria-hidden="true" />
         {{ list ? `${list.owner} · ${list.name}` : '' }}
       </span>
       <span class="spacer" />
       <span v-if="saving" class="faint small">Saving…</span>
-      <button
+      <UButton
         v-if="!task.read_only"
+        icon="i-havre-trash"
+        :color="confirming ? 'error' : 'neutral'"
+        variant="ghost"
+        square
         type="button"
-        class="icon-btn"
-        :class="{ danger: confirming }"
         :aria-label="confirming ? 'Click again to delete the task' : 'Delete task'"
         :title="confirming ? 'Click again to delete' : 'Delete'"
         @click="remove"
-      >
-        <HIcon name="trash" :size="16" />
-      </button>
+      />
     </div>
 
     <div class="scroll">
-      <label class="sr-only" for="task-title">Title</label>
-      <textarea
-        id="task-title"
+      <UTextarea
         v-model="title"
-        class="title serif"
-        rows="2"
+        variant="none"
+        aria-label="Title"
+        :rows="1"
+        autoresize
         :readonly="task.read_only"
+        :ui="{ base: 'title p-0' }"
+        class="w-full"
         @blur="saveTitle"
         @keydown.enter.prevent="($event.target as HTMLTextAreaElement).blur()"
       />
@@ -227,60 +243,67 @@ async function remove() {
       <div class="grid">
         <span class="k">Due</span>
         <span class="due">
-          <input
+          <DateField
             v-model="dueIso"
-            type="date"
-            aria-label="Due day"
+            label="Due day"
+            size="sm"
             :disabled="task.read_only"
             :class="{ late: isLate(task) }"
-            @change="saveDue"
+            @update:model-value="saveDue"
           />
-          <input
+          <TimeField
             v-model="time"
-            type="time"
-            aria-label="Due time"
+            label="Due time"
+            size="sm"
             :disabled="task.read_only || !dueIso"
-            @change="saveDue"
+            @update:model-value="saveDue"
           />
-          <button
+          <UButton
             v-if="task.due != null && !task.read_only"
+            icon="i-havre-close"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            square
             type="button"
-            class="icon-btn small"
             aria-label="No due date"
             title="No due date"
             @click="clearDue"
-          >
-            <HIcon name="close" :size="14" />
-          </button>
+          />
         </span>
 
         <label class="k" for="task-list">List</label>
-        <select
+        <USelect
           id="task-list"
-          :value="task.list"
+          :model-value="task.list"
           :disabled="task.read_only"
-          @change="moveTo(Number(($event.target as HTMLSelectElement).value))"
-        >
-          <option v-for="l in writable" :key="l.id" :value="l.id">{{ l.owner }} · {{ l.name }}</option>
-        </select>
+          :items="listItems"
+          size="sm"
+          @update:model-value="(id) => moveTo(id as number)"
+        />
 
         <label class="k" for="task-remind">Remind</label>
-        <select
+        <USelect
           id="task-remind"
-          :value="reminder"
+          :model-value="reminder"
           :disabled="task.read_only || task.due == null"
-          @change="setReminder(($event.target as HTMLSelectElement).value as ReminderId)"
-        >
-          <option v-for="r in REMINDERS" :key="r.id" :value="r.id">{{ r.label }}</option>
-          <option v-if="reminder === 'custom'" value="custom">{{ customLabel }}</option>
-        </select>
+          :items="reminderItems"
+          size="sm"
+          @update:model-value="(id) => setReminder(id as ReminderId)"
+        />
       </div>
       <p v-if="task.due == null" class="faint small hint">Give it a due day to set a reminder.</p>
 
-      <label class="block">
-        <span class="eyebrow">Notes</span>
-        <textarea v-model="notes" rows="4" :readonly="task.read_only" placeholder="Add notes" @blur="saveNotes" />
-      </label>
+      <UFormField label="Notes" class="block">
+        <UTextarea
+          v-model="notes"
+          :rows="4"
+          :readonly="task.read_only"
+          placeholder="Add notes"
+          class="w-full"
+          @blur="saveNotes"
+        />
+      </UFormField>
 
       <section v-if="task.mail" class="block" aria-label="From Mail">
         <span class="eyebrow">From Mail</span>
@@ -374,10 +397,6 @@ async function remove() {
 .spacer {
   flex: 1;
 }
-.danger {
-  color: var(--danger);
-  background: color-mix(in oklab, var(--danger) 14%, transparent);
-}
 .scroll {
   flex: 1;
   overflow-y: auto;
@@ -386,25 +405,18 @@ async function remove() {
   flex-direction: column;
   gap: 18px;
 }
-.title {
-  width: 100%;
-  margin: 0;
+:deep(.title) {
   padding: 4px 6px;
   margin-left: -6px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: transparent;
-  color: var(--text);
+  font-family: var(--font-serif);
   font-size: 24px;
   line-height: 1.2;
-  resize: none;
-  field-sizing: content;
-  min-height: 0;
 }
-.title:hover:not([readonly]),
-.title:focus {
+:deep(.title:hover:not([readonly])),
+:deep(.title:focus) {
   border-color: var(--line2);
-  outline: none;
 }
 .grid {
   display: grid;
@@ -419,39 +431,18 @@ async function remove() {
 }
 .due {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
   min-width: 0;
 }
-input[type='date'],
-input[type='time'],
-select {
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--line2);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  min-width: 0;
-}
-input[type='time'] {
-  width: 116px;
-}
-select {
-  background: var(--bg);
-  max-width: 100%;
-}
-input.late {
-  color: var(--danger);
-}
-.icon-btn.small {
-  width: 28px;
-  height: 28px;
-}
 .hint {
   margin: -10px 0 0 88px;
+}
+/* Overdue: the day in red. */
+.late {
+  --ui-text-highlighted: var(--danger);
+  --ui-text: var(--danger);
 }
 .small {
   font-size: 12.5px;
@@ -464,17 +455,6 @@ input.late {
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-.block textarea {
-  padding: 10px 12px;
-  border: 1px solid var(--line2);
-  border-radius: 10px;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-  line-height: 1.55;
-  resize: vertical;
 }
 .card {
   display: flex;

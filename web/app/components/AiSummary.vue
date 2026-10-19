@@ -54,13 +54,31 @@ const lines = computed(() =>
       <span class="title">Summary</span>
       <span class="model mono">{{ ai.local ? 'local model' : ai.model }}</span>
       <span class="spacer" />
-      <button type="button" class="ghost-btn" @click="emit('draft')">Draft a reply</button>
-      <button type="button" class="icon-btn small" title="Write it again" aria-label="Summarize again" :disabled="busy" @click="run(true)">
-        <HIcon name="refresh" :size="13" />
-      </button>
-      <button type="button" class="icon-btn small" aria-label="Hide summary" @click="emit('close')">
-        <HIcon name="close" :size="13" />
-      </button>
+      <UButton color="neutral" variant="ghost" size="sm" type="button" @click="emit('draft')">
+        Draft a reply
+      </UButton>
+      <UButton
+        icon="i-havre-refresh"
+        color="neutral"
+        variant="ghost"
+        size="sm"
+        square
+        type="button"
+        title="Write it again"
+        aria-label="Summarize again"
+        :disabled="busy"
+        @click="run(true)"
+      />
+      <UButton
+        icon="i-havre-close"
+        color="neutral"
+        variant="ghost"
+        size="sm"
+        square
+        type="button"
+        aria-label="Hide summary"
+        @click="emit('close')"
+      />
     </header>
     <p v-if="error" class="err">{{ error }}</p>
     <ul v-else-if="lines.length">
@@ -92,19 +110,6 @@ const lines = computed(() =>
   font-size: 11px;
   color: var(--faint);
 }
-.ghost-btn {
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--line2);
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text);
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.ghost-btn:hover {
-  background: var(--hover);
-}
 header {
   display: flex;
   align-items: center;
@@ -112,11 +117,6 @@ header {
 }
 .spacer {
   flex: 1;
-}
-.icon-btn.small {
-  width: 26px;
-  height: 26px;
-  color: var(--muted);
 }
 ul {
   margin: 0;

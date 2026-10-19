@@ -12,8 +12,9 @@ import type { Parsed, Task } from '~/composables/useTasks'
 // The assistant only proposes changes; you confirm them here.
 const open = usePalette()
 const q = ref('')
-const active = ref(0)
-const input = ref<HTMLInputElement | null>(null)
+const input = ref<{ $el: HTMLElement } | null>(null)
+/** The search field inside UCommandPalette, to give it the focus. */
+const focusSearch = () => input.value?.$el?.querySelector<HTMLInputElement>('input')?.focus()
 const router = useRouter()
 const toast = useToasts()
 const { toggle: toggleTheme } = useTheme()
@@ -42,8 +43,7 @@ watch(open, (v) => {
   if (!v) return
   mode.value = 'search'
   q.value = ''
-  active.value = 0
-  nextTick(() => input.value?.focus())
+  nextTick(focusSearch)
 })
 
 function onGlobalKey(e: KeyboardEvent) {
@@ -169,7 +169,6 @@ async function addNote() {
 let seq = 0
 let timer: ReturnType<typeof setTimeout> | undefined
 watch(q, (text) => {
-  active.value = 0
   clearTimeout(timer)
   const query = text.trim()
   if (query.length < 2) {
@@ -315,36 +314,46 @@ const items = computed<Item[]>(() => {
   return out
 })
 
-/** Items with their group title when it changes. */
-const rows = computed(() => items.value.map((item, i) => ({ item, i, title: i === 0 || items.value[i - 1]!.group !== item.group ? item.group : null })))
-
-const list = ref<HTMLElement | null>(null)
-watch(active, () => nextTick(() => list.value?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })))
-
-function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    if (mode.value === 'chat' && !chatBusy.value) {
-      mode.value = 'search'
-      nextTick(() => input.value?.focus())
-    } else close()
-    return
+/**
+ * The results as UCommandPalette groups, in the order above. Havre already
+ * chose and ordered them (some come from the server), so the palette doesn't
+ * filter them again (`ignoreFilter`).
+ */
+const groups = computed(() => {
+  const out: { id: string; label: string; ignoreFilter: true; items: object[] }[] = []
+  for (const item of items.value) {
+    let g = out[out.length - 1]
+    if (!g || g.label !== item.group) out.push((g = { id: `${item.group}-${out.length}`, label: item.group, ignoreFilter: true, items: [] }))
+    g.items.push({
+      id: item.id,
+      label: item.label,
+      suffix: item.hint,
+      icon: havreIcon(item.icon),
+      class: item.id === 'ask' ? 'ask' : undefined,
+      onSelect: (e: Event) => {
+        e.preventDefault()
+        item.run()
+      },
+    })
   }
-  if (mode.value === 'chat') return onPlanKey(e)
-  const n = items.value.length
-  if (e.key === 'ArrowDown' && n) {
-    e.preventDefault()
-    active.value = (active.value + 1) % n
-  } else if (e.key === 'ArrowUp' && n) {
-    e.preventDefault()
-    active.value = (active.value + n - 1) % n
-  } else if (e.key === 'Enter' && n) {
-    e.preventDefault()
-    items.value[active.value]?.run()
-  } else if (e.key === 'Tab' && ai.value.enabled && q.value.trim()) {
+  return out
+})
+
+// Tab: ask the assistant what's typed.
+function onSearchKey(e: KeyboardEvent) {
+  if (e.key === 'Tab' && ai.value.enabled && q.value.trim()) {
     e.preventDefault()
     startChat(q.value.trim())
   }
+}
+
+// Esc (or the backdrop): back from a chat to the search, otherwise close.
+function onOpenChange(value: boolean) {
+  if (value) return show()
+  if (mode.value === 'chat' && !chatBusy.value) {
+    mode.value = 'search'
+    nextTick(focusSearch)
+  } else close()
 }
 
 // ---- The assistant ----------------------------------------------------------------------
@@ -363,7 +372,7 @@ const conversation = ref<number | null>(null)
 const chat = ref<ChatEntry[]>([])
 const chatInput = ref('')
 const chatBusy = ref(false)
-const chatInputEl = ref<HTMLTextAreaElement | null>(null)
+const chatInputEl = ref<{ textareaRef: HTMLTextAreaElement | null } | null>(null)
 const chatLog = ref<HTMLElement | null>(null)
 
 function startChat(question: string) {
@@ -390,7 +399,7 @@ async function send(question: string) {
   } finally {
     chatBusy.value = false
     scrollDown()
-    nextTick(() => (pending.value ? confirmBtn() : chatInputEl.value)?.focus())
+    nextTick(() => (pending.value ? confirmBtn() : chatInputEl.value?.textareaRef)?.focus())
   }
 }
 function confirmBtn() {
@@ -481,7 +490,7 @@ async function editEmail() {
 
 function cancelPlan() {
   if (pending.value) dismissed.value.add(pending.value.entry)
-  nextTick(() => chatInputEl.value?.focus())
+  nextTick(() => chatInputEl.value?.textareaRef?.focus())
 }
 
 function onPlanKey(e: KeyboardEvent) {
@@ -493,162 +502,172 @@ function onPlanKey(e: KeyboardEvent) {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="backdrop" @mousedown.self="close" @keydown="onKey">
-      <div class="palette" role="dialog" aria-label="Command palette" :class="{ chat: mode === 'chat' }">
-        <template v-if="mode === 'search'">
-          <div class="field">
-            <HIcon name="search" :size="17" />
-            <input
-              ref="input"
-              v-model="q"
-              type="text"
-              role="combobox"
-              aria-controls="palette-list"
-              :aria-expanded="items.length > 0"
-              :aria-activedescendant="items[active] ? `pi-${active}` : undefined"
-              :placeholder="ai.enabled ? 'Go to, search, or ask AI anything…' : 'Go to, search people and mail…'"
-              spellcheck="false"
-              autocomplete="off"
-            />
-            <kbd class="mono">Esc</kbd>
-          </div>
-          <ul id="palette-list" ref="list" role="listbox" class="list">
-            <template v-for="r in rows" :key="r.item.id">
-              <li v-if="r.title" class="group" role="presentation">{{ r.title }}</li>
-              <li
-                :id="`pi-${r.i}`"
-                role="option"
-                :aria-selected="r.i === active"
-                class="item"
-                :class="{ on: r.i === active, ask: r.item.id === 'ask' }"
-                @mousemove="active = r.i"
-                @mousedown.prevent="r.item.run()"
-              >
-                <HIcon :name="r.item.icon" :size="16" />
-                <span class="label">{{ r.item.label }}</span>
-                <span v-if="r.item.hint" class="hint">{{ r.item.hint }}</span>
-              </li>
-            </template>
-            <li v-if="!items.length" class="none" role="presentation">Nothing matches.</li>
-          </ul>
-          <footer class="foot">
-            <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
-            <span><kbd>Enter</kbd> open</span>
-            <span v-if="ai.enabled"><kbd>Tab</kbd> ask AI</span>
-            <span class="spacer" />
-            <span><kbd>{{ isMac ? '⌘' : 'Ctrl' }}</kbd><kbd>K</kbd></span>
-          </footer>
-        </template>
+  <UModal
+    :open="open"
+    title="Command palette"
+    :ui="{
+      header: 'sr-only',
+      body: 'p-0 sm:p-0 flex flex-1 flex-col min-h-0 overflow-hidden',
+      // `sm:` too: Nuxt UI's own height limit is an `sm:` class, which would win otherwise.
+      content: `max-w-[680px] sm:top-[12vh] sm:translate-y-0 ${mode === 'chat' ? 'h-[70vh] sm:h-[70vh]' : 'max-h-[72vh] sm:max-h-[72vh]'}`,
+    }"
+    @update:open="onOpenChange"
+  >
+    <template #body>
+      <template v-if="mode === 'search'">
+        <UCommandPalette
+          ref="input"
+          v-model:search-term="q"
+          :groups="groups"
+          icon="i-havre-search"
+          :placeholder="ai.enabled ? 'Go to, search, or ask AI anything…' : 'Go to, search people and mail…'"
+          :close="false"
+          class="flex-1 min-h-0"
+          @keydown="onSearchKey"
+        >
+          <template #empty>Nothing matches.</template>
+        </UCommandPalette>
+        <footer class="foot">
+          <span><UKbd value="↑" /><UKbd value="↓" /> move</span>
+          <span><UKbd value="Enter" /> open</span>
+          <span v-if="ai.enabled"><UKbd value="Tab" /> ask AI</span>
+          <span class="spacer" />
+          <span><UKbd :value="isMac ? '⌘' : 'Ctrl'" /><UKbd value="K" /></span>
+        </footer>
+      </template>
 
-        <template v-else>
-          <header class="chat-head">
-            <button type="button" class="icon-btn" aria-label="Back to search" @click="mode = 'search'; nextTick(() => input?.focus())">
-              <HIcon name="back" :size="16" />
-            </button>
-            <HIcon name="sparkle" :size="15" class="spark" />
-            <span>Ask AI</span>
-            <span class="model">{{ ai.model }}{{ ai.local ? ' · local' : '' }}</span>
-            <span class="spacer" />
-            <NuxtLink
-              v-if="conversation"
-              :to="{ path: '/ai', query: { c: conversation } }"
-              class="continue"
-              @click="close"
-            >
-              Continue in the AI app →
-            </NuxtLink>
-            <button type="button" class="icon-btn" aria-label="Close" @click="close">
-              <HIcon name="close" :size="16" />
-            </button>
-          </header>
-          <div ref="chatLog" class="log" aria-live="polite">
-            <div v-for="(c, n) in chat" :key="n" class="turn" :class="c.role">
-              <p v-if="c.role === 'user'" class="q">{{ c.text }}</p>
-              <template v-else>
-                <ul v-if="c.answer?.steps.length" class="steps">
-                  <li v-for="(s, k) in c.answer.steps" :key="k"><HIcon name="check" :size="12" /> {{ s.label }}</li>
-                </ul>
-                <p v-if="c.error" class="err"><HIcon name="alert" :size="14" /> {{ c.error }}</p>
-                <div v-else class="a">
-                  <p v-for="(line, k) in parse(c)" :key="k" :class="{ bullet: line.bullet }">
-                    <template v-for="(part, j) in line.parts" :key="j">
-                      <button
-                        v-if="part.ref"
-                        type="button"
-                        class="ref"
-                        :title="refLabel(c, part.ref)"
-                        @click="openRef(c, part.ref)"
-                      >
-                        {{ refLabel(c, part.ref) }}
-                      </button>
-                      <strong v-else-if="part.bold">{{ part.text }}</strong>
-                      <template v-else>{{ part.text }}</template>
-                    </template>
-                  </p>
-                </div>
-                <div v-if="cited(c).length" class="cards">
-                  <button
-                    v-for="x in cited(c)"
-                    :key="x.id"
-                    type="button"
-                    class="card"
-                    @click="router.push(messageLink(x.hit!)); close()"
-                  >
-                    <HIcon name="mail" :size="14" />
-                    <span class="ct">{{ x.hit!.subject || '(no subject)' }}</span>
-                    <span class="cf">{{ personLabel(x.hit!.from) }} · {{ shortDate(x.hit!.date) }}</span>
-                  </button>
-                </div>
-                <div v-if="citedItems(c).length" class="cards">
-                  <button v-for="x in citedItems(c)" :key="x.id" type="button" class="card" @click="router.push(x.to); close()">
-                    <HIcon :name="x.kind === 'note' ? 'note' : 'task'" :size="14" />
-                    <span class="ct">{{ x.title }}</span>
-                    <span class="cf">{{ x.detail }}</span>
-                  </button>
-                </div>
-                <AiPlan
-                  v-if="c.answer?.proposals.length"
-                  :proposals="c.answer.proposals"
-                  :done="c.answer.proposals.flatMap((p, k) => (done.has(p) ? [k] : []))"
-                  :off="dismissed.has(c)"
-                />
-              </template>
-            </div>
-            <div v-if="chatBusy" class="turn assistant">
-              <p class="thinking"><span class="dot" /><span class="dot" /><span class="dot" /> Looking it up…</p>
-            </div>
+      <div v-else class="chat" @keydown="onPlanKey">
+        <header class="chat-head">
+          <UButton
+            icon="i-havre-back"
+            color="neutral"
+            variant="ghost"
+            square
+            aria-label="Back to search"
+            @click="mode = 'search'; nextTick(focusSearch)"
+          />
+          <HIcon name="sparkle" :size="15" class="spark" />
+          <span>Ask AI</span>
+          <span class="model">{{ ai.model }}{{ ai.local ? ' · local' : '' }}</span>
+          <span class="spacer" />
+          <NuxtLink
+            v-if="conversation"
+            :to="{ path: '/ai', query: { c: conversation } }"
+            class="continue"
+            @click="close"
+          >
+            Continue in the AI app →
+          </NuxtLink>
+          <UButton
+            icon="i-havre-close"
+            color="neutral"
+            variant="ghost"
+            square
+            type="button"
+            aria-label="Close"
+            @click="close"
+          />
+        </header>
+        <div ref="chatLog" class="log" aria-live="polite">
+          <div v-for="(c, n) in chat" :key="n" class="turn" :class="c.role">
+            <p v-if="c.role === 'user'" class="q">{{ c.text }}</p>
+            <template v-else>
+              <ul v-if="c.answer?.steps.length" class="steps">
+                <li v-for="(s, k) in c.answer.steps" :key="k"><HIcon name="check" :size="12" /> {{ s.label }}</li>
+              </ul>
+              <p v-if="c.error" class="err"><HIcon name="alert" :size="14" /> {{ c.error }}</p>
+              <div v-else class="a">
+                <p v-for="(line, k) in parse(c)" :key="k" :class="{ bullet: line.bullet }">
+                  <template v-for="(part, j) in line.parts" :key="j">
+                    <button
+                      v-if="part.ref"
+                      type="button"
+                      class="ref"
+                      :title="refLabel(c, part.ref)"
+                      @click="openRef(c, part.ref)"
+                    >
+                      {{ refLabel(c, part.ref) }}
+                    </button>
+                    <strong v-else-if="part.bold">{{ part.text }}</strong>
+                    <template v-else>{{ part.text }}</template>
+                  </template>
+                </p>
+              </div>
+              <div v-if="cited(c).length" class="cards">
+                <button
+                  v-for="x in cited(c)"
+                  :key="x.id"
+                  type="button"
+                  class="card"
+                  @click="router.push(messageLink(x.hit!)); close()"
+                >
+                  <HIcon name="mail" :size="14" />
+                  <span class="ct">{{ x.hit!.subject || '(no subject)' }}</span>
+                  <span class="cf">{{ personLabel(x.hit!.from) }} · {{ shortDate(x.hit!.date) }}</span>
+                </button>
+              </div>
+              <div v-if="citedItems(c).length" class="cards">
+                <button v-for="x in citedItems(c)" :key="x.id" type="button" class="card" @click="router.push(x.to); close()">
+                  <HIcon :name="x.kind === 'note' ? 'note' : 'task'" :size="14" />
+                  <span class="ct">{{ x.title }}</span>
+                  <span class="cf">{{ x.detail }}</span>
+                </button>
+              </div>
+              <AiPlan
+                v-if="c.answer?.proposals.length"
+                :proposals="c.answer.proposals"
+                :done="c.answer.proposals.flatMap((p, k) => (done.has(p) ? [k] : []))"
+                :off="dismissed.has(c)"
+              />
+            </template>
           </div>
-          <div v-if="pending" class="confirmbar">
-            <span class="lockline"><HIcon name="lock" :size="13" /> Nothing runs until you confirm · {{ ai.local ? 'local model' : ai.model }}</span>
-            <span class="spacer" />
-            <button type="button" class="ghost" :disabled="running" @click="cancelPlan">Cancel</button>
-            <button v-if="pendingEmail" type="button" class="outline" :disabled="running" @click="editEmail">Edit email</button>
-            <button type="button" class="confirm" :disabled="running" @click="confirmAll">
-              {{ pending.left.length > 1 ? (pending.left.length === 2 ? 'Confirm both' : `Confirm all ${pending.left.length}`) : 'Confirm' }}
-              <kbd class="mono">↵</kbd>
-            </button>
+          <div v-if="chatBusy" class="turn assistant">
+            <p class="thinking"><span class="dot" /><span class="dot" /><span class="dot" /> Looking it up…</p>
           </div>
-          <form v-else class="ask" @submit.prevent="send(chatInput)">
-            <textarea
-              ref="chatInputEl"
-              v-model="chatInput"
-              rows="1"
-              placeholder="Ask a follow-up…"
-              aria-label="Ask a follow-up"
-              :disabled="chatBusy"
-              @keydown.enter.exact.prevent="send(chatInput)"
-            />
-            <button type="submit" class="btn btn-primary small" :disabled="chatBusy || !chatInput.trim()">Ask</button>
-          </form>
-          <p v-if="!pending" class="disclaimer">AI answers can be wrong. Nothing is created, moved or sent until you confirm.</p>
-        </template>
+        </div>
+        <div v-if="pending" class="confirmbar">
+          <span class="lockline"><HIcon name="lock" :size="13" /> Nothing runs until you confirm · {{ ai.local ? 'local model' : ai.model }}</span>
+          <span class="spacer" />
+          <UButton color="neutral" variant="ghost" size="sm" :disabled="running" @click="cancelPlan">Cancel</UButton>
+          <UButton v-if="pendingEmail" color="neutral" variant="outline" size="sm" :disabled="running" @click="editEmail">
+            Edit email
+          </UButton>
+          <UButton size="sm" class="confirm" :loading="running" :disabled="running" @click="confirmAll">
+            {{ pending.left.length > 1 ? (pending.left.length === 2 ? 'Confirm both' : `Confirm all ${pending.left.length}`) : 'Confirm' }}
+            <template #trailing><UKbd value="↵" /></template>
+          </UButton>
+        </div>
+        <UChatPrompt
+          v-else
+          ref="chatInputEl"
+          v-model="chatInput"
+          placeholder="Ask a follow-up…"
+          aria-label="Ask a follow-up"
+          :disabled="chatBusy"
+          :autofocus="false"
+          :maxrows="5"
+          variant="outline"
+          class="ask"
+          @submit="send(chatInput)"
+        >
+          <UChatPromptSubmit :status="chatBusy ? 'submitted' : 'ready'" :disabled="chatBusy || !chatInput.trim()">
+            Ask
+          </UChatPromptSubmit>
+        </UChatPrompt>
+        <p v-if="!pending" class="disclaimer">AI answers can be wrong. Nothing is created, moved or sent until you confirm.</p>
       </div>
-    </div>
-  </Teleport>
+    </template>
+  </UModal>
 </template>
 
 <style scoped>
+/* The chat fills the dialog: header, the answers (scrolling), the prompt. */
+.chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .backdrop {
   position: fixed;
   inset: 0;
@@ -659,99 +678,6 @@ function onPlanKey(e: KeyboardEvent) {
   padding: 12vh 16px 16px;
   background: rgb(0 0 0 / 0.4);
 }
-.palette {
-  width: min(680px, 100%);
-  max-height: 72vh;
-  display: flex;
-  flex-direction: column;
-  border-radius: 18px;
-  border: 1px solid var(--line2);
-  background: var(--raise);
-  box-shadow: 0 24px 80px rgb(0 0 0 / 0.45);
-  overflow: hidden;
-}
-.palette.chat {
-  height: 70vh;
-}
-.field {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--line);
-  color: var(--faint);
-}
-.field input {
-  flex: 1;
-  height: 60px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: 16px;
-  outline: none;
-}
-kbd {
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid var(--line2);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--faint);
-}
-.list {
-  flex: 1;
-  margin: 0;
-  padding: 6px;
-  list-style: none;
-  overflow-y: auto;
-}
-.group {
-  padding: 10px 10px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--faint);
-}
-.item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 9px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.item.on {
-  background: var(--sel);
-  color: var(--text);
-}
-.item.ask {
-  color: var(--accent);
-}
-.label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-  font-size: 14px;
-}
-.hint {
-  flex: 0 1 auto;
-  max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--faint);
-}
-.none {
-  padding: 18px 12px;
-  color: var(--faint);
-  font-size: 13.5px;
-}
 .foot {
   display: flex;
   gap: 14px;
@@ -759,9 +685,6 @@ kbd {
   border-top: 1px solid var(--line);
   font-size: 12px;
   color: var(--faint);
-}
-.foot kbd {
-  margin-right: 3px;
 }
 .spacer {
   flex: 1;
@@ -907,47 +830,6 @@ kbd {
   font-size: 12.5px;
   color: var(--faint);
 }
-.confirmbar button {
-  height: 34px;
-  padding: 0 12px;
-  border-radius: 9px;
-  font-size: 13px;
-  cursor: pointer;
-}
-.confirmbar .ghost {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-}
-.confirmbar .ghost:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.confirmbar .outline {
-  border: 1px solid var(--line2);
-  background: transparent;
-  color: var(--text);
-}
-.confirmbar .confirm {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  border: 0;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 500;
-}
-.confirmbar .confirm kbd {
-  border: 0;
-  padding: 0;
-  color: inherit;
-  opacity: 0.7;
-}
-.confirmbar button:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
 .thinking {
   display: flex;
   align-items: center;
@@ -976,28 +858,8 @@ kbd {
   }
 }
 .ask {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--line);
-}
-.ask textarea {
-  flex: 1;
-  min-height: 36px;
-  max-height: 120px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  resize: none;
-  outline: none;
-}
-.ask textarea:focus {
-  border-color: var(--accent);
+  width: auto;
+  margin: 10px 12px 0;
 }
 .disclaimer {
   margin: 0;
@@ -1006,14 +868,9 @@ kbd {
   color: var(--faint);
 }
 @media (max-width: 720px) {
-  .backdrop {
-    padding: 8px;
-    align-items: stretch;
-  }
-  .palette,
-  .palette.chat {
-    max-height: none;
-    height: auto;
+  /* Key hints are for keyboards. */
+  .foot {
+    display: none;
   }
 }
 </style>

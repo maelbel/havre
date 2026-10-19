@@ -42,16 +42,14 @@ async function create() {
   <PopMenu icon="tag" label="Label" title="Label (L)" :text="props.text">
     <div class="eyebrow head">Label as</div>
     <form class="find" @submit.prevent="create">
-      <label class="sr-only" for="label-find">Find or create a label</label>
-      <input id="label-find" v-model="filter" type="text" placeholder="Find or create…" autocomplete="off" />
+      <UInput v-model="filter" placeholder="Find or create…" autocomplete="off" size="sm" aria-label="Find or create a label" class="w-full" />
     </form>
-    <button
+    <UButton
       v-for="l in shown"
       :key="l.id"
-      type="button"
       role="menuitemcheckbox"
       :aria-checked="state[l.id] === 'all' ? 'true' : state[l.id] === 'some' ? 'mixed' : 'false'"
-      class="item"
+      color="neutral" variant="ghost" block class="justify-start font-normal"
       @click="emit('toggle', l.id, state[l.id] !== 'all')"
     >
       <span class="box" :class="state[l.id]" aria-hidden="true">
@@ -59,12 +57,11 @@ async function create() {
         <span v-else-if="state[l.id] === 'some'" class="dash" />
       </span>
       <span class="hash mono" :style="{ color: `var(--c-${l.color})` }" aria-hidden="true">#</span>
-      <span class="grow">{{ l.name }}</span>
-    </button>
-    <button v-if="canCreate" type="button" role="menuitem" class="item" @click="create">
-      <HIcon name="plus" :size="14" />
-      <span class="grow">Create “{{ filter.trim() }}”</span>
-    </button>
+      <span class="grow text-left">{{ l.name }}</span>
+    </UButton>
+    <UButton v-if="canCreate" role="menuitem" icon="i-havre-plus" color="neutral" variant="ghost" block class="justify-start font-normal" @click="create">
+      Create “{{ filter.trim() }}”
+    </UButton>
     <p v-if="!organize.labels.length && !filter" class="none">No labels yet: type a name to create one.</p>
   </PopMenu>
 </template>
@@ -75,41 +72,6 @@ async function create() {
 }
 .find {
   padding: 0 4px 6px;
-}
-.find input {
-  width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: 8px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  outline: none;
-}
-.find input:focus {
-  border-color: var(--accent);
-}
-.item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-  text-align: left;
-  cursor: pointer;
-}
-.item:hover,
-.item:focus-visible {
-  background: var(--hover);
-  outline: none;
 }
 .box {
   flex: 0 0 15px;

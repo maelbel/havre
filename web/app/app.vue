@@ -5,8 +5,11 @@ const desktop = isDesktop()
 </script>
 
 <template>
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
-  <DesktopBridge v-if="desktop && route.path !== '/login'" />
+  <!-- UApp: Nuxt UI's root (toasts, tooltips, dialogs opened from code). -->
+  <UApp :toaster="{ position: 'bottom-center', max: 3 }">
+    <NuxtLayout>
+      <NuxtPage />
+    </NuxtLayout>
+    <DesktopBridge v-if="desktop && !isLoginPath(route.path)" />
+  </UApp>
 </template>

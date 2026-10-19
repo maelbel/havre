@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { SplitPaneSpec } from '~/composables/useSplit'
 import type { FileEmail, FileItem, FileList, FilesProgress } from '~/composables/useFiles'
 
 // Files: every attachment in your mail. Views, kinds and people on the left,
@@ -113,13 +114,13 @@ const fullDate = (iso: string | null) =>
     : ''
 
 // ---- Keys: / search, D download, O open the email, Esc close ----------------------------
-const searchInput = ref<HTMLInputElement | null>(null)
+const searchInput = ref<{ inputRef: HTMLInputElement | null } | null>(null)
 function onKey(e: KeyboardEvent) {
   const typing = (e.target as HTMLElement)?.closest?.('input, textarea, select, [contenteditable]')
   if (typing || e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === '/') {
     e.preventDefault()
-    searchInput.value?.focus()
+    searchInput.value?.inputRef?.focus()
   } else if (e.key === 'd' && selected.value) {
     e.preventDefault()
     window.location.assign(fileUrl(selected.value))
@@ -132,12 +133,19 @@ function onKey(e: KeyboardEvent) {
 }
 onMounted(() => document.addEventListener('keydown', onKey))
 onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
+
+// Resizable panes (wide screens): views · list · file.
+const splitPanes: SplitPaneSpec[] = [
+  { id: 'views', size: 232, min: 200, max: 320, collapsible: true, handle: { label: 'Resize the views', fold: true, showLabel: 'Show views' } },
+  { id: 'list', min: 380, handle: { label: 'Resize the file' } },
+  { id: 'file', size: 380, min: 320, max: 640 },
+]
 </script>
 
 <template>
   <div class="files-app" :class="{ 'has-file': selectedKey != null }">
-    <SplitGroup id="files">
-    <SplitPane id="views" :size="232" :min="200" :max="320" collapsible>
+    <SplitView id="files" :panes="splitPanes">
+    <template #views>
     <aside class="side" aria-label="Files views">
       <div class="side-head">
         <h1 class="serif">Files</h1>
@@ -207,18 +215,23 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
         <NuxtLink to="/settings/apps/files" class="small">How far back →</NuxtLink>
       </section>
     </aside>
-    </SplitPane>
+    </template>
 
-    <SplitHandle label="Resize the views" fold="views" show-label="Show views" />
-    <SplitPane id="list" :min="380">
+    <template #list>
     <section class="list" aria-label="Files">
       <div class="find">
-        <label class="search">
-          <HIcon name="search" :size="16" />
-          <span class="sr-only">Search files</span>
-          <input ref="searchInput" v-model="search" type="search" placeholder="Search files by name, sender or email" />
-          <kbd class="mono">/</kbd>
-        </label>
+        <UInput
+          ref="searchInput"
+          v-model="search"
+          type="search"
+          icon="i-havre-search"
+          size="lg"
+          placeholder="Search files by name, sender or email"
+          aria-label="Search files"
+          class="w-full"
+        >
+          <template #trailing><UKbd value="/" /></template>
+        </UInput>
         <div class="list-head">
           <h2>{{ heading }}</h2>
           <span class="faint small">
@@ -248,8 +261,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
             <span class="body">
               <span class="top">
                 <span class="fname">{{ f.name }}</span>
-                <span v-if="f.copies.length" class="badge">{{ f.copies.length + 1 }} emails</span>
-                <span v-if="f.versions.length" class="badge">{{ f.versions.length + 1 }} versions</span>
+                <UBadge v-if="f.copies.length" color="neutral" variant="outline" size="sm">{{ f.copies.length + 1 }} emails</UBadge>
+                <UBadge v-if="f.versions.length" color="neutral" variant="outline" size="sm">{{ f.versions.length + 1 }} versions</UBadge>
               </span>
               <span class="meta">{{ who(f) }} · {{ f.subject || '(no subject)' }}</span>
             </span>
@@ -261,20 +274,32 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
         </template>
       </div>
     </section>
-    </SplitPane>
+    </template>
 
-    <SplitHandle label="Resize the file" />
-    <SplitPane id="file" :size="380" :min="320" :max="640">
+    <template #file>
     <aside class="file" aria-label="File">
       <template v-if="selected">
         <div class="file-bar">
-          <button type="button" class="icon-btn back" aria-label="Back to the files" @click="closeFile">
-            <HIcon name="back" :size="18" />
-          </button>
+          <UButton
+            icon="i-havre-back"
+            color="neutral"
+            variant="ghost"
+            square
+            class="back"
+            type="button"
+            aria-label="Back to the files"
+            @click="closeFile"
+          />
           <span class="grow" />
-          <button type="button" class="icon-btn" aria-label="Close the file" @click="closeFile">
-            <HIcon name="close" :size="16" />
-          </button>
+          <UButton
+            icon="i-havre-close"
+            color="neutral"
+            variant="ghost"
+            square
+            type="button"
+            aria-label="Close the file"
+            @click="closeFile"
+          />
         </div>
         <div class="file-body">
           <div class="preview" :style="{ '--t': fileTint(selected.kind) }">
@@ -286,10 +311,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
             <div class="faint small">{{ fileKindName(selected.kind) }} · {{ fileSize(selected.size) }}</div>
           </div>
           <div class="actions">
-            <a class="btn btn-primary" :href="fileUrl(selected)" :download="selected.name">
-              <HIcon name="download" :size="14" /> Download
-            </a>
-            <NuxtLink class="btn" :to="messageLink(selected)">Open the email</NuxtLink>
+            <UButton icon="i-havre-download" :href="fileUrl(selected)" :download="selected.name">
+              Download
+            </UButton>
+            <UButton color="neutral" variant="outline" :to="messageLink(selected)">Open the email</UButton>
           </div>
           <dl class="facts">
             <dt>{{ selected.sent ? 'Sent' : 'From' }}</dt>
@@ -321,15 +346,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
       </template>
       <div v-else-if="selectedKey" class="none">
         <p>This file isn't in the list any more.</p>
-        <button type="button" class="btn" @click="closeFile">Back to the files</button>
+        <UButton color="neutral" variant="outline" type="button" @click="closeFile">
+          Back to the files
+        </UButton>
       </div>
       <div v-else class="none">
         <HIcon name="folder" :size="28" />
         <p>Pick a file to see where it came from, its other versions, and to download it.</p>
       </div>
     </aside>
-    </SplitPane>
-    </SplitGroup>
+    </template>
+    </SplitView>
   </div>
 </template>
 
@@ -482,35 +509,6 @@ h1 {
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--line);
 }
-.search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--line2);
-  border-radius: 10px;
-  background: var(--bg);
-  color: var(--faint);
-}
-.search:focus-within {
-  border-color: var(--accent);
-}
-.search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--text);
-  font-size: 14px;
-}
-.search kbd {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid var(--line2);
-}
 .list-head {
   display: flex;
   align-items: baseline;
@@ -589,15 +587,6 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.badge {
-  flex: none;
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: 999px;
-  border: 1px solid var(--line2);
-  color: var(--muted);
-  white-space: nowrap;
-}
 .meta {
   font-size: 12.5px;
   color: var(--muted);
@@ -631,24 +620,8 @@ h2 {
   padding: 0 8px;
   flex: none;
 }
-.icon-btn {
-  width: 34px;
-  height: 34px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-.icon-btn:hover {
-  background: var(--hover);
-  color: var(--text);
-}
 /* After .icon-btn, so it wins: on wide screens the list is beside the file. */
-.icon-btn.back {
+.back {
   display: none;
 }
 .file-body {
@@ -689,12 +662,6 @@ h2 {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-.actions .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  text-decoration: none;
 }
 .facts {
   margin: 0;
@@ -762,7 +729,7 @@ dd {
     display: flex;
     flex: 1;
   }
-  .icon-btn.back {
+  .back {
     display: inline-flex;
   }
 }
