@@ -252,7 +252,10 @@ fn to_bytes(v: &[f32]) -> Vec<u8> {
 }
 
 fn from_bytes(b: &[u8]) -> Vec<f32> {
-    b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    // `as_chunks::<4>()` cuts the bytes into `[u8; 4]` arrays (and a leftover,
+    // ignored): the size is known when compiling, so no indexing is needed.
+    let (chunks, _rest) = b.as_chunks::<4>();
+    chunks.iter().map(|c| f32::from_le_bytes(*c)).collect()
 }
 
 #[cfg(test)]
