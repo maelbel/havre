@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { SplitPaneSpec } from '~/composables/useSplit'
 import type { AiAnswer, AiConversation, AiConversationSummary, AiHit, AiSettings, AiStoredTurn } from '~/composables/useAi'
 import type { MessageDetail } from '~/composables/useMail'
 
@@ -60,7 +61,7 @@ const current = ref<AiConversation | null>(null)
 const asking = ref<string | null>(null)
 const askError = ref<string | null>(null)
 const question = ref('')
-const composer = ref<HTMLTextAreaElement | null>(null)
+const composer = ref<{ textareaRef: HTMLTextAreaElement | null } | null>(null)
 const log = ref<HTMLElement | null>(null)
 
 async function open(id: number | null) {
@@ -68,7 +69,7 @@ async function open(id: number | null) {
   panel.value = null
   if (id == null) {
     current.value = null
-    nextTick(() => composer.value?.focus())
+    nextTick(() => composer.value?.textareaRef?.focus())
     return
   }
   if (current.value?.id === id) return
@@ -90,7 +91,7 @@ function newConversation() {
   composing.value = true
   router.replace({ query: {} })
   question.value = ''
-  nextTick(() => composer.value?.focus())
+  nextTick(() => composer.value?.textareaRef?.focus())
 }
 
 function scrollDown() {
@@ -116,16 +117,9 @@ async function send() {
   } finally {
     asking.value = null
     scrollDown()
-    nextTick(() => composer.value?.focus())
+    nextTick(() => composer.value?.textareaRef?.focus())
   }
 }
-function onComposerKey(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-    e.preventDefault()
-    send()
-  }
-}
-
 // ---- Title and delete -------------------------------------------------------------
 const editingTitle = ref<string | null>(null)
 async function saveTitle() {
@@ -237,22 +231,35 @@ const showConversation = computed(() => selectedId.value != null || !!asking.val
 
 // Last, once everything `open` uses exists (`immediate` runs it at once).
 watch(selectedId, open, { immediate: true })
+
+// Resizable panes (wide screens): conversations · conversation · the opened email.
+const splitPanes = computed<SplitPaneSpec[]>(() => [
+  { id: 'conversations', order: 1, size: 248, min: 200, max: 360, collapsible: true, handle: { label: 'Resize the conversations', fold: true, showLabel: 'Show conversations' } },
+  { id: 'conversation', order: 2, min: 420, handle: panel.value ? { label: 'Resize the opened email' } : undefined },
+  ...(panel.value ? [{ id: 'email', order: 3, size: 400, min: 320, max: 720 }] : []),
+])
+
+// Ideas for a first question.
+const IDEAS = [
+  { label: 'What needs an answer from me today?', question: 'What needs an answer from me today?' },
+  { label: 'What’s left this week?', question: 'What’s left this week?' },
+  { label: 'Find a free hour next week', question: 'Find a free hour next week for a 30-minute call' },
+]
 </script>
 
 <template>
   <div class="ai-app" :class="{ 'has-conv': showConversation, 'has-panel': !!panel }">
-    <SplitGroup id="ai">
-    <SplitPane id="conversations" :order="1" :size="248" :min="200" :max="360" collapsible>
+    <SplitView id="ai" :panes="splitPanes">
+    <template #conversations>
     <aside class="side" aria-label="Conversations">
       <div class="side-head">
         <h1 class="serif">AI</h1>
         <span class="mono faint tiny">{{ modelLabel }}</span>
       </div>
-      <button type="button" class="new btn-primary" @click="newConversation">
-        <HIcon name="plus" :size="15" :stroke-width="2" />
+      <UButton icon="i-havre-plus" block class="new" @click="newConversation">
         <span class="grow">New conversation</span>
-        <kbd class="mono">N</kbd>
-      </button>
+        <template #trailing><UKbd value="N" /></template>
+      </UButton>
 
       <p v-if="!loadingList && !list.length" class="faint small empty-list">Your conversations will be listed here.</p>
       <template v-for="g in groups" :key="g.label">
@@ -297,32 +304,38 @@ watch(selectedId, open, { immediate: true })
         <NuxtLink to="/settings/ai" class="small to-settings">AI settings →</NuxtLink>
       </section>
     </aside>
-    </SplitPane>
+    </template>
 
-    <SplitHandle label="Resize the conversations" fold="conversations" show-label="Show conversations" />
-    <SplitPane id="conversation" :order="2" :min="420">
+    <template #conversation>
     <main class="conv-main" aria-label="Conversation">
       <!-- Not in the dock, or no model yet -->
       <div v-if="!ai.installed" class="setup">
         <HIcon name="sparkle" :size="26" />
         <h2 class="serif">The AI app isn’t in your dock</h2>
         <p>Add it to ask about your mail and your days, and to get the brief, summaries and drafts in the other apps.</p>
-        <button type="button" class="btn btn-primary" @click="addApp">Add AI to your dock</button>
+        <UButton type="button" @click="addApp">Add AI to your dock</UButton>
       </div>
       <div v-else-if="!ai.enabled" class="setup">
         <HIcon name="sparkle" :size="26" />
         <h2 class="serif">Choose where the model runs</h2>
         <p>On this server with Ollama (nothing leaves your network), with your Claude plan, or with a provider you choose.</p>
-        <NuxtLink to="/settings/ai" class="btn btn-primary">Set up AI</NuxtLink>
+        <UButton to="/settings/ai">Set up AI</UButton>
       </div>
 
       <template v-else>
         <header class="bar">
-          <button type="button" class="icon-btn back" aria-label="Back to conversations" @click="composing = false; router.replace({ query: {} })">
-            <HIcon name="back" :size="18" />
-          </button>
+          <UButton
+            icon="i-havre-back"
+            color="neutral"
+            variant="ghost"
+            square
+            class="back"
+            type="button"
+            aria-label="Back to conversations"
+            @click="composing = false; router.replace({ query: {} })"
+          />
           <template v-if="current">
-            <input
+            <UInput
               v-if="editingTitle !== null"
               v-model="editingTitle"
               class="title-input"
@@ -334,15 +347,15 @@ watch(selectedId, open, { immediate: true })
             />
             <button v-else type="button" class="title" title="Rename" @click="editingTitle = current.title">{{ current.title }}</button>
             <span class="mono faint tiny when">{{ when(current.updated_at) }}</span>
-            <button
+            <UButton
+              icon="i-havre-trash"
+              :color="confirmDelete ? 'error' : 'neutral'"
+              variant="ghost"
+              square
               type="button"
-              class="icon-btn"
-              :class="{ danger: confirmDelete }"
               :aria-label="confirmDelete ? 'Click again to delete the conversation' : 'Delete conversation'"
               @click="remove"
-            >
-              <HIcon name="trash" :size="16" />
-            </button>
+            />
           </template>
           <h2 v-else class="title plain">New conversation</h2>
         </header>
@@ -352,9 +365,16 @@ watch(selectedId, open, { immediate: true })
             <div v-if="!current && !asking" class="hello">
               <h2 class="serif">What would you like to know?</h2>
               <div class="ideas">
-                <button type="button" @click="question = 'What needs an answer from me today?'; send()">What needs an answer from me today?</button>
-                <button type="button" @click="question = 'What’s left this week?'; send()">What’s left this week?</button>
-                <button type="button" @click="question = 'Find a free hour next week for a 30-minute call'; send()">Find a free hour next week</button>
+                <UButton
+                  v-for="idea in IDEAS"
+                  :key="idea.label"
+                  color="neutral"
+                  variant="outline"
+                  class="rounded-full"
+                  @click="question = idea.question; send()"
+                >
+                  {{ idea.label }}
+                </UButton>
               </div>
             </div>
 
@@ -407,18 +427,19 @@ watch(selectedId, open, { immediate: true })
                   <div v-if="left(t).length" class="confirm-bar">
                     <span class="lock"><HIcon name="lock" :size="13" /> Nothing runs until you confirm</span>
                     <span class="grow" />
-                    <button
+                    <UButton
                       v-if="left(t).some((x) => x.p.kind === 'email')"
-                      type="button"
-                      class="btn small"
+                      color="neutral"
+                      variant="outline"
+                      size="sm"
                       :disabled="running != null"
                       @click="confirm(t, true)"
                     >
                       Edit email
-                    </button>
-                    <button type="button" class="btn btn-primary small" :disabled="running != null" @click="confirm(t)">
+                    </UButton>
+                    <UButton size="sm" type="button" :disabled="running != null" @click="confirm(t)">
                       {{ running === t.id ? 'Running…' : left(t).length > 1 ? `Confirm all ${left(t).length}` : 'Confirm' }}
-                    </button>
+                    </UButton>
                   </div>
                 </template>
               </div>
@@ -434,20 +455,26 @@ watch(selectedId, open, { immediate: true })
 
         <div class="composer">
           <div class="col">
-            <label class="box">
-              <span class="sr-only">Ask the assistant</span>
-              <textarea
-                ref="composer"
-                v-model="question"
-                rows="1"
-                placeholder="Ask about your mail, agenda or people…"
-                :disabled="!!asking"
-                @keydown="onComposerKey"
+            <!-- Enter sends, Shift+Enter makes a new line (UChatPrompt does both). -->
+            <UChatPrompt
+              ref="composer"
+              v-model="question"
+              placeholder="Ask about your mail, agenda or people…"
+              aria-label="Ask the assistant"
+              :disabled="!!asking"
+              :autofocus="false"
+              :maxrows="8"
+              variant="outline"
+              class="box"
+              @submit="send"
+            >
+              <UChatPromptSubmit
+                icon="i-havre-send"
+                :status="asking ? 'submitted' : 'ready'"
+                :disabled="!!asking || !question.trim()"
+                aria-label="Send question"
               />
-              <button type="button" class="send btn-primary" aria-label="Send question" :disabled="!!asking || !question.trim()" @click="send">
-                <HIcon name="send" :size="16" />
-              </button>
-            </label>
+            </UChatPrompt>
             <div class="under">
               <span>Answers can be wrong. Emails it reads are treated as data, never as instructions.</span>
               <span class="mono">Ctrl K · quick question</span>
@@ -456,19 +483,24 @@ watch(selectedId, open, { immediate: true })
         </div>
       </template>
     </main>
-    </SplitPane>
+    </template>
 
     <!-- The email the assistant opened -->
-    <SplitHandle v-if="panel" label="Resize the opened email" />
-    <SplitPane v-if="panel" id="email" :order="3" :size="400" :min="320" :max="720">
+    <template v-if="panel" #email>
     <aside class="panel" aria-label="Opened email">
       <header class="bar panel-bar">
-        <span class="badge"><HIcon name="sparkle" :size="12" /> Opened by the assistant</span>
+        <UBadge icon="i-havre-sparkle" variant="soft" size="sm">Opened by the assistant</UBadge>
         <span class="grow-x" />
         <NuxtLink :to="messageLink(panel.hit)" class="small">Open in Mail →</NuxtLink>
-        <button type="button" class="icon-btn" aria-label="Close email" @click="panel = null">
-          <HIcon name="close" :size="16" />
-        </button>
+        <UButton
+          icon="i-havre-close"
+          color="neutral"
+          variant="ghost"
+          square
+          type="button"
+          aria-label="Close email"
+          @click="panel = null"
+        />
       </header>
       <div class="panel-body">
         <h3 class="serif">{{ panel.hit.subject || '(no subject)' }}</h3>
@@ -487,8 +519,8 @@ watch(selectedId, open, { immediate: true })
         <pre v-else class="plain-text">{{ panel.message.text }}</pre>
       </div>
     </aside>
-    </SplitPane>
-    </SplitGroup>
+    </template>
+    </SplitView>
   </div>
 </template>
 
@@ -536,12 +568,6 @@ h1 {
   margin-bottom: 12px;
   border-radius: 10px;
   font-weight: 500;
-}
-.new kbd {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid color-mix(in oklab, var(--on-accent) 30%, transparent);
 }
 .grow {
   flex: 1;
@@ -670,10 +696,6 @@ h1 {
   font-weight: 600;
   outline: none;
 }
-.icon-btn.danger {
-  color: var(--danger);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-}
 .log {
   flex: 1;
   overflow-y: auto;
@@ -703,19 +725,6 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-.ideas button {
-  height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--line2);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text);
-  font-size: 13.5px;
-  cursor: pointer;
-}
-.ideas button:hover {
-  background: var(--hover);
 }
 .q {
   align-self: flex-end;
@@ -897,46 +906,6 @@ a.card {
   padding: 0 32px 22px;
   gap: 8px;
 }
-.box {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  padding: 10px 10px 10px 16px;
-  border: 1px solid var(--line2);
-  border-radius: 14px;
-  background: var(--bg);
-}
-.box:focus-within {
-  border-color: var(--accent);
-}
-.box textarea {
-  flex: 1;
-  min-width: 0;
-  min-height: 26px;
-  max-height: 200px;
-  padding: 4px 0;
-  border: 0;
-  outline: none;
-  resize: none;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 14.5px;
-  field-sizing: content;
-}
-.send {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  flex: none;
-}
-.send:disabled {
-  opacity: 0.5;
-}
 .under {
   display: flex;
   justify-content: space-between;
@@ -970,9 +939,6 @@ a.card {
   max-width: 440px;
   line-height: 1.6;
 }
-.setup a.btn {
-  text-decoration: none;
-}
 
 /* The opened email */
 .panel {
@@ -989,16 +955,6 @@ a.card {
 }
 .panel-bar a {
   text-decoration: none;
-}
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px 3px 7px;
-  border-radius: 999px;
-  font-size: 12px;
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
-  color: var(--accent);
 }
 .grow-x {
   flex: 1;

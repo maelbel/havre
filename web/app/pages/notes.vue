@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { SplitPaneSpec } from '~/composables/useSplit'
 import type { AgendaEvent } from '~/composables/useAgenda'
 import type { Contact } from '~/composables/useCompose'
 import type { NotePerson, NoteSummary, NoteView } from '~/composables/useNotes'
@@ -152,8 +153,8 @@ const body = ref('')
 const saving = ref(false)
 const dirty = ref(false)
 const busyLine = ref<number | null>(null)
-const titleInput = ref<HTMLInputElement | null>(null)
-const textarea = ref<HTMLTextAreaElement | null>(null)
+const titleInput = ref<{ inputRef: HTMLInputElement | null } | null>(null)
+const textarea = ref<{ textareaRef: HTMLTextAreaElement | null } | null>(null)
 
 async function loadNote(id: number | null) {
   await flush()
@@ -228,7 +229,7 @@ const savedLabel = computed(() => {
 async function setMode(m: 'read' | 'edit') {
   if (m === 'read') await flush()
   mode.value = m
-  if (m === 'edit') nextTick(() => textarea.value?.focus())
+  if (m === 'edit') nextTick(() => textarea.value?.textareaRef?.focus())
 }
 
 /** Saves links or the pin at once (no waiting). */
@@ -300,7 +301,7 @@ async function newNote() {
     remember(v)
     justMade.value = v.id
     openNote(v.id)
-    nextTick(() => setTimeout(() => titleInput.value?.focus(), 50))
+    nextTick(() => setTimeout(() => titleInput.value?.inputRef?.focus(), 50))
   } catch (err) {
     toast.show(apiErrorMessage(err), { tone: 'error' })
   }
@@ -427,18 +428,23 @@ const selectedSummary = computed(() => notes.value.find((n) => n.id === selected
 // Last, once everything it uses exists: `immediate` runs it right away, and
 // a `const` used before its line is an error in JavaScript.
 watch(selectedId, loadNote, { immediate: true })
+
+// Resizable panes (wide screens): views · list · note.
+const splitPanes: SplitPaneSpec[] = [
+  { id: 'views', size: 232, min: 200, max: 320, collapsible: true, handle: { label: 'Resize the views', fold: true, showLabel: 'Show views' } },
+  { id: 'list', size: 300, min: 260, max: 520, handle: { label: 'Resize the notes list' } },
+  { id: 'note', min: 420 },
+]
 </script>
 
 <template>
   <div class="notes-app" :class="{ 'has-note': selectedId != null }">
-    <SplitGroup id="notes">
-    <SplitPane id="views" :size="232" :min="200" :max="320" collapsible>
+    <SplitView id="notes" :panes="splitPanes">
+    <template #views>
     <aside class="side" aria-label="Notes views">
       <div class="side-head">
         <h1 class="serif">Notes</h1>
-        <button type="button" class="new btn-primary" @click="newNote">
-          <HIcon name="plus" :size="13" :stroke-width="2" />New
-        </button>
+        <UButton icon="i-havre-plus" size="sm" class="new" @click="newNote">New</UButton>
       </div>
       <nav class="views" aria-label="Views">
         <button
@@ -484,33 +490,37 @@ watch(selectedId, loadNote, { immediate: true })
             <span class="mt">{{ e.title }}</span>
             <span class="mw">{{ meetingWhen(e) }}<template v-if="noteOf(e)"> · has a note</template></span>
           </span>
-          <button
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="xs"
             type="button"
-            class="mini"
             :aria-label="noteOf(e) ? `Open the note: ${e.title}` : `Take notes: ${e.title}`"
             @click="takeNotes(e)"
           >
             {{ noteOf(e) ? 'Open' : 'Notes' }}
-          </button>
+          </UButton>
         </div>
         <NuxtLink to="/agenda" class="to-agenda">Open Agenda →</NuxtLink>
       </section>
     </aside>
-    </SplitPane>
+    </template>
 
-    <SplitHandle label="Resize the views" fold="views" show-label="Show views" />
-    <SplitPane id="list" :size="300" :min="260" :max="520">
+    <template #list>
     <section class="list" aria-label="Notes">
       <header class="bar">
         <h2>{{ heading }}</h2>
         <span class="mono faint">{{ shown.length }}</span>
       </header>
       <div class="find">
-        <label class="search">
-          <HIcon name="search" :size="14" />
-          <span class="sr-only">Search notes</span>
-          <input v-model="search" type="search" placeholder="Search notes" />
-        </label>
+        <UInput
+          v-model="search"
+          type="search"
+          icon="i-havre-search"
+          placeholder="Search notes"
+          aria-label="Search notes"
+          class="w-full"
+        />
       </div>
       <div class="scroll">
         <p v-if="loading" class="empty">Loading…</p>
@@ -556,53 +566,78 @@ watch(selectedId, loadNote, { immediate: true })
         </template>
       </div>
     </section>
-    </SplitPane>
+    </template>
 
-    <SplitHandle label="Resize the notes list" />
-    <SplitPane id="note" :min="420">
+    <template #note>
     <main class="note" :aria-label="note ? noteTitle({ title }) : 'Note'">
       <template v-if="note">
         <header class="bar note-bar">
-          <button type="button" class="icon-btn back" aria-label="Back to notes" @click="closeNote">
-            <HIcon name="back" :size="18" />
-          </button>
-          <div class="mode" role="group" aria-label="Mode">
-            <button type="button" :aria-pressed="mode === 'read'" @click="setMode('read')">Read</button>
-            <button type="button" :aria-pressed="mode === 'edit'" @click="setMode('edit')">Edit</button>
-          </div>
+          <UButton
+            icon="i-havre-back"
+            color="neutral"
+            variant="ghost"
+            square
+            class="back"
+            type="button"
+            aria-label="Back to notes"
+            @click="closeNote"
+          />
+          <UTabs
+            :model-value="mode"
+            :items="[
+              { label: 'Read', value: 'read' },
+              { label: 'Edit', value: 'edit' },
+            ]"
+            :content="false"
+            color="neutral"
+            size="xs"
+            aria-label="Mode"
+            @update:model-value="(m) => setMode(m as 'read' | 'edit')"
+          />
           <span class="saved" aria-live="polite">{{ savedLabel }}</span>
           <span class="grow-x" />
-          <button
+          <UButton
+            icon="i-havre-pushpin"
+            :color="note.pinned ? 'primary' : 'neutral'"
+            :variant="note.pinned ? 'soft' : 'ghost'"
+            square
             type="button"
-            class="icon-btn"
-            :class="{ on: note.pinned }"
             :aria-pressed="note.pinned"
             :aria-label="note.pinned ? 'Unpin note' : 'Pin note'"
             @click="togglePin"
-          >
-            <HIcon name="pushpin" :size="16" />
-          </button>
-          <button type="button" class="icon-btn" aria-label="Download as Markdown" @click="downloadNote({ ...note, title, body })">
-            <HIcon name="download" :size="16" />
-          </button>
-          <button
+          />
+          <UButton
+            icon="i-havre-download"
+            color="neutral"
+            variant="ghost"
+            square
             type="button"
-            class="icon-btn"
-            :class="{ danger: confirming }"
+            aria-label="Download as Markdown"
+            @click="downloadNote({ ...note, title, body })"
+          />
+          <UButton
+            icon="i-havre-trash"
+            :color="confirming ? 'error' : 'neutral'"
+            variant="ghost"
+            square
+            type="button"
             :aria-label="confirming ? 'Click again to delete the note' : 'Delete note'"
             :title="confirming ? 'Click again to delete' : 'Delete'"
             @click="remove"
-          >
-            <HIcon name="trash" :size="16" />
-          </button>
+          />
         </header>
 
         <div class="scroll">
           <article class="page">
-            <label class="title-field">
-              <span class="sr-only">Title</span>
-              <input ref="titleInput" v-model="title" class="serif" placeholder="Untitled note" @keydown.enter.prevent="setMode('edit')" />
-            </label>
+            <UInput
+              ref="titleInput"
+              v-model="title"
+              variant="none"
+              placeholder="Untitled note"
+              aria-label="Title"
+              :ui="{ base: 'title-input p-0' }"
+              @keydown.enter.prevent="setMode('edit')"
+            />
 
             <div class="links">
               <NuxtLink v-if="note.event" :to="agendaDay(note.event.start)" class="link-chip">
@@ -615,33 +650,38 @@ watch(selectedId, loadNote, { immediate: true })
                   </span>
                   {{ notePersonLabel(p) }}
                 </NuxtLink>
-                <button
+                <UButton
                   v-if="mode === 'edit'"
+                  icon="i-havre-close"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  square
                   type="button"
-                  class="x"
                   :aria-label="`Remove ${notePersonLabel(p)} from this note`"
                   @click="removePerson(p.email)"
-                >
-                  <HIcon name="close" :size="12" />
-                </button>
+                />
               </span>
               <button v-if="note.mail" type="button" class="link-chip" @click="openNoteMail(note.id).catch((e) => toast.show(apiErrorMessage(e), { tone: 'error' }))">
                 <HIcon name="mail" :size="14" class="c-pe" />{{ note.mail.subject || '(no subject)' }}
               </button>
-              <button
+              <UButton
                 v-if="mode === 'edit' && note.event"
-                type="button"
-                class="unlink"
+                color="neutral"
+                variant="ghost"
+                size="sm"
                 @click="saveLinks({ event: null })"
               >
                 Detach the meeting
-              </button>
+              </UButton>
               <form v-if="attaching" class="attach" @submit.prevent="addTyped">
-                <input
+                <UInput
                   v-model="who"
                   aria-label="Add a person: name or address"
                   placeholder="Name or address"
                   autofocus
+                  size="sm"
+                  class="w-[220px]"
                   @keydown.esc="attaching = false"
                 />
                 <ul v-if="suggestions.length" class="suggest">
@@ -652,9 +692,9 @@ watch(selectedId, loadNote, { immediate: true })
                   </li>
                 </ul>
               </form>
-              <button v-else type="button" class="add-link" @click="attaching = true">
-                <HIcon name="plus" :size="13" :stroke-width="1.8" />Person
-              </button>
+              <UButton v-else icon="i-havre-plus" color="neutral" variant="outline" size="sm" class="add-link" @click="attaching = true">
+                Person
+              </UButton>
             </div>
 
             <div v-if="mode === 'read'" class="read" @dblclick="setMode('edit')">
@@ -667,28 +707,40 @@ watch(selectedId, loadNote, { immediate: true })
                 @task="makeTask"
               />
               <p v-else class="empty-note">
-                Nothing written yet. <button type="button" class="link-btn" @click="setMode('edit')">Start writing</button>
+                Nothing written yet.
+                <UButton color="primary" variant="link" class="p-0 text-[length:inherit]" @click="setMode('edit')">Start writing</UButton>
               </p>
             </div>
-            <label v-else class="write">
-              <span class="sr-only">Note text, in Markdown</span>
-              <textarea ref="textarea" v-model="body" class="mono" spellcheck="true" placeholder="Write in Markdown…" @blur="flush" />
+            <div v-else class="write">
+              <UTextarea
+                ref="textarea"
+                v-model="body"
+                spellcheck="true"
+                placeholder="Write in Markdown…"
+                aria-label="Note text, in Markdown"
+                autoresize
+                :rows="18"
+                :ui="{ base: 'note-text' }"
+                @blur="flush"
+              />
               <span class="hint">
                 Markdown: <span class="mono">## heading</span>, <span class="mono">**bold**</span>,
                 <span class="mono">- [ ] to-do</span>. Saved as you type · Esc to read.
               </span>
-            </label>
+            </div>
           </article>
         </div>
       </template>
       <div v-else class="none">
         <HIcon name="note" :size="28" />
         <p>{{ selectedSummary ? 'Loading…' : 'Pick a note, or start one.' }}</p>
-        <button type="button" class="btn" @click="newNote"><HIcon name="plus" :size="14" />New note</button>
+        <UButton icon="i-havre-plus" color="neutral" variant="outline" type="button" @click="newNote">
+          New note
+        </UButton>
       </div>
     </main>
-    </SplitPane>
-    </SplitGroup>
+    </template>
+    </SplitView>
   </div>
 </template>
 
@@ -828,21 +880,6 @@ h1 {
 .mw {
   color: var(--faint);
 }
-.mini {
-  flex: none;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--line2);
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-.mini:hover {
-  background: var(--hover);
-  color: var(--text);
-}
 .to-agenda {
   text-decoration: none;
 }
@@ -881,29 +918,6 @@ h2 {
 }
 .find {
   padding: 12px 14px 4px;
-}
-.search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--line2);
-  border-radius: 9px;
-  background: var(--bg);
-  color: var(--faint);
-}
-.search:focus-within {
-  border-color: var(--accent);
-}
-.search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--text);
-  font-size: 13.5px;
 }
 .scroll {
   flex: 1;
@@ -1005,27 +1019,6 @@ h2 {
 .back {
   display: none;
 }
-.mode {
-  display: flex;
-  padding: 3px;
-  border-radius: 9px;
-  border: 1px solid var(--line2);
-  background: var(--panel);
-}
-.mode button {
-  height: 26px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.mode button[aria-pressed='true'] {
-  background: var(--sel);
-  color: var(--text);
-}
 .saved {
   font-size: 12.5px;
   color: var(--faint);
@@ -1033,13 +1026,6 @@ h2 {
 }
 .grow-x {
   flex: 1;
-}
-.icon-btn.on {
-  color: var(--accent);
-}
-.icon-btn.danger {
-  color: var(--danger);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
 }
 .page {
   max-width: 720px;
@@ -1049,19 +1035,21 @@ h2 {
   flex-direction: column;
   gap: 18px;
 }
-.title-field input {
-  width: 100%;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--text);
+:deep(.title-input) {
+  font-family: var(--font-serif);
   font-size: 32px;
   line-height: 1.15;
   letter-spacing: -0.01em;
-  padding: 0;
 }
-.title-field input::placeholder {
-  color: var(--faint);
+/* The Markdown being written: monospace, a calm page. */
+:deep(.note-text) {
+  min-height: 420px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.7;
 }
 .links {
   display: flex;
@@ -1136,41 +1124,8 @@ h2 {
   color: var(--text);
 }
 .add-link,
-.unlink {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px dashed var(--line2);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
-}
-.unlink {
-  border-style: solid;
-  border-color: transparent;
-}
-.add-link:hover,
-.unlink:hover {
-  background: var(--hover);
-  color: var(--text);
-}
 .attach {
   position: relative;
-}
-.attach input {
-  height: 32px;
-  width: 220px;
-  padding: 0 10px;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--text);
-  outline: none;
-  font-size: 13px;
 }
 .suggest {
   position: absolute;
@@ -1211,33 +1166,10 @@ h2 {
   color: var(--faint);
   margin: 0;
 }
-.link-btn {
-  border: 0;
-  padding: 0;
-  background: none;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: inherit;
-}
 .write {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-textarea {
-  min-height: 420px;
-  padding: 16px 18px;
-  border: 1px solid var(--line2);
-  border-radius: 12px;
-  background: var(--panel);
-  color: var(--text);
-  font-size: 13.5px;
-  line-height: 1.7;
-  resize: vertical;
-  outline: none;
-}
-textarea:focus {
-  border-color: var(--accent);
 }
 .hint {
   font-size: 12px;
@@ -1254,11 +1186,6 @@ textarea:focus {
 }
 .none p {
   margin: 0;
-}
-.none .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 
 /* Narrower windows: the note takes the list's place when open. */
@@ -1358,14 +1285,11 @@ textarea:focus {
     padding: 16px 20px 28px;
     gap: 14px;
   }
-  .title-field input {
+  :deep(.title-input) {
     font-size: 28px;
   }
-  textarea {
+  :deep(.note-text) {
     min-height: 320px;
-  }
-  .attach input {
-    width: 180px;
   }
 }
 </style>

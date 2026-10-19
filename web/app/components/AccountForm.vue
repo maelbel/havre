@@ -166,29 +166,37 @@ const colors: { value: AccountColor; label: string }[] = ACCOUNT_COLORS
     <h3>{{ editing ? `Edit ${account!.name}` : 'Add an account' }}</h3>
 
     <div class="grid" :class="{ locked: signingIn }" :inert="signingIn || undefined">
-      <label class="field wide">
-        <span>Email address</span>
-        <input v-model="form.email" type="email" autocomplete="email" required placeholder="you@example.com" />
-      </label>
+      <UFormField label="Email address" class="field wide">
+        <UInput
+          v-model="form.email"
+          type="email"
+          autocomplete="email"
+          required
+          placeholder="you@example.com"
+          class="w-full"
+        />
+      </UFormField>
 
-      <label class="field">
-        <span>Authentication</span>
-        <select v-model="method" :disabled="editing" @change="methodTouched = true">
-          <option value="password">Normal password</option>
-          <option value="oauth2">OAuth2</option>
-        </select>
-      </label>
+      <UFormField label="Authentication" class="field">
+        <USelect
+          v-model="method"
+          :disabled="editing"
+          :items="[{ label: 'Normal password', value: 'password' }, { label: 'OAuth2', value: 'oauth2' }]"
+          class="w-full"
+          @change="methodTouched = true"
+        />
+      </UFormField>
 
-      <label v-if="!oauth" class="field">
-        <span>Password</span>
-        <input
+      <UFormField v-if="!oauth" label="Password" class="field">
+        <UInput
           v-model="form.password"
           type="password"
           autocomplete="current-password"
           :required="!editing"
           :placeholder="editing ? 'Unchanged' : ''"
+          class="w-full"
         />
-      </label>
+      </UFormField>
       <p v-if="oauth" class="hint oauth-hint">
         <template v-if="editing">Signed in with {{ providerName }}. If it stops working, use <em>Reconnect</em>.</template>
         <template v-else-if="oauthProvider">
@@ -204,20 +212,18 @@ const colors: { value: AccountColor; label: string }[] = ACCOUNT_COLORS
         <a v-if="preset.link" :href="preset.link" target="_blank" rel="noopener">Open</a>
       </small>
 
-      <label class="field">
-        <span>Your name <span class="faint">(seen by recipients)</span></span>
-        <input
+      <UFormField label="Your name" hint="seen by recipients" class="field">
+        <UInput
           v-model="form.sender_name"
-          type="text"
           autocomplete="name"
           :placeholder="oauth && !editing ? 'From your sign-in' : 'Maël Belliard'"
+          class="w-full"
         />
-      </label>
+      </UFormField>
 
-      <label class="field">
-        <span>Name in Havre</span>
-        <input v-model="form.name" type="text" required placeholder="Work" @input="nameTouched = true" />
-      </label>
+      <UFormField label="Name in Havre" class="field">
+        <UInput v-model="form.name" required placeholder="Work" class="w-full" @input="nameTouched = true" />
+      </UFormField>
 
       <fieldset class="field wide">
         <legend>Color</legend>
@@ -242,36 +248,66 @@ const colors: { value: AccountColor; label: string }[] = ACCOUNT_COLORS
         We guessed the server from your address. Check it with your provider if the connection fails.
       </p>
       <div class="grid" :class="{ locked: serverLocked }" :inert="serverLocked || undefined">
-        <label class="field">
-          <span>IMAP server</span>
-          <input v-model="form.imap_host" type="text" required placeholder="imap.example.com" @input="serverTouched = true" />
-        </label>
-        <label class="field">
-          <span>Port</span>
-          <input v-model.number="form.imap_port" type="number" min="1" max="65535" required @input="serverTouched = true" />
-        </label>
-        <label class="field wide">
-          <span>User name <span class="faint">(if different from the email)</span></span>
-          <input v-model="form.imap_user" type="text" autocomplete="username" :placeholder="form.email" @input="serverTouched = true" />
-        </label>
+        <UFormField label="IMAP server" class="field">
+          <UInput
+            v-model="form.imap_host"
+            required
+            placeholder="imap.example.com"
+            class="w-full"
+            @input="serverTouched = true"
+          />
+        </UFormField>
+        <UFormField label="Port" class="field">
+          <UInput
+            v-model.number="form.imap_port"
+            type="number"
+            min="1"
+            max="65535"
+            required
+            class="w-full"
+            @input="serverTouched = true"
+          />
+        </UFormField>
+        <UFormField label="User name" hint="if different from the email" class="field wide">
+          <UInput
+            v-model="form.imap_user"
+            autocomplete="username"
+            :placeholder="form.email"
+            class="w-full"
+            @input="serverTouched = true"
+          />
+        </UFormField>
       </div>
       <p class="sub">Outgoing (SMTP) — same login</p>
       <div class="grid three">
-        <label class="field">
-          <span>SMTP server</span>
-          <input v-model="form.smtp_host" type="text" required placeholder="smtp.example.com" @input="smtpTouched = true" />
-        </label>
-        <label class="field">
-          <span>Port</span>
-          <input v-model.number="form.smtp_port" type="number" min="1" max="65535" required @input="smtpTouched = true" />
-        </label>
-        <label class="field">
-          <span>Security</span>
-          <select v-model="form.smtp_security" @change="onSecurity">
-            <option value="tls">TLS (465)</option>
-            <option value="starttls">STARTTLS (587)</option>
-          </select>
-        </label>
+        <UFormField label="SMTP server" class="field">
+          <UInput
+            v-model="form.smtp_host"
+            required
+            placeholder="smtp.example.com"
+            class="w-full"
+            @input="smtpTouched = true"
+          />
+        </UFormField>
+        <UFormField label="Port" class="field">
+          <UInput
+            v-model.number="form.smtp_port"
+            type="number"
+            min="1"
+            max="65535"
+            required
+            class="w-full"
+            @input="smtpTouched = true"
+          />
+        </UFormField>
+        <UFormField label="Security" class="field">
+          <USelect
+            v-model="form.smtp_security"
+            :items="[{ label: 'TLS (465)', value: 'tls' }, { label: 'STARTTLS (587)', value: 'starttls' }]"
+            class="w-full"
+            @change="onSecurity"
+          />
+        </UFormField>
       </div>
     </details>
 
@@ -293,19 +329,15 @@ const colors: { value: AccountColor; label: string }[] = ACCOUNT_COLORS
       @cancel="signingIn = false"
     />
 
-    <div v-if="error" class="error" role="alert">
-      <HIcon name="alert" :size="16" />
-      <span>{{ error }}</span>
-    </div>
+    <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" />
 
     <div v-if="!signingIn" class="actions">
-      <button type="button" class="btn" :disabled="busy" @click="emit('cancel')">Cancel</button>
-      <button type="submit" class="btn btn-primary" :disabled="busy">
-        <span v-if="busy" class="spinner" aria-hidden="true" />
-        {{
-          busy ? 'Checking the connection…' : editing ? 'Save' : 'Connect'
-        }}
-      </button>
+      <UButton color="neutral" variant="outline" type="button" :disabled="busy" @click="emit('cancel')">
+        Cancel
+      </UButton>
+      <UButton :loading="busy" type="submit" :disabled="busy">
+        {{ busy ? 'Checking the connection…' : editing ? 'Save' : 'Connect' }}
+      </UButton>
     </div>
   </form>
 </template>
@@ -332,36 +364,17 @@ h3 {
 .wide {
   grid-column: 1 / -1;
 }
+/* The colour fieldset; UFormField lays out the others. */
 .field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   margin: 0;
   padding: 0;
   border: 0;
   min-width: 0;
 }
-.field > span,
 legend {
-  padding: 0;
+  padding: 0 0 6px;
   font-size: 12.5px;
   color: var(--muted);
-}
-input[type='text'],
-input[type='email'],
-input[type='password'],
-input[type='number'],
-select {
-  height: 40px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  outline: none;
-}
-input:focus {
-  border-color: var(--accent);
 }
 .hint {
   margin: 0;
@@ -404,22 +417,6 @@ input:focus {
   outline: 2px solid var(--accent);
   outline-offset: 4px;
 }
-select {
-  appearance: none;
-  padding-right: 34px;
-  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
-    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-  background-position:
-    calc(100% - 18px) 18px,
-    calc(100% - 13px) 18px;
-  background-size: 5px 5px;
-  background-repeat: no-repeat;
-  cursor: pointer;
-}
-select:disabled {
-  opacity: 0.7;
-  cursor: default;
-}
 .oauth-hint {
   align-self: end;
   padding-bottom: 4px;
@@ -458,31 +455,10 @@ select:disabled {
 .advanced .hint {
   margin-bottom: 12px;
 }
-.error {
-  display: flex;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
-  font-size: 13.5px;
-  line-height: 1.5;
-}
-.error span {
-  color: var(--text);
-}
 .actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-.spinner {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid color-mix(in oklab, var(--on-accent) 30%, transparent);
-  border-top-color: var(--on-accent);
-  animation: spin 0.7s linear infinite;
 }
 @keyframes spin {
   to {

@@ -41,12 +41,16 @@ async function toggle() {
         calendar and save drafts. Each gets its own key; nothing is sent without you.
       </p>
     </header>
-    <p v-if="error" class="error" role="alert"><HIcon name="alert" :size="15" /> {{ error }}</p>
+    <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" />
     <template v-if="saved">
-      <label class="row">
-        <input type="checkbox" :checked="saved.mcp_enabled" :disabled="busy" @change="toggle" />
-        <span><span class="strong">Expose Havre over MCP</span><span class="muted"> — at <span class="mono">/mcp</span></span></span>
-      </label>
+      <USwitch
+        :model-value="saved.mcp_enabled"
+        :disabled="busy"
+        label="Expose Havre over MCP"
+        description="At /mcp: other AI apps reach it with a key."
+        class="row"
+        @update:model-value="toggle"
+      />
       <McpSettings v-if="saved.mcp_enabled" embedded />
     </template>
   </div>
@@ -83,21 +87,5 @@ header p {
   margin: 0 -10px;
   border-radius: 10px;
   cursor: pointer;
-}
-.row:hover {
-  background: var(--hover);
-}
-.row input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-.error {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--danger);
-  margin: 0;
 }
 </style>

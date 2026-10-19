@@ -68,42 +68,59 @@ const count = (server: number) => calendars.data.value.filter((c) => c.caldav ==
           Fastmail…) with CalDAV.
         </p>
       </div>
-      <button v-if="!adding" type="button" class="btn" @click="adding = true">
-        <HIcon name="plus" :size="15" :stroke-width="2" />
+      <UButton
+        v-if="!adding"
+        icon="i-havre-plus"
+        color="neutral"
+        variant="outline"
+        type="button"
+        @click="adding = true"
+      >
         Add CalDAV
-      </button>
+      </UButton>
     </div>
 
     <form v-if="adding" class="card form" @submit.prevent="add">
-      <label class="field wide">
-        <span>Server address</span>
-        <input v-model="form.url" type="url" required placeholder="https://cloud.example.com/remote.php/dav" />
-        <small class="hint">
-          Nextcloud: <code>https://your-cloud/remote.php/dav</code> · iCloud: <code>https://caldav.icloud.com</code>
-          (with an app-specific password) · Fastmail: <code>https://caldav.fastmail.com/dav/</code>
-        </small>
-      </label>
-      <label class="field">
-        <span>User name</span>
-        <input v-model="form.username" type="text" autocomplete="username" required />
-      </label>
-      <label class="field">
-        <span>Password</span>
-        <input v-model="form.password" type="password" autocomplete="current-password" required />
-      </label>
-      <label class="field wide">
-        <span>Name <span class="faint">(optional)</span></span>
-        <input v-model="form.name" type="text" placeholder="Nextcloud" />
-      </label>
-      <div v-if="error" class="error wide" role="alert">
-        <HIcon name="alert" :size="16" />
-        <span>{{ error }}</span>
-      </div>
+      <UFormField label="Server address" class="field wide">
+        <UInput
+          v-model="form.url"
+          type="url"
+          required
+          placeholder="https://cloud.example.com/remote.php/dav"
+          class="w-full"
+        />
+        <template #help>Nextcloud: <code>https://your-cloud/remote.php/dav</code> · iCloud: <code>https://caldav.icloud.com</code> (with an app-specific password) · Fastmail: <code>https://caldav.fastmail.com/dav/</code></template>
+      </UFormField>
+      <UFormField label="User name" class="field">
+        <UInput v-model="form.username" autocomplete="username" required class="w-full" />
+      </UFormField>
+      <UFormField label="Password" class="field">
+        <UInput
+          v-model="form.password"
+          type="password"
+          autocomplete="current-password"
+          required
+          class="w-full"
+        />
+      </UFormField>
+      <UFormField label="Name" hint="optional" class="field wide">
+        <UInput v-model="form.name" placeholder="Nextcloud" class="w-full" />
+      </UFormField>
+      <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" class="wide" />
       <div class="actions wide">
-        <button type="button" class="btn small" :disabled="busy" @click="adding = false">Cancel</button>
-        <button type="submit" class="btn btn-primary small" :disabled="busy">
+        <UButton
+          color="neutral"
+          variant="outline"
+          size="sm"
+          type="button"
+          :disabled="busy"
+          @click="adding = false"
+        >
+          Cancel
+        </UButton>
+        <UButton size="sm" type="submit" :disabled="busy">
           {{ busy ? 'Finding your calendars…' : 'Connect' }}
-        </button>
+        </UButton>
       </div>
     </form>
 
@@ -113,14 +130,15 @@ const count = (server: number) => calendars.data.value.filter((c) => c.caldav ==
         <span class="faint mono small">{{ s.username }} · {{ s.url }}</span>
         <span class="faint small">{{ count(s.id) }} calendar{{ count(s.id) === 1 ? '' : 's' }}</span>
       </div>
-      <button
+      <UButton
+        :color="confirmRemove === s.id ? 'error' : 'neutral'"
+        variant="outline"
+        size="sm"
         type="button"
-        class="btn small"
-        :class="{ danger: confirmRemove === s.id }"
         @click="remove(s.id, s.name)"
       >
         {{ confirmRemove === s.id ? 'Remove from Havre?' : 'Remove' }}
-      </button>
+      </UButton>
     </article>
 
     <article class="card row">
@@ -128,9 +146,12 @@ const count = (server: number) => calendars.data.value.filter((c) => c.caldav ==
         <strong>New events go to</strong>
         <span class="faint small">When you create an event without choosing.</span>
       </div>
-      <select :value="defaultId" aria-label="Default calendar" @change="setDefault(Number(($event.target as HTMLSelectElement).value))">
-        <option v-for="c in writable" :key="c.id" :value="c.id">{{ c.name }} · {{ SOURCE_LABELS[c.source] }}</option>
-      </select>
+      <USelect
+        :model-value="defaultId"
+        aria-label="Default calendar"
+        :items="[...writable.map((c) => ({ label: `${c.name} · ${SOURCE_LABELS[c.source]}`, value: c.id }))]"
+        @update:model-value="(id) => setDefault(id as number)"
+      />
     </article>
   </section>
 </template>
@@ -203,25 +224,6 @@ h2 {
   font-size: 12.5px;
   color: var(--muted);
 }
-input,
-select {
-  height: 38px;
-  padding: 0 10px;
-  border-radius: 9px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  outline: none;
-}
-select {
-  max-width: 100%;
-}
-input:focus,
-select:focus {
-  border-color: var(--accent);
-}
 .hint {
   font-size: 12px;
   line-height: 1.6;
@@ -231,32 +233,10 @@ code {
   font-family: var(--font-mono);
   font-size: 11.5px;
 }
-.error {
-  display: flex;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
-  font-size: 13px;
-}
-.error span {
-  color: var(--text);
-}
 .actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-.btn.small {
-  height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
-}
-.btn.danger {
-  border-color: color-mix(in oklab, var(--danger) 50%, transparent);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
 }
 @media (max-width: 560px) {
   .form {

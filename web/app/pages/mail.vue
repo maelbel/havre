@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { SplitPaneSpec } from '~/composables/useSplit'
 import type { AiHit } from '~/composables/useAi'
 import type { AgendaEvent } from '~/composables/useAgenda'
 import type { ActionOutcome, CrossView, MailAction, MessageDetail, MessageSummary, Selection, SyncStatus } from '~/composables/useMail'
@@ -815,14 +816,14 @@ function eventLink(e: AgendaEvent) {
 // ---- Keyboard ---------------------------------------------------------------
 // ↓/↑ or j/k next/previous · u unread · e archive · # or Delete delete · / search · Esc close
 // c new message · r reply · a reply all · f forward · s summarize (AI) · t make a task
-const searchInput = ref<HTMLInputElement | null>(null)
+const searchInput = ref<{ inputRef: HTMLInputElement | null } | null>(null)
 const reader = ref<{ toggleSummary: () => void; openTask: () => void; openNote: () => void } | null>(null)
 function onKey(e: KeyboardEvent) {
   if (e.metaKey || e.ctrlKey || e.altKey) return
   // ↓ in the search box jumps into the results.
-  if (e.key === 'ArrowDown' && e.target === searchInput.value) {
+  if (e.key === 'ArrowDown' && e.target === searchInput.value?.inputRef) {
     e.preventDefault()
-    searchInput.value?.blur()
+    searchInput.value?.inputRef?.blur()
     return step(1)
   }
   // (Keys forwarded from the email iframe target `window`, not an element.)
@@ -844,7 +845,7 @@ function onKey(e: KeyboardEvent) {
   } else if (e.key === 'z') undo()
   else if (e.key === '/') {
     e.preventDefault()
-    searchInput.value?.focus()
+    searchInput.value?.inputRef?.focus()
   } else if (e.key === 'Escape') (selecting.value ? clearChecks() : go({ uid: null }))
   else if (e.key === 'c') {
     e.preventDefault()
@@ -868,6 +869,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 const isMac = import.meta.client && /Mac|iPhone|iPad/.test(navigator.platform)
 const notConfigured = computed(() => (listError.value as { statusCode?: number } | null)?.statusCode === 503)
+
+// Resizable panes (wide screens): folders · list · reader.
+const splitPanes: SplitPaneSpec[] = [
+  { id: 'folders', size: 216, min: 180, max: 320, collapsible: true, handle: { label: 'Resize the folders', fold: true, showLabel: 'Show folders' } },
+  { id: 'list', size: 380, min: 300, max: 640, handle: { label: 'Resize the message list' } },
+  { id: 'reader', min: 420 },
+]
 </script>
 
 <template>
@@ -880,14 +888,14 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
         Havre reads your mail over IMAP and keeps a local copy on this server. Your email and password are
         enough for most providers.
       </p>
-      <NuxtLink to="/settings?add=1" class="btn btn-primary">Add an account</NuxtLink>
+      <UButton to="/settings?add=1">Add an account</UButton>
     </div>
   </main>
 
   <div v-else class="mail" :class="{ 'has-selection': selectedUid }">
     <!-- Mailboxes -->
-    <SplitGroup id="mail">
-    <SplitPane id="folders" :size="216" :min="180" :max="320" collapsible>
+    <SplitView id="mail" :panes="splitPanes">
+    <template #folders>
     <aside class="boxes" aria-label="Mailboxes">
       <div class="boxes-head">
         <h1 class="serif">Mail</h1>
@@ -896,7 +904,7 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
       <button type="button" class="compose" title="New message (C)" @click="write()">
         <HIcon name="pen" :size="16" :stroke-width="1.8" />
         <span class="grow">New message</span>
-        <kbd class="mono" aria-hidden="true">C</kbd>
+        <UKbd value="C" aria-hidden="true" class="ms-auto bg-transparent ring-(--on-accent)/35 text-(--on-accent)/80" />
       </button>
 
       <nav class="nav" aria-label="Inboxes">
@@ -953,7 +961,15 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
         <!-- Havre's labels: every account. -->
         <div class="eyebrow sec sec-row">
           Labels
-          <button type="button" class="link small-link" @click="labelsOpen = true">{{ organize.labels.length ? 'Edit' : 'Add' }}</button>
+          <UButton
+            color="primary"
+            variant="link"
+            class="small-link p-0"
+            type="button"
+            @click="labelsOpen = true"
+          >
+            {{ organize.labels.length ? 'Edit' : 'Add' }}
+          </UButton>
         </div>
         <button
           v-for="l in organize.labels"
@@ -992,83 +1008,148 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
       <SyncStatus :status="syncStatus" />
       <LabelManager v-if="labelsOpen" @close="labelsOpen = false; loadFirstPage({ keep: true })" />
     </aside>
-    </SplitPane>
-    <SplitHandle label="Resize the folders" fold="folders" show-label="Show folders" />
+    </template>
 
     <!-- Message list -->
-    <SplitPane id="list" :size="380" :min="300" :max="640">
+    <template #list>
     <section class="list" aria-label="Conversations">
       <div class="list-top">
-        <label class="search">
-          <HIcon name="search" :size="16" />
-          <span class="sr-only">Search {{ folderTitle }}</span>
-          <input
-            ref="searchInput"
-            v-model="query"
-            type="search"
-            :placeholder="allView ? 'Search mail' : `Search ${folderTitle}`"
-            @keydown.enter="query.trim() && (search = query.trim())"
-            @keydown.esc="clearSearch"
-          />
-          <button v-if="!query" type="button" class="key mono" title="Search mail, people, events and ask (Ctrl+K)" @click="usePalette().value = true">
-            {{ isMac ? '⌘K' : 'Ctrl K' }}
-          </button>
-        </label>
-        <button
+        <UInput
+          ref="searchInput"
+          v-model="query"
+          type="search"
+          icon="i-havre-search"
+          size="lg"
+          :placeholder="allView ? 'Search mail' : `Search ${folderTitle}`"
+          :aria-label="`Search ${folderTitle}`"
+          class="search"
+          @keydown.enter="query.trim() && (search = query.trim())"
+          @keydown.esc="clearSearch"
+        >
+          <template v-if="!query" #trailing>
+            <UButton
+              color="neutral"
+              variant="link"
+              size="xs"
+              class="p-0"
+              title="Search mail, people, events and ask (Ctrl+K)"
+              @click="usePalette().value = true"
+            >
+              <UKbd :value="isMac ? '⌘K' : 'Ctrl K'" />
+            </UButton>
+          </template>
+        </UInput>
+        <UButton
           v-if="ai.search && query"
-          type="button"
-          class="meaning-btn"
+          icon="i-havre-sparkle"
+          :color="meaning ? 'primary' : 'neutral'"
+          :variant="meaning ? 'soft' : 'outline'"
+          size="lg"
           :aria-pressed="meaning"
           title="Search all your mail by meaning, not just words"
           @click="meaning = !meaning"
         >
-          <HIcon name="sparkle" :size="12" />
           By meaning
-        </button>
+        </UButton>
       </div>
       <!-- Ticked messages: what to do with them. -->
       <div v-if="selecting" class="bulk" role="toolbar" aria-label="Selected messages">
-        <label class="all-box" :title="checked.size === visible.length ? 'Untick all' : 'Tick all'">
-          <input type="checkbox" :checked="checked.size === visible.length" :indeterminate="checked.size < visible.length" @change="checkAll" />
-          <span class="sr-only">Tick all</span>
-        </label>
+        <UCheckbox
+          :model-value="checked.size === visible.length ? true : 'indeterminate'"
+          :title="checked.size === visible.length ? 'Untick all' : 'Tick all'"
+          aria-label="Tick all"
+          class="all-box"
+          @update:model-value="checkAll"
+        />
         <span class="count-sel">{{ checked.size }} selected</span>
         <span class="grow" />
-        <button v-if="!inArchive" type="button" class="icon-btn" aria-label="Archive selected" title="Archive (E)" @click="act('archive')"><HIcon name="archive" :size="16" /></button>
-        <button type="button" class="icon-btn" :aria-label="inTrash ? 'Delete selected forever' : 'Delete selected'" title="Delete (#)" @click="act('trash')"><HIcon name="trash" :size="16" /></button>
-        <button type="button" class="icon-btn" aria-label="Star selected" title="Star (*)" @click="star()"><HIcon name="star" :size="16" /></button>
-        <button type="button" class="icon-btn" :aria-label="checkedRows.some((m) => m.unread) ? 'Mark selected as read' : 'Mark selected as unread'" @click="setRead(checkedRows.some((m) => m.unread))">
-          <HIcon name="unread" :size="16" />
-        </button>
+        <UButton
+          v-if="!inArchive"
+          icon="i-havre-archive"
+          color="neutral"
+          variant="ghost"
+          square
+          type="button"
+          aria-label="Archive selected"
+          title="Archive (E)"
+          @click="act('archive')"
+        />
+        <UButton
+          icon="i-havre-trash"
+          color="neutral"
+          variant="ghost"
+          square
+          type="button"
+          :aria-label="inTrash ? 'Delete selected forever' : 'Delete selected'"
+          title="Delete (#)"
+          @click="act('trash')"
+        />
+        <UButton
+          icon="i-havre-star"
+          color="neutral"
+          variant="ghost"
+          square
+          type="button"
+          aria-label="Star selected"
+          title="Star (*)"
+          @click="star()"
+        />
+        <UButton
+          icon="i-havre-unread"
+          color="neutral"
+          variant="ghost"
+          square
+          :aria-label="checkedRows.some((m) => m.unread) ? 'Mark selected as read' : 'Mark selected as unread'"
+          @click="setRead(checkedRows.some((m) => m.unread))"
+        />
         <LabelMenu :state="labelState" @toggle="toggleLabel" />
         <SnoozeMenu :snoozed="box === 'snoozed'" @snooze="snooze" />
         <MoveMenu v-if="!allView" :folders="folders.data.value" :current="folder" @move="(to) => act('move', to)" />
-        <button type="button" class="icon-btn" aria-label="Clear selection" title="Clear (Esc)" @click="clearChecks"><HIcon name="close" :size="16" /></button>
+        <UButton
+          icon="i-havre-close"
+          color="neutral"
+          variant="ghost"
+          square
+          type="button"
+          aria-label="Clear selection"
+          title="Clear (Esc)"
+          @click="clearChecks"
+        />
       </div>
       <div v-else class="list-head">
         <h2 v-if="search" class="results">
           {{ meaning ? 'Closest in meaning' : searchRemote ? 'Server results' : 'Results' }} for “{{ search }}”
-          <button type="button" class="link" @click="clearSearch">Clear</button>
+          <UButton color="primary" variant="link" class="p-0" type="button" @click="clearSearch">
+            Clear
+          </UButton>
         </h2>
         <h2 v-else>{{ folderTitle }}</h2>
-        <div class="seg" role="group" aria-label="Filter">
-          <button type="button" :aria-pressed="filter === 'all'" @click="filter = 'all'">All</button>
-          <button type="button" :aria-pressed="filter === 'unread'" @click="filter = 'unread'">Unread</button>
-          <button type="button" :aria-pressed="filter === 'invites'" @click="filter = 'invites'">Invites</button>
-        </div>
-        <button
-          type="button"
-          class="refresh"
-          :class="{ loading: listLoading }"
+        <UTabs
+          v-model="filter"
+          :items="[
+            { label: 'All', value: 'all' },
+            { label: 'Unread', value: 'unread' },
+            { label: 'Invites', value: 'invites' },
+          ]"
+          :content="false"
+          color="neutral"
+          size="xs"
+          aria-label="Filter"
+        />
+        <UButton
+          icon="i-havre-refresh"
+          :color="listLoading ? 'primary' : 'neutral'"
+          :variant="listLoading ? 'soft' : 'ghost'"
+          size="sm"
+          :square="!listLoading"
+          :loading="listLoading"
           :aria-label="listLoading ? 'Refreshing messages' : 'Refresh'"
           :title="listLoading ? 'Refreshing…' : 'Refresh'"
           :disabled="listLoading"
           @click="refreshList"
         >
-          <span v-if="listLoading" class="spinner" aria-hidden="true" />
-          <HIcon v-else name="refresh" :size="16" />
-          <span v-if="listLoading" class="refresh-label">{{ search ? 'Searching' : 'Refreshing' }}</span>
-        </button>
+          <template v-if="listLoading">{{ search ? 'Searching' : 'Refreshing' }}</template>
+        </UButton>
       </div>
       <div class="progress" :class="{ active: refreshing }" role="progressbar" aria-label="Loading messages" :aria-hidden="!refreshing" />
 
@@ -1113,16 +1194,31 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
             <p v-if="notConfigured" class="hint">
               Copy <code>.env.example</code> to <code>.env</code>, fill in your IMAP account and restart the server.
             </p>
-            <button type="button" class="btn" :disabled="listLoading" @click="refreshList">Try again</button>
+            <UButton
+              color="neutral"
+              variant="outline"
+              type="button"
+              :disabled="listLoading"
+              @click="refreshList"
+            >
+              Try again
+            </UButton>
           </div>
         </div>
 
         <p v-else-if="!visible.length" class="empty">
           <template v-if="search">
             No sender or subject in {{ folderTitle }} matches “{{ search }}”.
-            <button v-if="!searchRemote" type="button" class="link block" @click="searchServer">
+            <UButton
+              v-if="!searchRemote"
+              color="primary"
+              variant="link"
+              class="block p-0"
+              type="button"
+              @click="searchServer"
+            >
               Search inside messages on the server →
-            </button>
+            </UButton>
           </template>
           <template v-else-if="filter === 'unread'">No unread messages{{ hasMore ? ' among the ones loaded' : '' }}.</template>
           <template v-else-if="filter === 'invites'">No invitations{{ hasMore ? ' among the ones loaded' : '' }}.</template>
@@ -1198,22 +1294,30 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
 
         <!-- Local search covers senders and subjects; offer the server for bodies. -->
         <div v-if="search && !meaning && !searchRemote && visible.length && !hasMore" class="server-search">
-          <button type="button" class="link" @click="searchServer">Search inside messages on the server →</button>
+          <UButton color="primary" variant="link" class="p-0" type="button" @click="searchServer">
+            Search inside messages on the server →
+          </UButton>
         </div>
 
         <!-- "Load more": automatic when scrolled into view, or click. -->
         <div v-if="hasMore && listStatus === 'success' && !(meaning && search)" ref="sentinel" class="more">
-          <button type="button" class="btn more-btn" :disabled="loadingMore" @click="loadMore">
-            <span v-if="loadingMore" class="spinner" aria-hidden="true" />
+          <UButton
+            color="neutral"
+            variant="outline"
+            :loading="loadingMore"
+            class="more-btn"
+            type="button"
+            :disabled="loadingMore"
+            @click="loadMore"
+          >
             {{ loadingMore ? 'Loading older messages…' : 'Load older messages' }}
-          </button>
+          </UButton>
         </div>
       </div>
     </section>
-    </SplitPane>
-    <SplitHandle label="Resize the message list" />
+    </template>
 
-    <SplitPane id="reader" :min="420">
+    <template #reader>
     <MessageReader
       ref="reader"
       class="reader-pane"
@@ -1244,8 +1348,8 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
       @load-images="selectedUid && load(selectedUid, true)"
       @retry="selectedUid && load(selectedUid)"
     />
-    </SplitPane>
-    </SplitGroup>
+    </template>
+    </SplitView>
 
     <!-- Who wrote it: what Havre knows about them (wide screens). -->
     <aside v-if="detail && person" class="about" :aria-label="`About ${personName(person)}`">
@@ -1256,9 +1360,20 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
         <div class="serif pname">{{ personName(person) }}</div>
         <div v-if="person.name" class="muted small addr">{{ person.email }}</div>
         <div class="acts">
-          <button type="button" class="mini" @click="emailPerson">Email</button>
-          <button type="button" class="mini" @click="schedulePerson">Schedule</button>
-          <NuxtLink class="mini" :to="`/people/${encodeURIComponent(person.email)}`">Profile</NuxtLink>
+          <UButton color="neutral" variant="outline" size="xs" type="button" @click="emailPerson">
+            Email
+          </UButton>
+          <UButton color="neutral" variant="outline" size="xs" type="button" @click="schedulePerson">
+            Schedule
+          </UButton>
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :to="`/people/${encodeURIComponent(person.email)}`"
+          >
+            Profile
+          </UButton>
         </div>
       </div>
       <section v-if="nextTogether.length" class="ablock">
@@ -1342,13 +1457,6 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
 }
 .compose:hover {
   filter: brightness(1.08);
-}
-.compose kbd {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid color-mix(in oklab, var(--on-accent) 30%, transparent);
-  opacity: 0.75;
 }
 .grow {
   flex: 1;
@@ -1462,25 +1570,6 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
   flex: 1;
   min-width: 0;
 }
-.search {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 40px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--faint);
-}
-.search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--text);
-}
 .list-head {
   display: flex;
   align-items: center;
@@ -1497,28 +1586,6 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.seg {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--bg);
-}
-.seg button {
-  height: 26px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-.seg button[aria-pressed='true'] {
-  background: var(--sel);
-  color: var(--text);
-}
 .rows {
   flex: 1;
   overflow: auto;
@@ -1530,33 +1597,6 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
 }
 
 /* Refresh button: icon at rest, spinner + label while loading. */
-.refresh {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-width: 34px;
-  height: 32px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.refresh:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
-.refresh.loading {
-  border-color: color-mix(in oklab, var(--accent) 35%, transparent);
-  background: color-mix(in oklab, var(--accent) 10%, transparent);
-  color: var(--accent);
-  cursor: progress;
-}
 .spinner {
   width: 14px;
   height: 14px;
@@ -1564,9 +1604,6 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
   border: 2px solid color-mix(in oklab, var(--accent) 25%, transparent);
   border-top-color: var(--accent);
   animation: spin 0.7s linear infinite;
-}
-.refresh-label {
-  font-weight: 500;
 }
 .progress {
   position: relative;
@@ -1780,19 +1817,9 @@ const notConfigured = computed(() => (listError.value as { statusCode?: number }
   border-radius: 10px;
   background: color-mix(in oklab, var(--accent) 12%, var(--panel));
 }
-.all-box input {
-  width: 16px;
-  height: 16px;
-  margin: 0 8px 0 0;
-  accent-color: var(--accent);
-}
 .count-sel {
   font-size: 13.5px;
   font-weight: 600;
-}
-.bulk .icon-btn {
-  width: 32px;
-  height: 32px;
 }
 .avatar {
   flex: 0 0 32px;
@@ -1972,19 +1999,6 @@ code {
   display: flex;
   gap: 6px;
 }
-.mini {
-  display: inline-flex;
-  align-items: center;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--line2);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  font-size: 12.5px;
-  text-decoration: none;
-  cursor: pointer;
-}
 .mini:hover,
 .next:hover,
 .line:hover {
@@ -2078,16 +2092,6 @@ code {
 }
 
 /* Search */
-.key {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--line2);
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-  white-space: nowrap;
-}
 .results {
   font-weight: 500;
 }
@@ -2180,26 +2184,5 @@ code {
 .more-btn .spinner {
   width: 12px;
   height: 12px;
-}
-.meaning-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 40px;
-  padding: 0 12px;
-  border-radius: 12px;
-  border: 1px solid var(--line2);
-  background: transparent;
-  color: var(--muted);
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  vertical-align: middle;
-}
-.meaning-btn[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 16%, transparent);
-  color: var(--accent);
 }
 </style>

@@ -84,25 +84,22 @@ async function setDefault(id: number) {
           <strong>{{ s.name }}</strong>
           <span class="meta" :class="{ bad: !s.allowed || (s.enabled && s.error) }">{{ meta(s) }}</span>
         </div>
-        <button
-          type="button"
-          role="switch"
-          class="switch"
-          :aria-checked="s.enabled"
+        <USwitch
+          :model-value="s.enabled"
           :aria-label="`Sync tasks with ${s.name}`"
           :disabled="busy === s.key || (!s.allowed && !s.enabled)"
-          @click="toggle(s)"
-        >
-          <span class="knob" aria-hidden="true" />
-        </button>
+          @update:model-value="toggle(s)"
+        />
       </div>
     </div>
-    <label v-if="writable.length" class="where">
-      <span>New tasks go to</span>
-      <select :value="defaultList" @change="setDefault(Number(($event.target as HTMLSelectElement).value))">
-        <option v-for="l in writable" :key="l.id" :value="l.id">{{ l.owner }} · {{ l.name }}</option>
-      </select>
-    </label>
+    <UFormField v-if="writable.length" label="New tasks go to" class="where">
+      <USelect
+        :model-value="defaultList ?? undefined"
+        :items="[...writable.map((l) => ({ label: `${l.owner} · ${l.name}`, value: l.id }))]"
+        class="w-full"
+        @update:model-value="(id) => setDefault(id as number)"
+      />
+    </UFormField>
   </section>
 </template>
 
@@ -165,38 +162,6 @@ h2 {
 .meta.bad {
   color: var(--danger);
 }
-.switch {
-  flex: 0 0 38px;
-  height: 22px;
-  padding: 2px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--line2);
-  display: flex;
-  justify-content: flex-start;
-  cursor: pointer;
-  position: relative;
-}
-/* A bigger touch target than the switch itself. */
-.switch::before {
-  content: '';
-  position: absolute;
-  inset: -11px -4px;
-}
-.switch[aria-checked='true'] {
-  background: var(--accent);
-  justify-content: flex-end;
-}
-.switch:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.knob {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--raise);
-}
 .where {
   display: flex;
   flex-wrap: wrap;
@@ -204,15 +169,5 @@ h2 {
   gap: 10px;
   font-size: 13.5px;
   color: var(--muted);
-}
-select {
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--line2);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
 }
 </style>

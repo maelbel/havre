@@ -146,25 +146,31 @@ const ready = computed(() => !!status.value?.command && status.value.logged_in)
               On the computer where Havre runs. (With Havre's Docker image it's already there.) Then come back and
               click <em>Check again</em>.
             </p>
-            <div class="tabs" role="tablist" aria-label="How to install">
-              <button
-                v-for="i in installs"
-                :key="i.id"
-                type="button"
-                role="tab"
-                :aria-selected="installTab === i.id"
-                @click="installTab = i.id"
-              >
-                {{ i.label }}
-              </button>
-            </div>
+            <UTabs
+              v-model="installTab"
+              :items="installs.map((i) => ({ label: i.label, value: i.id }))"
+              :content="false"
+              color="neutral"
+              size="xs"
+              aria-label="How to install"
+              class="w-fit"
+            />
             <div class="code">
               <code>{{ install.cmd }}</code>
-              <button type="button" class="btn small" @click="copy(install.cmd)">Copy</button>
+              <UButton color="neutral" variant="outline" size="sm" type="button" @click="copy(install.cmd)">
+                Copy
+              </UButton>
             </div>
-            <button type="button" class="btn small" :disabled="checking" @click="check">
+            <UButton
+              color="neutral"
+              variant="outline"
+              size="sm"
+              type="button"
+              :disabled="checking"
+              @click="check"
+            >
               {{ checking ? 'Checking…' : 'Check again' }}
-            </button>
+            </UButton>
           </template>
         </div>
       </li>
@@ -181,18 +187,20 @@ const ready = computed(() => !!status.value?.command && status.value.logged_in)
               {{ status?.logged_in ? 'Signed in to Claude' : 'Sign in with your Claude account' }}
             </p>
             <template v-if="status?.command && step !== 'started'">
-              <button
+              <UButton
                 v-if="status.logged_in"
+                color="neutral"
+                variant="outline"
+                size="sm"
                 type="button"
-                class="btn small"
                 :disabled="busy !== null"
                 @click="signOut"
               >
                 Sign out
-              </button>
-              <button v-else type="button" class="btn btn-primary small" :disabled="busy !== null" @click="signIn">
+              </UButton>
+              <UButton v-else size="sm" type="button" :disabled="busy !== null" @click="signIn">
                 {{ busy === 'start' ? 'Starting…' : 'Sign in' }}
-              </button>
+              </UButton>
             </template>
           </div>
           <p v-if="status?.logged_in" class="faint">
@@ -205,26 +213,41 @@ const ready = computed(() => !!status.value?.command && status.value.logged_in)
           <ol v-if="step === 'started'" class="login">
             <li>
               <span>Sign in at Anthropic</span>
-              <a :href="url" target="_blank" rel="noopener" class="btn small">
+              <UButton
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :href="url"
+                target="_blank"
+                rel="noopener"
+              >
                 Open the sign-in page
                 <HIcon name="external" :size="13" />
-              </a>
+              </UButton>
             </li>
             <li>
               <label for="cc-code">Paste the code it shows you</label>
               <form class="code-row" @submit.prevent="finish">
-                <input
-                  id="cc-code"
+                <UInput
                   v-model="code"
-                  type="text"
+                  id="cc-code"
                   autocomplete="off"
                   spellcheck="false"
                   placeholder="Authentication code"
                 />
-                <button type="submit" class="btn btn-primary small" :disabled="!code.trim() || busy !== null">
+                <UButton size="sm" type="submit" :disabled="!code.trim() || busy !== null">
                   {{ busy === 'complete' ? 'Signing in…' : 'Finish' }}
-                </button>
-                <button type="button" class="btn small" :disabled="busy === 'complete'" @click="cancel">Cancel</button>
+                </UButton>
+                <UButton
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  :disabled="busy === 'complete'"
+                  @click="cancel"
+                >
+                  Cancel
+                </UButton>
               </form>
             </li>
           </ol>
@@ -243,18 +266,15 @@ const ready = computed(() => !!status.value?.command && status.value.logged_in)
         <span class="mark" aria-hidden="true">3</span>
         <div class="body">
           <p class="title">Model</p>
-          <div class="seg" role="radiogroup" aria-label="Claude model">
-            <button
-              v-for="m in MODELS"
-              :key="m.value"
-              type="button"
-              role="radio"
-              :aria-checked="model === m.value"
-              @click="model = m.value"
-            >
-              {{ m.label }}
-            </button>
-          </div>
+          <UTabs
+            v-model="model"
+            :items="MODELS.map((m) => ({ label: m.label, value: m.value }))"
+            :content="false"
+            color="neutral"
+            size="sm"
+            aria-label="Claude model"
+            class="w-fit"
+          />
           <p class="faint">Haiku is fastest and lightest on your plan's limits; Opus is the most capable.</p>
         </div>
       </li>
@@ -262,21 +282,26 @@ const ready = computed(() => !!status.value?.command && status.value.logged_in)
 
     <div v-if="ready && !enabled" class="go">
       <span>Claude Code is ready.</span>
-      <button type="button" class="btn btn-primary small" @click="emit('enable')">Turn on AI with Claude Code</button>
+      <UButton size="sm" type="button" @click="emit('enable')">Turn on AI with Claude Code</UButton>
     </div>
 
     <p v-if="error" class="error" role="alert"><HIcon name="alert" :size="14" /> {{ error }}</p>
 
     <details class="advanced">
       <summary>Advanced</summary>
-      <label class="field">
-        <span>Command</span>
-        <input v-model="command" type="text" placeholder="Found automatically" aria-label="Command" spellcheck="false" />
-        <small class="faint">Only if Havre doesn't find Claude Code: the full path to <code>claude</code>.</small>
-      </label>
-      <button type="button" class="btn small" :disabled="checking" @click="check">
+      <UFormField label="Command" class="field">
+        <UInput
+          v-model="command"
+          placeholder="Found automatically"
+          aria-label="Command"
+          spellcheck="false"
+          class="w-full"
+        />
+        <template #help>Only if Havre doesn't find Claude Code: the full path to <code>claude</code>.</template>
+      </UFormField>
+      <UButton color="neutral" variant="outline" size="sm" type="button" :disabled="checking" @click="check">
         {{ checking ? 'Checking…' : 'Check again' }}
-      </button>
+      </UButton>
     </details>
   </div>
 </template>
@@ -350,32 +375,6 @@ pre {
   font-size: 11.5px;
   overflow-wrap: anywhere;
 }
-.tabs {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-.tabs button,
-.seg button {
-  padding: 4px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--line2);
-  background: transparent;
-  color: var(--muted);
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.tabs button[aria-selected='true'],
-.seg button[aria-checked='true'] {
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
-  color: var(--text);
-}
-.seg {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
 .code {
   display: flex;
   align-items: center;
@@ -391,14 +390,8 @@ pre {
   font-size: 12.5px;
   overflow-wrap: anywhere;
 }
-.body > .btn.small {
+.body > button {
   align-self: flex-start;
-}
-.btn.small {
-  height: 30px;
-  padding: 0 12px;
-  font-size: 13px;
-  text-decoration: none;
 }
 .login {
   margin: 4px 0 0;
@@ -422,27 +415,6 @@ pre {
   gap: 8px;
   flex-wrap: wrap;
   width: 100%;
-}
-.code-row input,
-.field input {
-  flex: 1;
-  min-width: 180px;
-  height: 34px;
-  padding: 0 10px;
-  border-radius: 9px;
-  border: 1px solid var(--line2);
-  background: var(--panel);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  outline: none;
-}
-.field input {
-  flex: none;
-}
-.code-row input:focus,
-.field input:focus {
-  border-color: var(--accent);
 }
 .fail p {
   display: flex;

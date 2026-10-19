@@ -84,3 +84,18 @@ export function describeBrowser(userAgent: string): string {
             : ''
   return os ? `${browser} on ${os}` : browser
 }
+
+/** `/login` or `/login/` (the static server adds the slash). */
+export function isLoginPath(path: string) {
+  return path.replace(/\/+$/, '') === '/login'
+}
+
+/**
+ * Where to go after signing in: the page you were going to, if it's a path
+ * on this site (not `//other.site`) and not the sign-in page itself
+ * (that would leave you on the form, signed in).
+ */
+export function safeNext(asked: unknown) {
+  if (typeof asked !== 'string' || !/^\/(?![/\\])/.test(asked)) return '/'
+  return isLoginPath(asked.split(/[?#]/)[0] ?? '') ? '/' : asked
+}

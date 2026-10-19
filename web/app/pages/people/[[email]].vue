@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { SplitPaneSpec } from '~/composables/useSplit'
 import type { PersonEntry, PersonDetail } from '~/composables/usePlatform'
 import type { NoteSummary } from '~/composables/useNotes'
 import type { Task } from '~/composables/useTasks'
@@ -145,20 +146,30 @@ const counts = (p: PersonEntry) =>
   [p.messages && `${p.messages} mail${p.messages > 1 ? 's' : ''}`, p.meetings && `${p.meetings} meeting${p.meetings > 1 ? 's' : ''}`]
     .filter(Boolean)
     .join(' · ')
+
+// Resizable panes (wide screens): people · person.
+const splitPanes: SplitPaneSpec[] = [
+  { id: 'list', size: 320, min: 260, max: 480, handle: { label: 'Resize the people list' } },
+  { id: 'person', min: 480 },
+]
 </script>
 
 <template>
   <div class="people" :class="{ open: !!email }">
-    <SplitGroup id="people">
-    <SplitPane id="list" :size="320" :min="260" :max="480">
+    <SplitView id="people" :panes="splitPanes">
+    <template #list>
     <aside class="list" aria-label="People">
       <div class="list-head">
         <h1 class="serif">People</h1>
         <p class="faint small">From your mail and your meetings.</p>
-        <div class="search">
-          <HIcon name="search" :size="15" />
-          <input v-model="query" type="search" placeholder="Search people" aria-label="Search people" />
-        </div>
+        <UInput
+          v-model="query"
+          type="search"
+          icon="i-havre-search"
+          placeholder="Search people"
+          aria-label="Search people"
+          class="search"
+        />
       </div>
       <ul>
         <li v-for="p in people" :key="p.email">
@@ -175,15 +186,20 @@ const counts = (p: PersonEntry) =>
         {{ query ? 'Nobody matches.' : 'People appear here as your mail and calendars sync.' }}
       </p>
     </aside>
-    </SplitPane>
+    </template>
 
-    <SplitHandle label="Resize the people list" />
-    <SplitPane id="person" :min="480">
+    <template #person>
     <main class="detail">
       <template v-if="detail">
-        <NuxtLink to="/people" class="icon-btn back" aria-label="Back to People">
-          <HIcon name="back" :size="18" />
-        </NuxtLink>
+        <UButton
+          icon="i-havre-back"
+          color="neutral"
+          variant="ghost"
+          square
+          class="back"
+          to="/people"
+          aria-label="Back to People"
+        />
         <header class="card-head">
           <span class="avatar big" :style="{ background: personColor(detail.email) }">{{ initials(personName(detail)) }}</span>
           <div class="id">
@@ -191,10 +207,7 @@ const counts = (p: PersonEntry) =>
             <p class="faint">{{ detail.email }}</p>
             <p class="faint small">{{ counts(detail) || 'Nothing in common yet.' }}</p>
           </div>
-          <button v-if="canWrite" type="button" class="btn btn-primary" @click="write">
-            <HIcon name="pen" :size="15" />
-            Write
-          </button>
+          <UButton v-if="canWrite" icon="i-havre-pen" type="button" @click="write">Write</UButton>
         </header>
 
         <div class="cols">
@@ -241,14 +254,15 @@ const counts = (p: PersonEntry) =>
                 @toggle="toggleTask(t)"
                 @open="navigateTo({ path: '/tasks', query: { task: t.id } })"
               />
-              <form class="new-task" @submit.prevent="addTask">
-                <HIcon name="plus" :size="14" />
-                <label class="sr-only" for="p-new-task">New task with {{ firstName }}</label>
-                <input
-                  id="p-new-task"
+              <form @submit.prevent="addTask">
+                <UInput
                   v-model="newTask"
+                  icon="i-havre-plus"
+                  variant="none"
                   :placeholder="`New task with ${firstName}… (“call fri”)`"
+                  :aria-label="`New task with ${firstName}`"
                   :disabled="addingTask"
+                  class="new-task"
                 />
               </form>
             </template>
@@ -299,8 +313,8 @@ const counts = (p: PersonEntry) =>
         <p>Pick someone to see your mail and meetings with them.</p>
       </div>
     </main>
-    </SplitPane>
-    </SplitGroup>
+    </template>
+    </SplitView>
   </div>
 </template>
 
@@ -311,29 +325,16 @@ const counts = (p: PersonEntry) =>
   font-size: 13px;
   text-decoration: none;
 }
+/* A dashed line until you type in it. */
 .new-task {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  width: 100%;
   margin: 4px 0 0;
-  padding: 0 10px;
-  height: 36px;
   border-radius: 9px;
   border: 1px dashed var(--line2);
-  color: var(--faint);
 }
 .new-task:focus-within {
   border-style: solid;
   border-color: var(--accent);
-}
-.new-task input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  outline: none;
-  font-size: 13.5px;
 }
 .people {
   flex: 1;
@@ -367,27 +368,8 @@ h1 {
   margin: 2px 0 0;
 }
 .search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  width: 100%;
   margin-top: 12px;
-  padding: 0 10px;
-  height: 36px;
-  border-radius: 9px;
-  border: 1px solid var(--line2);
-  color: var(--faint);
-}
-.search:focus-within {
-  border-color: var(--accent);
-}
-.search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  outline: none;
-  font-size: 14px;
 }
 ul {
   margin: 0;

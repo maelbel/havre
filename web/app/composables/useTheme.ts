@@ -1,25 +1,16 @@
-// Dark by default, light on demand. Remembered in this browser only.
+// Dark by default, light on demand. Nuxt's color mode keeps the choice (in
+// this browser, under `havre-theme`) and sets `<html class="dark"
+// data-theme="dark">`: the class for Nuxt UI, the attribute for Havre's CSS.
 export function useTheme() {
-  const theme = useState<'dark' | 'light'>('theme', () => {
-    try {
-      return localStorage.getItem('havre-theme') === 'light' ? 'light' : 'dark'
-    } catch {
-      return 'dark'
-    }
+  const mode = useColorMode()
+  const theme = computed<'dark' | 'light'>({
+    get: () => (mode.value === 'light' ? 'light' : 'dark'),
+    set: (value) => {
+      mode.preference = value
+    },
   })
-
-  watchEffect(() => {
-    document.documentElement.dataset.theme = theme.value
-    try {
-      localStorage.setItem('havre-theme', theme.value)
-    } catch {
-      /* private mode: fine, we just won't remember */
-    }
-  })
-
   const toggle = () => {
     theme.value = theme.value === 'dark' ? 'light' : 'dark'
   }
-
   return { theme, toggle }
 }

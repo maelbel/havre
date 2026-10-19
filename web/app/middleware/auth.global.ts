@@ -10,10 +10,12 @@ export default defineNuxtRouteMiddleware(async (to) => {
     }
   }
   const s = status.value!
-  if (!s.enabled) return to.path === '/login' ? navigateTo('/') : undefined
+  // The server answers `/login` with its folder, `/login/`: both are the sign-in page.
+  const onLogin = isLoginPath(to.path)
+  if (!s.enabled) return onLogin ? navigateTo('/') : undefined
   const free = s.signed_in && !s.setup_needed
-  if (to.path === '/login') {
-    if (free) return navigateTo(typeof to.query.next === 'string' && /^\/(?![/\\])/.test(to.query.next) ? to.query.next : '/')
+  if (onLogin) {
+    if (free) return navigateTo(safeNext(to.query.next))
     return
   }
   if (!free) return navigateTo({ path: '/login', query: to.fullPath !== '/' ? { next: to.fullPath } : {} })

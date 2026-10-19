@@ -67,7 +67,7 @@ onMounted(loadSessions)
         <h2 id="security-title">Security</h2>
         <p class="lead">The password that opens this Havre, and the browsers signed in to it.</p>
       </div>
-      <button type="button" class="btn" @click="signOut">Sign out</button>
+      <UButton color="neutral" variant="outline" type="button" @click="signOut">Sign out</UButton>
     </div>
 
     <article class="card">
@@ -76,28 +76,40 @@ onMounted(loadSessions)
           <strong>Password</strong>
           <span class="faint">Changing it signs out every other browser.</span>
         </div>
-        <button v-if="!open" type="button" class="btn small" @click="open = true">Change</button>
+        <UButton v-if="!open" color="neutral" variant="outline" size="sm" type="button" @click="open = true">
+          Change
+        </UButton>
       </div>
       <form v-if="open" class="pw" @submit.prevent="save">
-        <label class="field wide">
-          <span>Current password</span>
-          <input v-model="current" type="password" autocomplete="current-password" required />
-        </label>
-        <label class="field">
-          <span>New password</span>
-          <input v-model="next" type="password" autocomplete="new-password" required minlength="8" />
-        </label>
-        <label class="field">
-          <span>Confirm</span>
-          <input v-model="confirm" type="password" autocomplete="new-password" required />
-        </label>
-        <div v-if="error" class="error wide" role="alert">
-          <HIcon name="alert" :size="16" />
-          <span>{{ error }}</span>
-        </div>
+        <UFormField label="Current password" class="field wide">
+          <UInput v-model="current" type="password" autocomplete="current-password" required class="w-full" />
+        </UFormField>
+        <UFormField label="New password" class="field">
+          <UInput
+            v-model="next"
+            type="password"
+            autocomplete="new-password"
+            required
+            minlength="8"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Confirm" class="field">
+          <UInput v-model="confirm" type="password" autocomplete="new-password" required class="w-full" />
+        </UFormField>
+        <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" class="wide" />
         <div class="actions wide">
-          <button type="button" class="btn small" :disabled="busy" @click="open = false">Cancel</button>
-          <button type="submit" class="btn btn-primary small" :disabled="busy">Save password</button>
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="sm"
+            type="button"
+            :disabled="busy"
+            @click="open = false"
+          >
+            Cancel
+          </UButton>
+          <UButton size="sm" type="submit" :disabled="busy">Save password</UButton>
         </div>
       </form>
     </article>
@@ -108,14 +120,21 @@ onMounted(loadSessions)
           <strong>Signed-in browsers</strong>
           <span class="faint">Sessions end after 30 days without a visit.</span>
         </div>
-        <button v-if="others" type="button" class="btn small" @click="signOutEverywhereElse">
+        <UButton
+          v-if="others"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          type="button"
+          @click="signOutEverywhereElse"
+        >
           Sign out the {{ others }} other{{ others > 1 ? 's' : '' }}
-        </button>
+        </UButton>
       </div>
       <ul class="sessions">
         <li v-for="(s, i) in sessions" :key="i">
           <span>{{ describeBrowser(s.user_agent) }}</span>
-          <span v-if="s.current" class="badge">This browser</span>
+          <UBadge v-if="s.current" variant="soft" size="sm">This browser</UBadge>
           <span class="faint">{{ when(s.last_seen) }}</span>
         </li>
       </ul>
@@ -170,11 +189,6 @@ h2 {
   color: var(--faint);
   font-size: 12.5px;
 }
-.btn.small {
-  height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
-}
 .pw {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -193,30 +207,6 @@ h2 {
 .field > span {
   font-size: 12.5px;
   color: var(--muted);
-}
-input {
-  height: 38px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  outline: none;
-}
-input:focus {
-  border-color: var(--accent);
-}
-.error {
-  display: flex;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
-  font-size: 13px;
-}
-.error span {
-  color: var(--text);
 }
 .actions {
   display: flex;
@@ -240,13 +230,6 @@ input:focus {
 }
 .sessions li .faint {
   margin-left: auto;
-}
-.badge {
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--accent) 16%, transparent);
-  color: var(--accent);
-  font-size: 11.5px;
 }
 @media (max-width: 560px) {
   .pw {

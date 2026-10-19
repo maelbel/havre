@@ -37,13 +37,19 @@ const me = computed(() => {
   const a = accounts.data.value.find((x) => x.sender_name) ?? accounts.data.value[0]
   return a ? a.sender_name || a.email : ''
 })
-const menu = ref(false)
 const auth = useAuthStatus()
-function closeMenu(e: MouseEvent) {
-  if (!(e.target as Element).closest?.('.account')) menu.value = false
-}
-onMounted(() => document.addEventListener('click', closeMenu))
-onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
+const menuItems = computed(() => [
+  ...(me.value ? [[{ label: me.value, type: 'label' as const }]] : []),
+  [
+    {
+      label: theme.value === 'dark' ? 'Light theme' : 'Dark theme',
+      icon: theme.value === 'dark' ? 'i-havre-sun' : 'i-havre-moon',
+      onSelect: toggle,
+    },
+    { label: 'Settings', icon: 'i-havre-settings', to: '/settings' },
+    ...(auth.value?.enabled ? [{ label: 'Sign out', icon: 'i-havre-back', onSelect: () => signOut() }] : []),
+  ],
+])
 </script>
 
 <template>
@@ -92,30 +98,11 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
       <HIcon name="settings" />
     </NuxtLink>
     <div class="account">
-      <button
-        type="button"
-        class="avatar"
-        :aria-label="me ? `Account: ${me}` : 'Account'"
-        :aria-expanded="menu"
-        @click="menu = !menu"
-      >
-        {{ me ? initials(me) : '·' }}
-      </button>
-      <div v-if="menu" class="menu" role="menu">
-        <p v-if="me" class="who">{{ me }}</p>
-        <button type="button" role="menuitem" @click="toggle(); menu = false">
-          <HIcon :name="theme === 'dark' ? 'sun' : 'moon'" :size="16" />
-          {{ theme === 'dark' ? 'Light theme' : 'Dark theme' }}
+      <UDropdownMenu :items="menuItems" :content="{ side: 'right', align: 'end', sideOffset: 10 }">
+        <button type="button" class="avatar" :aria-label="me ? `Account: ${me}` : 'Account'">
+          {{ me ? initials(me) : '·' }}
         </button>
-        <NuxtLink to="/settings" role="menuitem" @click="menu = false">
-          <HIcon name="settings" :size="16" />
-          Settings
-        </NuxtLink>
-        <button v-if="auth?.enabled" type="button" role="menuitem" @click="menu = false; signOut()">
-          <HIcon name="back" :size="16" />
-          Sign out
-        </button>
-      </div>
+      </UDropdownMenu>
     </div>
   </nav>
 </template>
@@ -170,45 +157,6 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-}
-.menu {
-  position: absolute;
-  z-index: 60;
-  left: calc(100% + 10px);
-  bottom: 0;
-  min-width: 200px;
-  padding: 6px;
-  border-radius: 12px;
-  border: 1px solid var(--line2);
-  background: var(--raise);
-  box-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.5);
-  display: flex;
-  flex-direction: column;
-}
-.menu .who {
-  margin: 4px 10px 6px;
-  font-size: 12.5px;
-  color: var(--faint);
-}
-.menu button,
-.menu a {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-  text-decoration: none;
-  cursor: pointer;
-  text-align: left;
-}
-.menu button:hover,
-.menu a:hover {
-  background: var(--hover);
 }
 .logo {
   width: 34px;
@@ -276,11 +224,6 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
   .account {
     margin-top: 0;
     align-self: center;
-  }
-  .menu {
-    left: auto;
-    right: 0;
-    bottom: calc(100% + 10px);
   }
 }
 </style>

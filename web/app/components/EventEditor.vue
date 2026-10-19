@@ -76,8 +76,6 @@ watch(
 const busy = ref(false)
 const error = ref<string | null>(null)
 const confirmDelete = ref(false)
-const titleInput = ref<HTMLInputElement | null>(null)
-onMounted(() => titleInput.value?.focus())
 
 function input(): EventInput | string {
   if (!form.title.trim()) return 'Give the event a title.'
@@ -140,135 +138,129 @@ async function remove() {
   }
 }
 
+// Ctrl/⌘+Enter saves (Esc and the backdrop close: UModal does those).
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    e.stopPropagation()
-    emit('cancel')
-  } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
     e.preventDefault()
     save()
   }
 }
+
+const calendarItems = computed(() =>
+  writable.value.map((c) => ({ label: `${c.name} · ${SOURCE_LABELS[c.source]}`, value: c.id, color: c.color })),
+)
 </script>
 
 <template>
-  <div class="backdrop" @mousedown.self="emit('cancel')">
-    <form class="editor" role="dialog" :aria-label="event ? 'Edit event' : 'New event'" @submit.prevent="save" @keydown="onKeydown">
-      <input ref="titleInput" v-model="form.title" class="title" type="text" placeholder="Add a title" aria-label="Title" />
+  <UModal
+    :open="true"
+    :title="event ? 'Edit event' : 'New event'"
+    :close="false"
+    :ui="{ header: 'sr-only', body: 'p-0 sm:p-0', content: 'max-w-[560px]' }"
+    @update:open="(open) => !open && emit('cancel')"
+  >
+    <template #body>
+      <form class="editor" @submit.prevent="save" @keydown="onKeydown">
+        <UInput
+          v-model="form.title"
+          variant="none"
+          placeholder="Add a title"
+          aria-label="Title"
+          autofocus
+          :ui="{ base: 'title' }"
+        />
 
-      <div class="row">
-        <label class="lbl" for="ev-cal">Calendar</label>
-        <div class="cal">
-          <span class="dot" :style="{ background: calendar?.color }" />
-          <select id="ev-cal" v-model.number="form.calendar">
-            <option v-for="c in writable" :key="c.id" :value="c.id">{{ c.name }} · {{ SOURCE_LABELS[c.source] }}</option>
-          </select>
-        </div>
-      </div>
+        <UFormField label="Calendar" orientation="horizontal" class="row">
+          <USelect v-model="form.calendar" :items="calendarItems" class="w-full">
+            <template #leading>
+              <span class="dot" :style="{ background: calendar?.color }" aria-hidden="true" />
+            </template>
+          </USelect>
+        </UFormField>
 
-      <div class="row">
-        <span class="lbl">When</span>
-        <div class="when">
-          <div class="line">
-            <span class="to">from</span>
-            <input v-model="form.startDate" type="date" aria-label="Start date" required />
-            <input v-if="!form.allDay" v-model="form.startTime" type="time" step="300" aria-label="Start time" required />
+        <UFormField label="When" orientation="horizontal" class="row top">
+          <div class="when">
+            <div class="line">
+              <span class="to">from</span>
+              <DateField v-model="form.startDate" label="Start date" required />
+              <TimeField v-if="!form.allDay" v-model="form.startTime" label="Start time" required />
+            </div>
+            <div class="line">
+              <span class="to">to</span>
+              <DateField v-model="form.endDate" label="End date" required />
+              <TimeField v-if="!form.allDay" v-model="form.endTime" label="End time" required />
+            </div>
+            <UCheckbox v-model="form.allDay" label="All day" />
           </div>
-          <div class="line">
-            <span class="to">to</span>
-            <input v-model="form.endDate" type="date" aria-label="End date" required />
-            <input v-if="!form.allDay" v-model="form.endTime" type="time" step="300" aria-label="End time" required />
-          </div>
-          <label class="check">
-            <input v-model="form.allDay" type="checkbox" />
-            All day
-          </label>
-        </div>
-      </div>
+        </UFormField>
 
-      <div class="row">
-        <label class="lbl" for="ev-loc">Where</label>
-        <input id="ev-loc" v-model="form.location" type="text" placeholder="Place or meeting link" />
-      </div>
+        <UFormField label="Where" orientation="horizontal" class="row">
+          <UInput v-model="form.location" placeholder="Place or meeting link" class="w-full" />
+        </UFormField>
 
-      <div v-if="canInvite" class="row">
-        <label class="lbl" for="rcpt-guests">Guests</label>
-        <div class="stack">
-          <RecipientInput v-model="form.guests" label="Guests" bare address-only placeholder="anna@example.com, bob@example.com" />
-          <small class="hint">{{ calendar?.source === 'google' ? 'Google' : 'Microsoft' }} emails them an invitation.</small>
-        </div>
-      </div>
-
-      <div class="row top">
-        <label class="lbl" for="ev-notes">Notes</label>
-        <textarea id="ev-notes" v-model="form.description" rows="3" placeholder="Agenda, address, dial-in…" />
-      </div>
-
-      <div v-if="error" class="error" role="alert">
-        <HIcon name="alert" :size="16" />
-        <span>{{ error }}</span>
-      </div>
-
-      <div class="actions">
-        <button
-          v-if="event"
-          type="button"
-          class="btn"
-          :class="{ danger: confirmDelete }"
-          :disabled="busy"
-          @click="remove"
+        <UFormField
+          v-if="canInvite"
+          label="Guests"
+          orientation="horizontal"
+          class="row top"
+          :help="`${calendar?.source === 'google' ? 'Google' : 'Microsoft'} emails them an invitation.`"
         >
-          <HIcon name="trash" :size="15" />
-          {{ confirmDelete ? 'Delete for good?' : 'Delete' }}
-        </button>
-        <span class="spacer" />
-        <button type="button" class="btn" :disabled="busy" @click="emit('cancel')">Cancel</button>
-        <button type="submit" class="btn btn-primary" :disabled="busy || !writable.length">
-          <span v-if="busy" class="spinner" aria-hidden="true" />
-          {{ event ? 'Save' : 'Create' }}
-        </button>
-      </div>
-    </form>
-  </div>
+          <RecipientInput
+            v-model="form.guests"
+            label="Guests"
+            bare
+            address-only
+            placeholder="anna@example.com, bob@example.com"
+          />
+        </UFormField>
+
+        <UFormField label="Notes" orientation="horizontal" class="row top">
+          <UTextarea v-model="form.description" :rows="3" autoresize placeholder="Agenda, address, dial-in…" class="w-full" />
+        </UFormField>
+
+        <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" />
+
+        <div class="actions">
+          <UButton
+            v-if="event"
+            icon="i-havre-trash"
+            :color="confirmDelete ? 'error' : 'neutral'"
+            variant="outline"
+            :disabled="busy"
+            @click="remove"
+          >
+            {{ confirmDelete ? 'Delete for good?' : 'Delete' }}
+          </UButton>
+          <span class="spacer" />
+          <UButton color="neutral" variant="outline" :disabled="busy" @click="emit('cancel')">Cancel</UButton>
+          <UButton :loading="busy" type="submit" :disabled="busy || !writable.length">
+            {{ event ? 'Save' : 'Create' }}
+          </UButton>
+        </div>
+      </form>
+    </template>
+  </UModal>
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  background: rgb(0 0 0 / 0.35);
-}
 .editor {
-  width: min(560px, 100%);
-  max-height: calc(100vh - 32px);
-  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 22px 22px 18px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--line2);
-  background: var(--panel);
-  box-shadow: 0 30px 80px -20px rgb(0 0 0 / 0.55);
 }
-.title {
+:deep(.title) {
   height: 44px;
   padding: 0 2px;
-  border: 0;
   border-bottom: 1px solid var(--line2);
-  background: transparent;
-  color: var(--text);
+  border-radius: 0;
   font-family: var(--font-serif);
   font-size: 24px;
-  outline: none;
 }
-.title:focus {
+:deep(.title:focus) {
   border-bottom-color: var(--accent);
 }
+/* Label column 80 px, then the field (one column on phones). */
 .row {
   display: grid;
   grid-template-columns: 80px minmax(0, 1fr);
@@ -278,56 +270,10 @@ function onKeydown(e: KeyboardEvent) {
 .row.top {
   align-items: start;
 }
-.row.top .lbl {
-  padding-top: 10px;
-}
-.lbl {
-  font-size: 12.5px;
-  color: var(--muted);
-}
-input[type='text'],
-input[type='date'],
-input[type='time'],
-select,
-textarea {
-  height: 38px;
-  padding: 0 10px;
-  border-radius: 9px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  outline: none;
-  color-scheme: inherit;
-}
-textarea {
-  height: auto;
-  padding: 9px 10px;
-  resize: vertical;
-  line-height: 1.5;
-}
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: var(--accent);
-}
-.cal {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.cal .dot {
-  position: absolute;
-  left: 11px;
+.dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  pointer-events: none;
-}
-.cal select {
-  width: 100%;
-  padding-left: 30px;
 }
 .when {
   display: flex;
@@ -345,38 +291,6 @@ textarea:focus {
   color: var(--faint);
   font-size: 13px;
 }
-.check {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.check input {
-  accent-color: var(--accent);
-}
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.hint {
-  font-size: 12px;
-  color: var(--faint);
-}
-.error {
-  display: flex;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
-  font-size: 13px;
-}
-.error span {
-  color: var(--text);
-}
 .actions {
   display: flex;
   align-items: center;
@@ -385,28 +299,6 @@ textarea:focus {
 }
 .spacer {
   flex: 1;
-}
-.btn.danger {
-  border-color: color-mix(in oklab, var(--danger) 50%, transparent);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
-}
-.btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.spinner {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid color-mix(in oklab, var(--on-accent) 30%, transparent);
-  border-top-color: var(--on-accent);
-  animation: spin 0.7s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 @media (max-width: 560px) {
   .row {

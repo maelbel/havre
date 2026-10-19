@@ -68,7 +68,7 @@ folder somewhere else too, or point it at a NAS or another disk (with Docker,
 mount that folder at `/srv/havre/data/backups`; it must be writable by the
 container's `havre` user). Each backup can also be downloaded from the page.
 
-**The time** is the server's local time. With Docker, set `TZ` (compose.yml
+**The time** is the server's local time. With Docker, set `TZ` (docker-compose.yml
 defaults to `Europe/Paris`).
 
 **The recovery key.** Mail passwords, refresh tokens and API keys are

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { SplitPaneSpec } from '~/composables/useSplit'
 import type { DueGroup, Parsed, Task, TaskList, TaskSource } from '~/composables/useTasks'
 
 // Tasks: views (Today, Upcoming, From Mail, No date, Done) and your lists on
@@ -303,22 +304,29 @@ async function syncNow() {
 watch([view, listId], () => keepShown.value.clear())
 
 // `n`: focus quick add.
-const input = ref<HTMLInputElement | null>(null)
+const input = ref<{ inputRef: HTMLInputElement | null } | null>(null)
 function onKey(e: KeyboardEvent) {
   const typing = (e.target as HTMLElement)?.closest?.('input, textarea, select, [contenteditable]')
   if (!typing && e.key === 'n' && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault()
-    input.value?.focus()
+    input.value?.inputRef?.focus()
   }
 }
 onMounted(() => document.addEventListener('keydown', onKey))
 onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
+
+// Resizable panes (wide screens): lists · tasks · details (when a task is open).
+const splitPanes = computed<SplitPaneSpec[]>(() => [
+  { id: 'lists', order: 1, size: 240, min: 200, max: 340, collapsible: true, handle: { label: 'Resize the task lists', fold: true, showLabel: 'Show lists' } },
+  { id: 'tasks', order: 2, min: 420, handle: selected.value ? { label: 'Resize the task details' } : undefined },
+  ...(selected.value ? [{ id: 'details', order: 3, size: 380, min: 320, max: 600 }] : []),
+])
 </script>
 
 <template>
   <div class="tasks-app" :class="{ 'has-task': !!selected }">
-    <SplitGroup id="tasks">
-    <SplitPane id="lists" :order="1" :size="240" :min="200" :max="340" collapsible>
+    <SplitView id="tasks" :panes="splitPanes">
+    <template #lists>
     <aside class="side" aria-label="Task lists">
       <h1 class="serif">Tasks</h1>
       <nav class="views" aria-label="Views">
@@ -358,7 +366,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
       </div>
 
       <form v-if="newList !== null" class="new-list" @submit.prevent="addList">
-        <input v-model="newList" aria-label="New list name" placeholder="List name" autofocus @blur="addList" />
+        <UInput
+          v-model="newList"
+          aria-label="New list name"
+          placeholder="List name"
+          autofocus
+          size="sm"
+          class="w-full mt-1.5"
+          @blur="addList"
+        />
       </form>
       <button v-else type="button" class="row ghost" @click="newList = ''">
         <HIcon name="plus" :size="14" />
@@ -376,16 +392,24 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
         </div>
         <div class="sync-actions">
           <NuxtLink to="/settings">Accounts →</NuxtLink>
-          <button type="button" class="icon-btn small" aria-label="Sync tasks now" :disabled="syncing" @click="syncNow">
+          <UButton
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            square
+            type="button"
+            aria-label="Sync tasks now"
+            :disabled="syncing"
+            @click="syncNow"
+          >
             <HIcon name="refresh" :size="14" :class="{ spin: syncing }" />
-          </button>
+          </UButton>
         </div>
       </section>
     </aside>
-    </SplitPane>
+    </template>
 
-    <SplitHandle label="Resize the task lists" fold="lists" show-label="Show lists" />
-    <SplitPane id="tasks" :order="2" :min="420">
+    <template #tasks>
     <main class="main">
       <header class="bar">
         <h2>{{ heading }}</h2>
@@ -393,29 +417,27 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
       </header>
 
       <div class="quick">
-        <label class="add">
-          <HIcon name="plus" :size="16" class="plus" />
-          <span class="sr-only">New task</span>
-          <input
-            ref="input"
-            v-model="text"
-            type="text"
-            placeholder="Add a task… try “Call Thomas fri 10:00”"
-            :disabled="adding"
-            @keydown.enter.prevent="add"
-          />
-          <kbd class="mono">↵</kbd>
-        </label>
+        <UInput
+          ref="input"
+          v-model="text"
+          icon="i-havre-plus"
+          size="xl"
+          placeholder="Add a task… try “Call Thomas fri 10:00”"
+          aria-label="New task"
+          :disabled="adding"
+          :ui="{ leadingIcon: 'text-primary' }"
+          class="add"
+          @keydown.enter.prevent="add"
+        >
+          <template #trailing><UKbd value="↵" /></template>
+        </UInput>
         <div v-if="text.trim()" class="will" aria-live="polite">
           <span>Will add</span>
-          <span v-if="previewDue" class="pill accent">
-            <HIcon name="calendar" :size="11" />
-            {{ previewDue }}
-          </span>
-          <span v-if="target" class="pill">
-            <span class="dot" :style="{ background: target.color }" aria-hidden="true" />
+          <UBadge v-if="previewDue" icon="i-havre-calendar" variant="soft" size="sm">{{ previewDue }}</UBadge>
+          <UBadge v-if="target" color="neutral" variant="outline" size="sm">
+            <template #leading><span class="dot" :style="{ background: target.color }" aria-hidden="true" /></template>
             {{ target.owner }} · {{ target.name }}
-          </span>
+          </UBadge>
           <span class="hint">— words like <span class="mono">fri</span>, <span class="mono">tomorrow</span>, <span class="mono">#list</span> are understood</span>
         </div>
       </div>
@@ -451,22 +473,23 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
                       : 'Nothing to do. Add a task above, or make one from an email (T).'
               }}
             </p>
-            <button
+            <UButton
               v-if="view !== 'done' && (doneCount || showDone)"
+              color="neutral"
+              variant="ghost"
+              size="sm"
               type="button"
-              class="show-done"
               @click="showDone = !showDone"
             >
               {{ showDone ? 'Hide done' : `Show done (${doneCount})` }}
-            </button>
+            </UButton>
           </template>
         </div>
       </div>
     </main>
-    </SplitPane>
+    </template>
 
-    <SplitHandle v-if="selected" label="Resize the task details" />
-    <SplitPane v-if="selected" id="details" :order="3" :size="380" :min="320" :max="600">
+    <template v-if="selected" #details>
     <TaskDetails
       :key="selected.id"
       :task="selected"
@@ -475,8 +498,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
       @deleted="deleted"
       @close="closeTask"
     />
-    </SplitPane>
-    </SplitGroup>
+    </template>
+    </SplitView>
   </div>
 </template>
 
@@ -578,17 +601,6 @@ h1 {
   border-radius: 3px;
   flex: none;
 }
-.new-list input {
-  width: 100%;
-  height: 32px;
-  margin-top: 6px;
-  padding: 0 10px;
-  border: 1px solid var(--accent);
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text);
-  outline: none;
-}
 .grow {
   flex: 1;
   min-height: 16px;
@@ -641,10 +653,6 @@ h1 {
 .sync-actions a {
   text-decoration: none;
 }
-.icon-btn.small {
-  width: 28px;
-  height: 28px;
-}
 .spin {
   animation: spin 0.9s linear infinite;
 }
@@ -687,37 +695,7 @@ h2 {
   flex: none;
 }
 .add {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 46px;
-  padding: 0 8px 0 14px;
-  border: 1px solid var(--line2);
-  border-radius: 12px;
-  background: var(--bg);
-}
-.add:focus-within {
-  border-color: var(--accent);
-}
-.plus {
-  color: var(--accent);
-  flex: none;
-}
-.add input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--text);
-  font-size: 14.5px;
-}
-kbd {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 5px;
-  border: 1px solid var(--line2);
-  color: var(--faint);
+  width: 100%;
 }
 .will {
   display: flex;
@@ -728,25 +706,11 @@ kbd {
   font-size: 12px;
   color: var(--faint);
 }
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--line2);
-  color: var(--text);
-}
 .pill .dot {
   width: 7px;
   height: 7px;
   margin: 0;
   border-radius: 2px;
-}
-.pill.accent {
-  border-color: transparent;
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
-  color: var(--accent);
 }
 .scroll {
   flex: 1;
@@ -779,21 +743,6 @@ kbd {
 .empty {
   padding: 28px 4px;
   color: var(--faint);
-}
-.show-done {
-  margin-top: 14px;
-  height: 30px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--faint);
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.show-done:hover {
-  background: var(--hover);
-  color: var(--text);
 }
 
 /* Phones: views as tabs on top, quick add at the bottom, a task full screen. */

@@ -70,6 +70,20 @@ async function chooseExternal(provider: AiProvider) {
   models.value = []
   await update({ provider, url: '', model: '' }, 'where')
 }
+// The three choices, as cards.
+const whereItems: { value: Where; label: string; description: string }[] = [
+  { value: 'local', label: 'On this server', description: `Runs through Ollama. Your mail and calendar never leave ${host}.` },
+  {
+    value: 'claude',
+    label: 'Claude, with your Claude plan',
+    description: 'Through Claude Code, signed in with your Claude account (Pro, Max, Team…). No API key.',
+  },
+  {
+    value: 'external',
+    label: 'External provider',
+    description: 'Mistral, Anthropic, or any OpenAI-compatible API. More capable, needs an API key.',
+  },
+]
 const providerInfo = computed(() => AI_PROVIDERS.find((p) => p.value === saved.value?.provider)!)
 
 const dirty = computed(() => {
@@ -208,117 +222,137 @@ onBeforeUnmount(() => clearInterval(poll))
           that goes away; nothing else changes.
         </p>
       </div>
-      <button v-if="saved.installed" type="button" class="btn" :class="{ danger: confirmRemove }" @click="removeApp">
+      <UButton
+        v-if="saved.installed"
+        :color="confirmRemove ? 'error' : 'neutral'"
+        variant="outline"
+        type="button"
+        @click="removeApp"
+      >
         {{ confirmRemove ? 'Click again to remove' : 'Remove from the dock' }}
-      </button>
+      </UButton>
     </header>
 
     <div v-if="!saved.installed" class="notice">
       <span>The AI app isn’t in your dock, so nothing here runs.</span>
-      <button type="button" class="btn btn-primary small" @click="addApp">Add it</button>
+      <UButton size="sm" type="button" @click="addApp">Add it</UButton>
     </div>
     <div v-else-if="!saved.enabled" class="notice">
       <HIcon name="sparkle" :size="15" />
       <span>Almost there: choose where the model runs, and a model.</span>
     </div>
 
-    <div v-if="error" class="error" role="alert">
-      <HIcon name="alert" :size="15" />
-      <span>{{ error }}</span>
-    </div>
+    <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" />
 
     <!-- Where -->
     <fieldset>
       <legend>Where the model runs</legend>
 
-      <div class="choice" :class="{ on: where === 'local' }">
-        <label class="choice-head">
-          <input type="radio" name="where" :checked="where === 'local'" :disabled="!!busy" @change="choose('local')" />
+      <URadioGroup
+        :model-value="where"
+        :items="whereItems"
+        variant="card"
+        :disabled="!!busy"
+        aria-label="Where the model runs"
+        :ui="{ fieldset: 'gap-2.5', item: 'rounded-[14px] p-4 has-data-[state=checked]:bg-(--raise)' }"
+        @update:model-value="(w) => choose(w as Where)"
+      >
+        <template #label="{ item }">
+          <span class="choice-title">
+            {{ item.label }}
+            <UBadge v-if="item.value === 'local'" color="success" variant="soft" size="sm">Recommended</UBadge>
+          </span>
+        </template>
+        <template #description="{ item }">
           <span class="choice-text">
-            <span class="choice-title">On this server <span class="pill ok">Recommended</span></span>
-            <span class="muted">Runs through Ollama. Your mail and calendar never leave {{ host }}.</span>
-            <span v-if="where === 'local'" class="meta mono">
+            <span class="muted">{{ item.description }}</span>
+            <span v-if="item.value !== 'local'" class="warnline">
+              <HIcon name="alert" :size="13" />The content the assistant reads is sent to
+              {{ item.value === 'claude' ? 'Anthropic' : 'that provider' }}.
+            </span>
+            <span v-if="item.value === 'local' && where === 'local'" class="meta mono">
               <span>model: {{ saved.model || 'none chosen' }}</span>
               <span v-if="health" :class="health.ok ? 'okc' : 'warnc'">● {{ health.ok ? 'running' : 'not reachable' }}</span>
             </span>
           </span>
-        </label>
-        <div v-if="where === 'local'" class="config">
-          <label class="field">
-            <span>Ollama address</span>
-            <input v-model="form.url" type="url" :placeholder="providerInfo.url" aria-label="Address" spellcheck="false" />
-          </label>
-          <label class="field">
-            <span>Model</span>
-            <span class="with-btn">
-              <input v-model="form.model" list="ai-models" type="text" placeholder="e.g. llama3.1:8b" aria-label="Model" spellcheck="false" />
-              <button type="button" class="btn small" :disabled="!!busy" @click="loadModels">
-                {{ busy === 'models' ? 'Loading…' : 'List models' }}
-              </button>
-            </span>
-          </label>
-          <p v-if="health && !health.ok" class="faint small">{{ health.error || 'Ollama doesn’t answer.' }} Install it from ollama.com, then <code>ollama pull llama3.1</code>.</p>
-        </div>
-      </div>
+        </template>
+      </URadioGroup>
 
-      <div class="choice" :class="{ on: where === 'claude' }">
-        <label class="choice-head">
-          <input type="radio" name="where" :checked="where === 'claude'" :disabled="!!busy" @change="choose('claude')" />
-          <span class="choice-text">
-            <span class="choice-title">Claude, with your Claude plan</span>
-            <span class="muted">Through Claude Code, signed in with your Claude account (Pro, Max, Team…). No API key.</span>
-            <span class="warnline"><HIcon name="alert" :size="13" />The content the assistant reads is sent to Anthropic.</span>
-          </span>
-        </label>
-        <div v-if="where === 'claude'" class="config">
-          <ClaudeCodeSetup
-            v-model:model="form.model"
-            v-model:command="form.url"
-            :enabled="saved.enabled"
-            :prepare="saveIfDirty"
-            @enable="enableWithClaude"
-          />
-        </div>
-      </div>
-
-      <div class="choice" :class="{ on: where === 'external' }">
-        <label class="choice-head">
-          <input type="radio" name="where" :checked="where === 'external'" :disabled="!!busy" @change="choose('external')" />
-          <span class="choice-text">
-            <span class="choice-title">External provider</span>
-            <span class="muted">Mistral, Anthropic, or any OpenAI-compatible API. More capable, needs an API key.</span>
-            <span class="warnline"><HIcon name="alert" :size="13" />The content the assistant reads is sent to that provider.</span>
-          </span>
-        </label>
-        <div v-if="where === 'external'" class="config">
-          <div class="seg" role="radiogroup" aria-label="API">
-            <button type="button" role="radio" :aria-checked="saved.provider === 'openai'" @click="chooseExternal('openai')">OpenAI-compatible</button>
-            <button type="button" role="radio" :aria-checked="saved.provider === 'anthropic'" @click="chooseExternal('anthropic')">Anthropic</button>
-          </div>
-          <label class="field">
-            <span>Address</span>
-            <input v-model="form.url" type="url" :placeholder="providerInfo.url" aria-label="Address" spellcheck="false" />
-          </label>
-          <label class="field">
-            <span>API key</span>
-            <input
-              v-model="form.apiKey"
-              type="password"
-              autocomplete="off"
-              :placeholder="saved.has_key ? 'Saved — type to replace' : 'sk-…'"
-              aria-label="API key"
+      <!-- The chosen one's settings -->
+      <div v-if="where === 'local'" class="config">
+        <UFormField label="Ollama address">
+          <UInput v-model="form.url" type="url" :placeholder="providerInfo.url" aria-label="Address" spellcheck="false" class="w-full" />
+        </UFormField>
+        <UFormField label="Model">
+          <div class="with-btn">
+            <UInput
+              v-model="form.model"
+              list="ai-models"
+              placeholder="e.g. llama3.1:8b"
+              aria-label="Model"
+              spellcheck="false"
+              class="grow"
             />
-          </label>
-          <label class="field">
-            <span>Model</span>
-            <span class="with-btn">
-              <input v-model="form.model" list="ai-models" type="text" placeholder="e.g. mistral-small-latest" aria-label="Model" spellcheck="false" />
-              <button type="button" class="btn small" :disabled="!!busy" @click="loadModels">
-                {{ busy === 'models' ? 'Loading…' : 'List models' }}
-              </button>
-            </span>
-          </label>
-        </div>
+            <UButton color="neutral" variant="outline" :loading="busy === 'models'" :disabled="!!busy" @click="loadModels">
+              List models
+            </UButton>
+          </div>
+        </UFormField>
+        <p v-if="health && !health.ok" class="faint small">
+          {{ health.error || 'Ollama doesn’t answer.' }} Install it from ollama.com, then <code>ollama pull llama3.1</code>.
+        </p>
+      </div>
+      <div v-else-if="where === 'claude'" class="config">
+        <ClaudeCodeSetup
+          v-model:model="form.model"
+          v-model:command="form.url"
+          :enabled="saved.enabled"
+          :prepare="saveIfDirty"
+          @enable="enableWithClaude"
+        />
+      </div>
+      <div v-else class="config">
+        <UTabs
+          :model-value="saved.provider === 'anthropic' ? 'anthropic' : 'openai'"
+          :items="[
+            { label: 'OpenAI-compatible', value: 'openai' },
+            { label: 'Anthropic', value: 'anthropic' },
+          ]"
+          :content="false"
+          color="neutral"
+          size="sm"
+          aria-label="API"
+          class="w-fit"
+          @update:model-value="(v) => chooseExternal(v as AiProvider)"
+        />
+        <UFormField label="Address">
+          <UInput v-model="form.url" type="url" :placeholder="providerInfo.url" aria-label="Address" spellcheck="false" class="w-full" />
+        </UFormField>
+        <UFormField label="API key">
+          <UInput
+            v-model="form.apiKey"
+            type="password"
+            autocomplete="off"
+            :placeholder="saved.has_key ? 'Saved — type to replace' : 'sk-…'"
+            aria-label="API key"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Model">
+          <div class="with-btn">
+            <UInput
+              v-model="form.model"
+              list="ai-models"
+              placeholder="e.g. mistral-small-latest"
+              aria-label="Model"
+              spellcheck="false"
+              class="grow"
+            />
+            <UButton color="neutral" variant="outline" :loading="busy === 'models'" :disabled="!!busy" @click="loadModels">
+              List models
+            </UButton>
+          </div>
+        </UFormField>
       </div>
       <datalist id="ai-models">
         <option v-for="m in models" :key="m" :value="m" />
@@ -327,54 +361,108 @@ onBeforeUnmount(() => clearInterval(poll))
       <div v-if="where !== 'claude'" class="row-actions">
         <p v-if="testReply" class="okline"><HIcon name="check" :size="14" /> {{ testReply }}</p>
         <span class="spacer" />
-        <button type="button" class="btn small" :disabled="!!busy" @click="test">{{ busy === 'test' ? 'Testing…' : 'Test' }}</button>
-        <button type="button" class="btn btn-primary small" :disabled="!!busy || !dirty" @click="saveModel">Save</button>
+        <UButton color="neutral" variant="outline" size="sm" :loading="busy === 'test'" :disabled="!!busy" @click="test">
+          Test
+        </UButton>
+        <UButton size="sm" :disabled="!!busy || !dirty" @click="saveModel">Save</UButton>
       </div>
     </fieldset>
 
     <!-- Read -->
     <fieldset>
       <legend>What it can read</legend>
-      <label class="row">
-        <input type="checkbox" :checked="saved.read_mail" :disabled="!!busy" @change="setRead('read_mail', !saved.read_mail)" />
-        <span class="grow"><span class="strong">Mail</span><span class="muted"> — summaries, drafts, search</span></span>
+      <div class="row">
+        <UCheckbox
+          :model-value="saved.read_mail"
+          :disabled="!!busy"
+          label="Mail"
+          description="summaries, drafts, search"
+          class="grow"
+          @update:model-value="setRead('read_mail', !saved.read_mail)"
+        />
         <span v-if="status.search" class="mono faint">{{ (status.indexed ?? 0).toLocaleString() }} indexed</span>
-      </label>
-      <label class="row">
-        <input type="checkbox" :checked="saved.read_agenda" :disabled="!!busy" @change="setRead('read_agenda', !saved.read_agenda)" />
-        <span class="grow"><span class="strong">Agenda</span><span class="muted"> — free time, preparation notes</span></span>
-      </label>
-      <label class="row">
-        <input type="checkbox" :checked="saved.read_people" :disabled="!!busy" @change="setRead('read_people', !saved.read_people)" />
-        <span class="grow"><span class="strong">People</span><span class="muted"> — who someone is, past conversations</span></span>
-      </label>
+      </div>
+      <div class="row">
+        <UCheckbox
+          :model-value="saved.read_agenda"
+          :disabled="!!busy"
+          label="Agenda"
+          description="free time, preparation notes"
+          class="grow"
+          @update:model-value="setRead('read_agenda', !saved.read_agenda)"
+        />
+      </div>
+      <div class="row">
+        <UCheckbox
+          :model-value="saved.read_people"
+          :disabled="!!busy"
+          label="People"
+          description="who someone is, past conversations"
+          class="grow"
+          @update:model-value="setRead('read_people', !saved.read_people)"
+        />
+      </div>
       <!-- Notes and Tasks: only when their app is in the dock. -->
-      <label v-if="saved.notes_app" class="row">
-        <input type="checkbox" :checked="saved.read_notes" :disabled="!!busy" @change="setRead('read_notes', !saved.read_notes)" />
-        <span class="grow"><span class="strong">Notes</span><span class="muted"> — search and read them, propose new notes</span></span>
-      </label>
-      <label v-if="saved.tasks_app" class="row">
-        <input type="checkbox" :checked="saved.read_tasks" :disabled="!!busy" @change="setRead('read_tasks', !saved.read_tasks)" />
-        <span class="grow"><span class="strong">Tasks</span><span class="muted"> — what’s due and done, propose new tasks</span></span>
-      </label>
-      <label class="row">
-        <input type="checkbox" :checked="saved.index_mail && !!saved.embed_model" :disabled="!!busy || !saved.read_mail" @change="setSearch(!(saved.index_mail && !!saved.embed_model))" />
-        <span class="grow"><span class="strong">Search by meaning</span><span class="muted"> — find mail by what it says, not just its words</span></span>
-        <button type="button" class="link small" @click.prevent="searchOpen = !searchOpen">{{ searchOpen ? 'Close' : 'Settings' }}</button>
-      </label>
+      <div v-if="saved.notes_app" class="row">
+        <UCheckbox
+          :model-value="saved.read_notes"
+          :disabled="!!busy"
+          label="Notes"
+          description="search and read them, propose new notes"
+          class="grow"
+          @update:model-value="setRead('read_notes', !saved.read_notes)"
+        />
+      </div>
+      <div v-if="saved.tasks_app" class="row">
+        <UCheckbox
+          :model-value="saved.read_tasks"
+          :disabled="!!busy"
+          label="Tasks"
+          description="what’s due and done, propose new tasks"
+          class="grow"
+          @update:model-value="setRead('read_tasks', !saved.read_tasks)"
+        />
+      </div>
+      <div class="row">
+        <UCheckbox
+          :model-value="saved.index_mail && !!saved.embed_model"
+          :disabled="!!busy || !saved.read_mail"
+          label="Search by meaning"
+          description="find mail by what it says, not just its words"
+          class="grow"
+          @update:model-value="setSearch(!(saved.index_mail && !!saved.embed_model))"
+        />
+        <UButton color="primary" variant="link" size="sm" @click="searchOpen = !searchOpen">
+          {{ searchOpen ? 'Close' : 'Settings' }}
+        </UButton>
+      </div>
       <div v-if="searchOpen" class="sub-config">
-        <label class="field">
-          <span>Embedding model</span>
-          <input v-model="form.embedModel" list="ai-models" type="text" placeholder="nomic-embed-text" aria-label="Embedding model" spellcheck="false" />
-        </label>
-        <label class="field">
-          <span>Embeddings address</span>
-          <input v-model="form.embedUrl" type="url" placeholder="Same server (Claude: Ollama on this machine)" aria-label="Embeddings address" spellcheck="false" />
-        </label>
+        <UFormField label="Embedding model">
+          <UInput
+            v-model="form.embedModel"
+            list="ai-models"
+            placeholder="nomic-embed-text"
+            aria-label="Embedding model"
+            spellcheck="false"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Embeddings address">
+          <UInput
+            v-model="form.embedUrl"
+            type="url"
+            placeholder="Same server (Claude: Ollama on this machine)"
+            aria-label="Embeddings address"
+            spellcheck="false"
+            class="w-full"
+          />
+        </UFormField>
         <p class="faint small">The newest 20 000 messages are indexed in the background; recent ones are downloaded to read their text.</p>
         <div class="row-actions">
           <span class="spacer" />
-          <button type="button" class="btn btn-primary small" :disabled="!!busy || !form.embedModel" @click="saveSearch">Save and index</button>
+          <UButton size="sm" type="button" :disabled="!!busy || !form.embedModel" @click="saveSearch">
+            Save and index
+          </UButton>
         </div>
       </div>
       <p v-if="status.search && status.total" class="progress faint small">
@@ -394,11 +482,17 @@ onBeforeUnmount(() => clearInterval(poll))
           <div class="muted small">It never sends, accepts, moves or deletes anything on its own. Instructions found inside emails are ignored.</div>
         </div>
       </div>
-      <label class="row">
-        <input type="checkbox" :checked="saved.brief_enabled" :disabled="!!busy" @change="setBrief(!saved.brief_enabled)" />
-        <span class="grow"><span class="strong">Morning brief</span><span class="muted"> — weekdays at</span></span>
-        <input v-model="form.briefTime" type="time" class="time mono" aria-label="Brief time" @change="saveBriefTime" @click.stop />
-      </label>
+      <div class="row">
+        <UCheckbox
+          :model-value="saved.brief_enabled"
+          :disabled="!!busy"
+          label="Morning brief"
+          description="weekdays at"
+          class="grow"
+          @update:model-value="setBrief(!saved.brief_enabled)"
+        />
+        <TimeField v-model="form.briefTime" label="Brief time" size="sm" @update:model-value="saveBriefTime" />
+      </div>
       <p class="faint small">
         Other AI apps (Claude Code…) using Havre: <NuxtLink to="/settings/connections">Settings › Connections</NuxtLink>
         — that works without the AI app.
@@ -407,11 +501,11 @@ onBeforeUnmount(() => clearInterval(poll))
 
     <div class="foot faint">
       Every action the assistant takes is logged.
-      <button type="button" class="link" @click="activityOpen = true">View activity →</button>
+      <UButton color="primary" variant="link" size="sm" class="p-0" @click="activityOpen = true">View activity →</UButton>
     </div>
     <AiActivity v-if="activityOpen" @close="activityOpen = false" />
   </div>
-  <p v-else-if="error" class="error"><HIcon name="alert" :size="15" /> <span>{{ error }}</span></p>
+  <UAlert v-else-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" />
 </template>
 
 <style scoped>
@@ -440,16 +534,6 @@ h2 {
   color: var(--muted);
   line-height: 1.6;
 }
-.row input[type='checkbox'] {
-  width: 18px;
-  height: 18px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-.row input[type='checkbox'] {
-  width: 16px;
-  height: 16px;
-}
 fieldset {
   margin: 0;
   padding: 0;
@@ -468,24 +552,6 @@ legend {
   text-transform: uppercase;
   color: var(--faint);
 }
-.choice {
-  border-radius: 14px;
-  border: 1px solid var(--line);
-}
-.choice.on {
-  border: 1.5px solid var(--accent);
-  background: var(--raise);
-}
-.choice-head {
-  display: flex;
-  gap: 14px;
-  padding: 16px;
-  cursor: pointer;
-}
-.choice-head input {
-  margin: 3px 0 0;
-  accent-color: var(--accent);
-}
 .choice-text {
   flex: 1;
   display: flex;
@@ -498,16 +564,6 @@ legend {
   align-items: center;
   gap: 8px;
   font-weight: 600;
-}
-.pill {
-  font-size: 11.5px;
-  font-weight: 400;
-  padding: 1px 8px;
-  border-radius: 999px;
-}
-.pill.ok {
-  background: color-mix(in oklab, var(--ok) 18%, transparent);
-  color: var(--ok);
 }
 .muted {
   color: var(--muted);
@@ -539,7 +595,7 @@ legend {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 0 16px 16px 44px;
+  padding: 4px 0 0;
 }
 .sub-config {
   display: flex;
@@ -547,72 +603,15 @@ legend {
   gap: 12px;
   padding: 4px 0 12px 28px;
 }
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.field > span {
-  font-size: 12.5px;
-  color: var(--muted);
-}
-input[type='text'],
-input[type='url'],
-input[type='password'] {
-  height: 38px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  outline: none;
-  font: inherit;
-  font-size: 14px;
-  min-width: 0;
-}
-input:focus {
-  border-color: var(--accent);
-}
 .with-btn {
   display: flex;
   gap: 8px;
-}
-.with-btn input {
-  flex: 1;
-}
-.seg {
-  display: flex;
-  gap: 6px;
-}
-.seg button {
-  padding: 5px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--line2);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
-}
-.seg button[aria-checked='true'] {
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
-  color: var(--text);
 }
 .row {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 10px;
-  margin: 0 -10px;
-  border-radius: 10px;
-  cursor: pointer;
-}
-.row:hover {
-  background: var(--hover);
-}
-fieldset > .row + .row {
-  margin-top: -10px;
+  padding: 10px 0;
 }
 .grow {
   flex: 1;
@@ -649,16 +648,6 @@ fieldset > .row + .row {
 .always > div {
   color: var(--text);
 }
-.time {
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 6px;
-  border: 1px solid var(--line2);
-  background: transparent;
-  color: var(--text);
-  font-size: 12.5px;
-  color-scheme: inherit;
-}
 .row-actions {
   display: flex;
   align-items: center;
@@ -673,11 +662,6 @@ fieldset > .row + .row {
   align-items: center;
   margin: 0;
   color: var(--ok);
-  font-size: 13px;
-}
-.btn.small {
-  height: 32px;
-  padding: 0 12px;
   font-size: 13px;
 }
 .progress {
@@ -711,37 +695,8 @@ fieldset > .row + .row {
 .notice span {
   flex: 1;
 }
-.btn.danger {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-.error {
-  display: flex;
-  gap: 10px;
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--danger) 12%, transparent);
-  color: var(--danger);
-  font-size: 13px;
-}
-.error span {
-  color: var(--text);
-}
 .foot {
   font-size: 13px;
-}
-.link {
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--accent);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-}
-.link:hover {
-  color: var(--text);
 }
 @media (max-width: 640px) {
   .config {

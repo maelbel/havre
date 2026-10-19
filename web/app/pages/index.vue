@@ -268,7 +268,7 @@ const briefTime = computed(() =>
                 <NuxtLink v-if="noteFor(e)" :to="{ path: '/notes', query: { note: noteFor(e)!.id } }" class="more">
                   Your note<template v-if="noteFor(e)!.open_todos"> · {{ noteFor(e)!.open_todos }} to-do{{ noteFor(e)!.open_todos === 1 ? '' : 's' }}</template> →
                 </NuxtLink>
-                <button v-else type="button" class="more as-link" :aria-label="`Take notes: ${e.title}`" @click="takeNotes(e)">Take notes</button>
+                <UButton v-else variant="link" size="sm" class="p-0 text-[13px]" :aria-label="`Take notes: ${e.title}`" @click="takeNotes(e)">Take notes</UButton>
               </div>
             </div>
           </div>
@@ -296,9 +296,20 @@ const briefTime = computed(() =>
               <div class="sub">{{ whenLabel(e) }} — {{ freeLabel(e) }}</div>
             </div>
             <div class="actions">
-              <button type="button" class="btn btn-primary small" :disabled="answering === e.id" @click="answer(e, 'accepted')">Accept</button>
-              <button type="button" class="btn small" :disabled="answering === e.id" @click="answer(e, 'declined')">Decline</button>
-              <NuxtLink :to="eventLink(e)" class="btn small">Open</NuxtLink>
+              <UButton size="sm" type="button" :disabled="answering === e.id" @click="answer(e, 'accepted')">
+                Accept
+              </UButton>
+              <UButton
+                color="neutral"
+                variant="outline"
+                size="sm"
+                type="button"
+                :disabled="answering === e.id"
+                @click="answer(e, 'declined')"
+              >
+                Decline
+              </UButton>
+              <UButton color="neutral" variant="outline" size="sm" :to="eventLink(e)">Open</UButton>
             </div>
           </div>
         </section>
@@ -343,7 +354,16 @@ const briefTime = computed(() =>
             {{ ai.local ? 'Nothing left your network.' : 'The day’s mail and meetings were sent to it.' }}
           </p>
           <div class="row-links">
-            <button type="button" class="link" :disabled="briefBusy" @click="writeBrief(true)">{{ briefBusy ? 'Writing…' : 'Write again' }}</button>
+            <UButton
+              color="primary"
+              variant="link"
+              class="p-0"
+              type="button"
+              :disabled="briefBusy"
+              @click="writeBrief(true)"
+            >
+              {{ briefBusy ? 'Writing…' : 'Write again' }}
+            </UButton>
             <NuxtLink to="/settings/ai" class="more">AI settings →</NuxtLink>
           </div>
         </div>
@@ -518,14 +538,6 @@ h1 {
   gap: 6px;
   color: var(--faint);
 }
-.as-link {
-  border: 0;
-  padding: 0;
-  background: none;
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-}
 .prep .more {
   margin-left: 4px;
 }
@@ -566,11 +578,6 @@ h1 {
 .actions {
   display: flex;
   gap: 6px;
-}
-.btn.small {
-  height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
 }
 .line {
   display: flex;

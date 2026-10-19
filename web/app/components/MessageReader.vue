@@ -145,116 +145,153 @@ function kind(mime: string, filename: string) {
 <template>
   <article class="reader" :aria-label="message?.subject || 'Message'" :aria-busy="loading">
     <div class="toolbar">
-      <button type="button" class="icon-btn back" aria-label="Back to list" @click="emit('back')">
-        <HIcon name="back" :size="18" />
-      </button>
+      <UButton
+        icon="i-havre-back"
+        color="neutral"
+        variant="ghost"
+        square
+        class="back"
+        type="button"
+        aria-label="Back to list"
+        @click="emit('back')"
+      />
       <template v-if="message">
-        <button
+        <UButton
           v-if="!inArchive"
+          icon="i-havre-archive"
+          color="neutral"
+          variant="ghost"
+          square
           type="button"
-          class="icon-btn"
           aria-label="Archive"
           title="Archive (E)"
           @click="emit('archive')"
-        >
-          <HIcon name="archive" :size="17" />
-        </button>
-        <button
+        />
+        <UButton
+          icon="i-havre-trash"
+          :color="confirmDelete ? 'error' : 'neutral'"
+          variant="ghost"
           type="button"
-          class="icon-btn"
-          :class="{ danger: confirmDelete }"
           :aria-label="inTrash ? (confirmDelete ? 'Click again to delete forever' : 'Delete forever') : 'Delete'"
           :title="inTrash ? 'Delete forever' : 'Delete (#)'"
           @click="onDelete"
         >
-          <HIcon name="trash" :size="17" />
           <span v-if="confirmDelete" class="confirm">Delete forever?</span>
-        </button>
+        </UButton>
         <MoveMenu :folders="folders" :current="message.folder" @move="(to) => emit('move', to)" />
-        <button
+        <UButton
+          :icon="flagged ? 'i-havre-star-filled' : 'i-havre-star'"
+          :color="flagged ? 'primary' : 'neutral'"
+          variant="ghost"
+          square
           type="button"
-          class="icon-btn star-btn"
-          :class="{ on: flagged }"
           :aria-label="flagged ? 'Unstar' : 'Star'"
           :aria-pressed="!!flagged"
           title="Star (*)"
           @click="emit('star')"
-        >
-          <HIcon name="star" :size="17" />
-        </button>
+        />
         <LabelMenu :state="labelState ?? {}" @toggle="(id, on) => emit('label', id, on)" />
         <SnoozeMenu :snoozed="snoozed" @snooze="(until) => emit('snooze', until)" />
         <TaskFromMail v-if="tasksOn" ref="taskMenu" :account="account" :message="message" />
-        <button
+        <UButton
           v-if="notesOn"
+          icon="i-havre-note"
+          color="neutral"
+          variant="ghost"
+          square
           type="button"
-          class="icon-btn"
           aria-label="Note about this email"
           title="Note (N)"
           :disabled="noting"
           @click="openNote"
-        >
-          <HIcon name="note" :size="17" />
-        </button>
+        />
         <span class="sep" aria-hidden="true" />
-        <button type="button" class="icon-btn" aria-label="Reply" title="Reply (R)" @click="emit('reply', 'reply')">
-          <HIcon name="reply" :size="17" />
-        </button>
-        <button
+        <UButton
+          icon="i-havre-reply"
+          color="neutral"
+          variant="ghost"
+          square
           type="button"
-          class="icon-btn"
+          aria-label="Reply"
+          title="Reply (R)"
+          @click="emit('reply', 'reply')"
+        />
+        <UButton
+          icon="i-havre-reply-all"
+          color="neutral"
+          variant="ghost"
+          square
+          type="button"
           aria-label="Reply all"
           title="Reply all (A)"
           @click="emit('reply', 'reply_all')"
-        >
-          <HIcon name="replyAll" :size="17" />
-        </button>
-        <button
+        />
+        <UButton
+          icon="i-havre-forward"
+          color="neutral"
+          variant="ghost"
+          square
           type="button"
-          class="icon-btn"
           aria-label="Forward"
           title="Forward (F)"
           @click="emit('reply', 'forward')"
-        >
-          <HIcon name="forward" :size="17" />
-        </button>
+        />
         <span class="sep" aria-hidden="true" />
-        <button
+        <UButton
           v-if="ai.enabled"
+          icon="i-havre-sparkle"
+          :color="summarizing ? 'primary' : 'neutral'"
+          :variant="summarizing ? 'soft' : 'ghost'"
+          square
           type="button"
-          class="icon-btn"
-          :class="{ on: summarizing }"
           aria-label="Summarize"
           title="Summarize (S)"
           @click="toggleSummary"
-        >
-          <HIcon name="sparkle" :size="17" />
-        </button>
-        <button
+        />
+        <UButton
+          icon="i-havre-unread"
+          color="neutral"
+          variant="ghost"
+          square
           type="button"
-          class="icon-btn"
           aria-label="Mark as unread"
           title="Mark as unread (U)"
           @click="emit('markUnread')"
-        >
-          <HIcon name="unread" :size="17" />
-        </button>
+        />
         <span class="grow" />
         <template v-if="position && total">
           <span class="pos mono">{{ position }} of {{ total }}</span>
-          <button type="button" class="icon-btn nav" aria-label="Previous conversation" title="Previous (K)" :disabled="position <= 1" @click="emit('prev')">
-            <HIcon name="up" :size="16" />
-          </button>
-          <button type="button" class="icon-btn nav" aria-label="Next conversation" title="Next (J)" :disabled="position >= total" @click="emit('next')">
-            <HIcon name="chevron" :size="16" />
-          </button>
+          <UButton
+            icon="i-havre-up"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            square
+            class="nav"
+            aria-label="Previous conversation"
+            title="Previous (K)"
+            :disabled="position <= 1"
+            @click="emit('prev')"
+          />
+          <UButton
+            icon="i-havre-chevron"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            square
+            class="nav"
+            aria-label="Next conversation"
+            title="Next (J)"
+            :disabled="position >= total"
+            @click="emit('next')"
+          />
         </template>
       </template>
     </div>
 
     <div v-if="error" class="state">
       <p>{{ error }}</p>
-      <button type="button" class="btn" @click="emit('retry')">Try again</button>
+      <UButton color="neutral" variant="outline" type="button" @click="emit('retry')">Try again</UButton>
     </div>
 
     <div v-else-if="loading && !message" class="body skeleton" aria-hidden="true">
@@ -295,7 +332,9 @@ function kind(mime: string, filename: string) {
       <div v-if="message.remote_images_blocked && !imagesAllowed" class="banner">
         <HIcon name="image" :size="16" />
         <span>Remote images are hidden to protect your privacy.</span>
-        <button type="button" class="link" @click="emit('loadImages')">Load images</button>
+        <UButton color="primary" variant="link" class="p-0" type="button" @click="emit('loadImages')">
+          Load images
+        </UButton>
       </div>
 
       <MailFrame v-if="message.html" :html="message.html" :allow-remote-images="imagesAllowed" />
@@ -330,7 +369,7 @@ function kind(mime: string, filename: string) {
       <button type="button" class="reply-box" @click="emit('reply', 'reply')">
         <HIcon name="reply" :size="16" />
         <span class="grow">Reply to {{ firstName }}…</span>
-        <kbd class="mono">R</kbd>
+        <UKbd value="R" />
       </button>
     </div>
 
@@ -386,12 +425,12 @@ function kind(mime: string, filename: string) {
   font-size: 12px;
   color: var(--faint);
 }
-.icon-btn.nav {
+.nav {
   width: 32px;
   height: 32px;
   align-self: center;
 }
-.icon-btn.nav:disabled {
+.nav:disabled {
   opacity: 0.35;
   cursor: default;
 }
@@ -420,23 +459,10 @@ function kind(mime: string, filename: string) {
 .reply-box:hover {
   border-color: var(--faint);
 }
-.reply-box kbd {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid var(--line2);
-}
 .sep {
   width: 1px;
   margin: 8px 6px;
   background: var(--line2);
-}
-.icon-btn.danger {
-  width: auto;
-  gap: 6px;
-  padding: 0 10px;
-  background: color-mix(in oklab, var(--danger) 14%, transparent);
-  color: var(--danger);
 }
 .confirm {
   font-size: 12.5px;
@@ -500,14 +526,6 @@ function kind(mime: string, filename: string) {
   border: 1px solid var(--line);
   color: var(--muted);
   font-size: 13px;
-}
-.link {
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--accent);
-  cursor: pointer;
-  font-weight: 500;
 }
 .text {
   white-space: pre-wrap;
@@ -598,15 +616,5 @@ function kind(mime: string, filename: string) {
   .subject {
     font-size: 24px;
   }
-}
-.star-btn.on {
-  color: var(--accent);
-}
-.star-btn.on :deep(path) {
-  fill: currentColor;
-}
-.icon-btn.on {
-  color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
 }
 </style>

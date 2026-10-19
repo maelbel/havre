@@ -17,34 +17,39 @@ const appSections = computed(() => [
 ])
 const route = useRoute()
 const current = (s: { to: string; exact?: boolean }) => (s.exact ? route.path === s.to : route.path.startsWith(s.to))
+
+// One list for Nuxt UI's UNavigationMenu: the sections, then "Your apps".
+const navItems = computed(() => [
+  sections.value.map((s) => ({ label: s.label, to: s.to, active: current(s) })),
+  [
+    { label: 'Your apps', type: 'label' as const },
+    ...appSections.value.map((s) => ({
+      label: s.label,
+      to: s.to,
+      icon: s.icon ? havreIcon(s.icon) : undefined,
+      active: current(s),
+    })),
+  ],
+])
+// Phones: the menu runs across, under the title.
+const phone = ref(false)
+onMounted(() => {
+  const q = window.matchMedia('(max-width: 720px)')
+  phone.value = q.matches
+  q.addEventListener('change', (e) => (phone.value = e.matches))
+})
 </script>
 
 <template>
   <div class="frame">
     <nav class="nav" aria-label="Settings">
       <h1 class="serif">Settings</h1>
-      <NuxtLink
-        v-for="s in sections"
-        :key="s.to"
-        :to="s.to"
-        class="link"
-        :class="{ on: current(s) }"
-        :aria-current="current(s) ? 'page' : undefined"
-      >
-        {{ s.label }}
-      </NuxtLink>
-      <div class="group eyebrow">Your apps</div>
-      <NuxtLink
-        v-for="s in appSections"
-        :key="s.to"
-        :to="s.to"
-        class="link"
-        :class="{ on: current(s) }"
-        :aria-current="current(s) ? 'page' : undefined"
-      >
-        <HIcon v-if="s.icon" :name="s.icon" :size="15" class="app-ic" />
-        {{ s.label }}
-      </NuxtLink>
+      <UNavigationMenu
+        :items="navItems"
+        :orientation="phone ? 'horizontal' : 'vertical'"
+        color="neutral"
+        :ui="{ root: phone ? 'overflow-x-auto' : '', label: 'eyebrow pt-4' }"
+      />
     </nav>
     <main class="main">
       <div class="inner">
@@ -79,31 +84,6 @@ h1 {
   font-size: 28px;
   letter-spacing: -0.01em;
 }
-.link {
-  height: 34px;
-  padding: 0 10px;
-  display: flex;
-  align-items: center;
-  border-radius: 8px;
-  color: var(--muted);
-  text-decoration: none;
-  font-size: 14px;
-}
-.app-ic {
-  margin-right: 10px;
-  flex: none;
-}
-.group {
-  padding: 18px 10px 6px;
-}
-.link:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.link.on {
-  background: var(--sel);
-  color: var(--text);
-}
 .main {
   flex: 999 1 480px;
   min-width: 0;
@@ -119,16 +99,11 @@ h1 {
 @media (max-width: 720px) {
   .nav {
     flex: 1 1 100%;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px;
-    padding: 16px;
+    padding: 16px 16px 8px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
   h1 {
-    flex: 1 1 100%;
     margin: 0 4px 8px;
     font-size: 26px;
   }

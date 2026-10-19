@@ -32,18 +32,17 @@ const minimum = computed(() => {
   <PopMenu icon="snooze" label="Snooze" title="Snooze (B)" :text="props.text">
     <template #default="{ close }">
       <div class="eyebrow head">Snooze until</div>
-      <button v-for="c in choices" :key="c.label" type="button" role="menuitem" class="item" @click="pick(c.when, close)">
-        <span class="grow">{{ c.label }}</span>
+      <UButton v-for="c in choices" :key="c.label" role="menuitem" color="neutral" variant="ghost" block class="justify-start font-normal" @click="pick(c.when, close)">
+        <span class="grow text-left">{{ c.label }}</span>
         <span class="mono faint">{{ when(c.when) }}</span>
-      </button>
+      </UButton>
       <form class="custom" @submit.prevent="pickCustom(close)">
-        <label class="sr-only" for="snooze-at">Date and time</label>
-        <input id="snooze-at" v-model="custom" type="datetime-local" :min="minimum" />
-        <button type="submit" class="btn small" :disabled="!custom">Snooze</button>
+        <UInput v-model="custom" type="datetime-local" :min="minimum" size="sm" aria-label="Date and time" class="grow" />
+        <UButton color="neutral" variant="outline" size="sm" type="submit" :disabled="!custom">
+          Snooze
+        </UButton>
       </form>
-      <button v-if="snoozed" type="button" role="menuitem" class="item" @click="emit('snooze', null); close()">
-        <span class="grow">Wake up now</span>
-      </button>
+      <UButton v-if="snoozed" role="menuitem" color="neutral" variant="ghost" block class="justify-start font-normal" @click="emit('snooze', null); close()">Wake up now</UButton>
     </template>
   </PopMenu>
 </template>
@@ -51,26 +50,6 @@ const minimum = computed(() => {
 <style scoped>
 .head {
   padding: 6px 10px 8px;
-}
-.item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-  text-align: left;
-  cursor: pointer;
-}
-.item:hover,
-.item:focus-visible {
-  background: var(--hover);
-  outline: none;
 }
 .grow {
   flex: 1;
@@ -85,23 +64,5 @@ const minimum = computed(() => {
   padding: 8px 10px;
   margin-top: 4px;
   border-top: 1px solid var(--line);
-}
-.custom input {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  padding: 0 8px;
-  border-radius: 7px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 12.5px;
-  color-scheme: inherit;
-}
-.btn.small {
-  height: 30px;
-  padding: 0 10px;
-  font-size: 12.5px;
 }
 </style>

@@ -218,3 +218,27 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - *Learned:* SQL over JSON with `json_each` (one row per attachment), a partial index (`WHERE files IS NOT NULL`),
   grouping in Rust with a `HashMap` keyed by a tuple, `LIMIT -1` in SQLite, background work that only keeps what it
   needs.
+
+## 15 · The whole UI on Nuxt UI ✅
+- ✅ Nuxt UI 4 (on Reka UI and Tailwind CSS 4) wearing Havre's look: its colour, text, border and radius variables
+  point at Havre's tokens, dark first, light too; a few components tuned in `app.config.ts`. Approved first on the
+  canvas from real screenshots (*Nuxt UI · Havre theme*).
+- ✅ Every control moved: buttons, fields, selects, date and time fields (`UInputDate`, `UInputTime`, `UCalendar`),
+  switches, checkboxes, radio cards, segmented views (`UTabs`), menus (`UDropdownMenu`, `UPopover`), dialogs
+  (`UModal`: the event editor, labels, activity), toasts (`useToast`), badges, key hints, the Settings menu
+  (`UNavigationMenu`), the AI composer (`UChatPrompt`) and Ctrl+K (`UCommandPalette`). Resizable panes on
+  `USplitter` (`SplitView`). Page layouts stay Havre's own.
+- ✅ Havre's icons are one list (`web/icons.ts`) used by `HIcon` and by Nuxt UI (`i-havre-*`), including Nuxt UI's
+  own chevrons, close and check. Nothing is fetched from other servers (no Iconify API, no Google Fonts): checked
+  in the browser tests.
+- ✅ Fixes: signing in from `/login` stayed on the sign-in page (the server answers with `/login/`); `web/dist` and
+  `Claude outputs/` kept out of git.
+- Later: tooltips (`UTooltip`) instead of `title` attributes; recipient chips on `UInputTags`.
+- *Learned:* CSS cascade layers (unlayered rules beat any layer, so plain element rules go in `@layer base`),
+  Tailwind's `sm:` classes winning over a plain one, an Iconify icon collection built from code, a design system
+  mapped onto another one's variables.
+
+## 16 · Repeating events (next)
+- Designed (canvas *Repeating events*) and planned: create repeating events, change or delete *only this*, *this and
+  the following* or *all*, in Microsoft, Google, CalDAV and Havre's calendar, in your time zone.
+

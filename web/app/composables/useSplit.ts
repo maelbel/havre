@@ -1,10 +1,10 @@
-// Resizable panes (SplitGroup, SplitPane, SplitHandle) — the shared parts.
+// Resizable panes (SplitView, on Nuxt UI's USplitter) — the shared parts.
 //
 // Panes can be resized on wide screens only. Under 1101 px the pages keep
 // their own layout (folders hidden, panels over the page, one pane at a time
-// on phones), so there the split components render their content untouched.
+// on phones), so there SplitView renders the panes' content untouched.
 
-import type { InjectionKey, Ref } from 'vue'
+import type { Ref } from 'vue'
 
 /** Where resizable panes start: the pages' own "smaller screen" rules end at 1100 px. */
 export const SPLIT_MIN_WIDTH = 1101
@@ -21,21 +21,28 @@ export function useWideScreen(): Ref<boolean> {
   return wide
 }
 
-/** What a pane tells its group: how to go back to its default width, fold and unfold. */
-export interface SplitPaneControl {
-  reset: () => void
-  collapse: () => void
-  expand: () => void
-  collapsed: Ref<boolean>
+/** One pane of a SplitView (see SplitView.vue). Widths in pixels. */
+export interface SplitPaneSpec {
+  /** Also the name of the slot holding the pane. */
+  id: string
+  /** Default width; without it the pane takes what's left. */
+  size?: number
+  min?: number
+  max?: number
+  /** Can be folded away (dragged past `min`, or Enter on its handle). */
+  collapsible?: boolean
+  /** Needed when panes come and go, so the order stays right (defaults to the position). */
+  order?: number
+  /** The handle on this pane's right. */
+  handle?: {
+    /** Accessible name, e.g. "Resize the message list". */
+    label: string
+    /** Enter on the handle folds this pane. */
+    fold?: boolean
+    /** The tab's name when it's folded, e.g. "Show folders". */
+    showLabel?: string
+  }
 }
-
-/** What a group shares with its panes and handles. */
-export interface SplitContext {
-  wide: Ref<boolean>
-  panes: Map<string, SplitPaneControl>
-  reset: () => void
-}
-export const SPLIT_KEY: InjectionKey<SplitContext> = Symbol('split')
 
 /**
  * Where the widths are remembered: this browser's localStorage, which can

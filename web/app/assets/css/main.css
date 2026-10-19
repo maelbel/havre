@@ -2,7 +2,19 @@
  * Havre design tokens — the same values as the mockup.
  * Dark is the default; `<html data-theme="light">` switches to light.
  * Every component uses these variables, never raw colors.
+ *
+ * Nuxt UI (and the Tailwind CSS it is built with) comes first; its
+ * variables (`--ui-*`) are then pointed at Havre's tokens, so its
+ * components wear Havre's colors in both themes.
  */
+@import 'tailwindcss';
+@import '@nuxt/ui';
+
+/* Tailwind only scans these for class names (not the whole repo). */
+@source '../../components';
+@source '../../pages';
+@source '../../layouts';
+
 :root {
   --bg: #121210;
   --panel: #171714;
@@ -33,6 +45,32 @@
   color-scheme: dark;
 }
 
+/* Nuxt UI's variables, from Havre's tokens (both themes: the tokens change). */
+:root,
+:root.light,
+:root.dark {
+  --ui-bg: var(--bg);
+  --ui-bg-muted: var(--panel);
+  --ui-bg-elevated: var(--raise);
+  --ui-bg-accented: var(--sel);
+  --ui-bg-inverted: var(--text);
+  --ui-border: var(--line);
+  --ui-border-muted: var(--line);
+  --ui-border-accented: var(--line2);
+  --ui-border-inverted: var(--text);
+  --ui-text: var(--text);
+  --ui-text-highlighted: var(--text);
+  --ui-text-toned: var(--text);
+  --ui-text-muted: var(--muted);
+  --ui-text-dimmed: var(--faint);
+  --ui-text-inverted: var(--on-accent);
+  --ui-primary: var(--accent);
+  --ui-success: var(--ok);
+  --ui-error: var(--danger);
+  /* Buttons and fields at 9px corners, cards at 12px (Nuxt UI multiplies this). */
+  --ui-radius: 6px;
+}
+
 :root[data-theme='light'] {
   --bg: #f3f1ea;
   --panel: #faf9f5;
@@ -55,41 +93,63 @@
   color-scheme: light;
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+/*
+ * Plain elements go in the `base` layer: Nuxt UI's classes (in a later
+ * layer) then win over them, while Havre's own classes (no layer) still win
+ * over Nuxt UI's when both style the same thing.
+ */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
 
-html,
-body,
-#__nuxt {
-  height: 100%;
-}
+  html,
+  body,
+  #__nuxt {
+    height: 100%;
+  }
 
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.45;
-  -webkit-font-smoothing: antialiased;
-}
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
 
-button,
-input {
-  font: inherit;
-  color: inherit;
-}
+  button,
+  input {
+    font: inherit;
+    color: inherit;
+  }
 
-a {
-  color: var(--accent);
-}
+  a {
+    color: var(--accent);
+  }
 
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Tailwind's reset made these plain; Havre's pages were drawn with the
+     browser's usual ones. Not on Nuxt UI's own parts (they carry
+     `data-slot` and their own spacing). */
+  :is(h1, h2, h3, h4, h5, h6):not([data-slot]) {
+    font-weight: bold;
+  }
+  p:not([data-slot]) {
+    margin-block: 1em;
+  }
+  svg,
+  img {
+    display: inline;
+    vertical-align: baseline;
+  }
 }
 
 /* Small shared helpers */

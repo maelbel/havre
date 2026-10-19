@@ -105,18 +105,23 @@ function when(seconds: number | null) {
           <HIcon name="command" :size="15" />
           <span class="tname">{{ t.name }}</span>
           <span class="faint">{{ when(t.last_used_at) }}</span>
-          <button type="button" class="btn small" :class="{ danger: confirmRevoke === t.id }" @click="revoke(t)">
+          <UButton
+            :color="confirmRevoke === t.id ? 'error' : 'neutral'"
+            variant="outline"
+            size="sm"
+            type="button"
+            @click="revoke(t)"
+          >
             {{ confirmRevoke === t.id ? 'Disconnect?' : 'Disconnect' }}
-          </button>
+          </UButton>
         </li>
       </ul>
 
       <form class="connect" @submit.prevent="connect">
-        <label class="field">
-          <span>Name (to recognize it here)</span>
-          <input v-model="name" type="text" aria-label="App name" maxlength="60" />
-        </label>
-        <button type="submit" class="btn btn-primary small" :disabled="busy">Connect an app</button>
+        <UFormField label="Name (to recognize it here)" class="field">
+          <UInput v-model="name" aria-label="App name" maxlength="60" class="w-full" />
+        </UFormField>
+        <UButton size="sm" type="submit" :disabled="busy">Connect an app</UButton>
       </form>
 
       <div v-if="created" class="created" role="status">
@@ -124,12 +129,28 @@ function when(seconds: number | null) {
         <p class="step">In a terminal, on the computer where you use Claude Code:</p>
         <div class="code">
           <code>{{ command }}</code>
-          <button type="button" class="btn small" @click="copy(command, 'Command')">Copy</button>
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="sm"
+            type="button"
+            @click="copy(command, 'Command')"
+          >
+            Copy
+          </UButton>
         </div>
         <p class="step">Then ask Claude Code things like “what did Claire say about the budget?” or “draft a reply to the latest email from Thomas”. Other apps (a <code>.mcp.json</code> file, Cursor…):</p>
         <div class="code">
           <pre>{{ json }}</pre>
-          <button type="button" class="btn small" @click="copy(json, 'Configuration')">Copy</button>
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="sm"
+            type="button"
+            @click="copy(json, 'Configuration')"
+          >
+            Copy
+          </UButton>
         </div>
         <p class="faint">
           Claude Code must reach {{ url }}: on another computer, use Havre's address on your network (or behind
@@ -208,29 +229,6 @@ h2 {
 .field > span {
   font-size: 12.5px;
   color: var(--muted);
-}
-input {
-  height: 36px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line2);
-  background: var(--bg);
-  color: var(--text);
-  outline: none;
-  font: inherit;
-  font-size: 14px;
-}
-input:focus {
-  border-color: var(--accent);
-}
-.btn.small {
-  height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
-}
-.btn.danger {
-  border-color: color-mix(in oklab, var(--danger) 50%, transparent);
-  color: var(--danger);
 }
 .created {
   display: flex;

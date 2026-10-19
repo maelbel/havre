@@ -394,11 +394,28 @@ const ago = (seconds: number) => {
               <div class="fw">{{ foundWhen(f.view, f.from) }}</div>
             </div>
             <div class="facts">
-              <button type="button" class="fbtn primary" :disabled="foundBusy === foundKey(f)" @click="acceptFound(f)">
+              <UButton
+                color="primary"
+                variant="solid"
+                size="sm"
+                type="button"
+                :disabled="foundBusy === foundKey(f)"
+                @click="acceptFound(f)"
+              >
                 {{ f.view.can_respond ? 'Accept' : 'Add' }}
-              </button>
-              <button type="button" class="fbtn" @click="putOff(foundKey(f))">{{ f.view.can_respond ? 'Later' : 'Dismiss' }}</button>
-              <NuxtLink :to="messageLink(f)" class="flink">View email</NuxtLink>
+              </UButton>
+              <UButton
+                color="neutral"
+                variant="outline"
+                size="sm"
+                type="button"
+                @click="putOff(foundKey(f))"
+              >
+                {{ f.view.can_respond ? 'Later' : 'Dismiss' }}
+              </UButton>
+              <UButton color="primary" variant="link" size="sm" class="p-0" :to="messageLink(f)">
+                View email
+              </UButton>
             </div>
           </div>
           <div v-for="e in shownPending" :key="e.id" class="fcard">
@@ -407,9 +424,35 @@ const ago = (seconds: number) => {
               <div class="fw">{{ foundWhen(e, e.organizer) }}</div>
             </div>
             <div class="facts">
-              <button type="button" class="fbtn primary" :disabled="foundBusy === `e:${e.id}`" @click="acceptPending(e)">Accept</button>
-              <button type="button" class="fbtn" @click="putOff(`e:${e.id}`)">Later</button>
-              <button type="button" class="flink" @click="openEvent(e)">Open</button>
+              <UButton
+                color="primary"
+                variant="solid"
+                size="sm"
+                type="button"
+                :disabled="foundBusy === `e:${e.id}`"
+                @click="acceptPending(e)"
+              >
+                Accept
+              </UButton>
+              <UButton
+                color="neutral"
+                variant="outline"
+                size="sm"
+                type="button"
+                @click="putOff(`e:${e.id}`)"
+              >
+                Later
+              </UButton>
+              <UButton
+                color="primary"
+                variant="link"
+                size="sm"
+                class="p-0"
+                type="button"
+                @click="openEvent(e)"
+              >
+                Open
+              </UButton>
             </div>
           </div>
         </section>
@@ -421,9 +464,18 @@ const ago = (seconds: number) => {
           {{ errors.length }} calendar{{ errors.length > 1 ? 's' : '' }} can't sync
         </span>
         <span v-else>Synced · {{ ago(lastSync) }}</span>
-        <button type="button" class="icon-btn small" :class="{ spin: syncing }" aria-label="Sync now" title="Sync now" @click="refresh">
-          <HIcon name="refresh" :size="14" />
-        </button>
+        <UButton
+          icon="i-havre-refresh"
+          color="neutral"
+          variant="ghost"
+          size="sm"
+          square
+          type="button"
+          :ui="{ leadingIcon: syncing ? 'spin' : '' }"
+          aria-label="Sync now"
+          title="Sync now"
+          @click="refresh"
+        />
       </div>
     </aside>
 
@@ -433,33 +485,61 @@ const ago = (seconds: number) => {
         <span v-if="weekLabel" class="mono faint week">{{ weekLabel }}</span>
         <span v-if="loading" class="loading" aria-label="Loading" />
         <span class="spacer" />
-        <button type="button" class="tbtn" title="Today (T)" @click="go({ date: startOfDay(new Date()) })">Today</button>
+        <UButton
+          color="neutral"
+          variant="outline"
+          type="button"
+          title="Today (T)"
+          @click="go({ date: startOfDay(new Date()) })"
+        >
+          Today
+        </UButton>
         <div class="arrows">
-          <button type="button" class="icon-btn" :aria-label="`Previous ${view}`" title="Previous (←)" @click="step(-1)">
-            <HIcon name="back" :size="17" />
-          </button>
-          <button type="button" class="icon-btn flip" :aria-label="`Next ${view}`" title="Next (→)" @click="step(1)">
-            <HIcon name="back" :size="17" />
-          </button>
-        </div>
-        <div class="views" role="tablist" aria-label="View">
-          <button
-            v-for="v in (['day', 'week', 'month'] as const)"
-            :key="v"
+          <UButton
+            icon="i-havre-back"
+            color="neutral"
+            variant="ghost"
+            square
             type="button"
-            role="tab"
-            :aria-selected="view === v"
-            :class="{ on: view === v }"
-            :title="`${v[0]!.toUpperCase()}${v.slice(1)} (${v[0]!.toUpperCase()})`"
-            @click="go({ view: v })"
-          >
-            {{ v[0]!.toUpperCase() + v.slice(1) }}
-          </button>
+            :aria-label="`Previous ${view}`"
+            title="Previous (←)"
+            @click="step(-1)"
+          />
+          <UButton
+            icon="i-havre-back"
+            color="neutral"
+            variant="ghost"
+            square
+            class="flip"
+            type="button"
+            :aria-label="`Next ${view}`"
+            title="Next (→)"
+            @click="step(1)"
+          />
         </div>
-        <button type="button" class="tbtn primary" title="New event (N)" @click="create()">
-          <HIcon name="plus" :size="15" :stroke-width="2" />
+        <UTabs
+          :model-value="view"
+          :items="[
+            { label: 'Day', value: 'day' },
+            { label: 'Week', value: 'week' },
+            { label: 'Month', value: 'month' },
+          ]"
+          :content="false"
+          color="neutral"
+          size="sm"
+          aria-label="View"
+          @update:model-value="(v) => go({ view: v as 'day' | 'week' | 'month' })"
+        />
+        <UButton
+          icon="i-havre-plus"
+          color="primary"
+          variant="solid"
+          type="button"
+          title="New event (N)"
+          @click="create()"
+        >
           New event
-        </button>
+        </UButton>
       </div>
       <p v-if="loadError" class="load-error" role="alert">{{ loadError }}</p>
 
@@ -649,11 +729,7 @@ const ago = (seconds: number) => {
 .sync .dot.bad {
   background: var(--danger);
 }
-.icon-btn.small {
-  width: 28px;
-  height: 28px;
-}
-.spin :deep(svg) {
+:deep(.spin) {
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin {
@@ -678,33 +754,6 @@ const ago = (seconds: number) => {
 }
 .week {
   font-size: 12px;
-}
-.tbtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--line2);
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-  cursor: pointer;
-}
-.tbtn:hover {
-  background: var(--hover);
-}
-.tbtn.primary {
-  padding: 0 14px;
-  border: 0;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 500;
-}
-.tbtn.primary:hover {
-  filter: brightness(1.08);
 }
 .arrows {
   display: flex;
@@ -731,32 +780,6 @@ const ago = (seconds: number) => {
 }
 .spacer {
   flex: 1;
-}
-.views {
-  display: inline-flex;
-  padding: 2px;
-  gap: 2px;
-  border-radius: 9px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-}
-.views button {
-  height: 28px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-.views button {
-  font-size: 12.5px;
-}
-.views button.on {
-  background: var(--sel);
-  color: var(--text);
 }
 .load-error {
   margin: 0;
@@ -824,39 +847,5 @@ const ago = (seconds: number) => {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-.fbtn {
-  height: 28px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.fbtn:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.fbtn.primary {
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 500;
-}
-.fbtn.primary:hover {
-  filter: brightness(1.08);
-}
-.flink {
-  margin-left: auto;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: 12px;
-  color: var(--accent);
-  text-decoration: none;
-  cursor: pointer;
 }
 </style>

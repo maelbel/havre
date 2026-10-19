@@ -119,34 +119,36 @@ const partOfDay = computed(() => {
 
     <div class="actions">
       <template v-if="view.can_respond">
-        <button
+        <UButton
           v-for="(b, i) in buttons"
           :key="b.response"
+          v-bind="responseButton(b.response, view.my_response === b.response, i === 0)"
+          size="sm"
+          :loading="busy === b.response"
           type="button"
-          class="act"
-          :class="{ primary: i === 0, chosen: view.my_response === b.response, [b.response]: true }"
           :aria-pressed="view.my_response === b.response"
           :disabled="!!busy"
           @click="answer(b.response)"
         >
-          <span v-if="busy === b.response" class="spinner" aria-hidden="true" />
           {{ i === 0 && view.my_response === 'accepted' ? 'Accepted' : b.label }}
-        </button>
+        </UButton>
       </template>
       <span v-if="view.my_response && !view.can_respond" class="status" :class="view.my_response">
         {{ RESPONSE_LABELS[view.my_response] }}
       </span>
-      <button
+      <UButton
         v-if="!view.can_respond && !view.event && !cancelled"
+        color="primary"
+        variant="solid"
+        size="sm"
         type="button"
-        class="act primary"
         :disabled="adding"
         @click="addToAgenda"
       >
         {{ adding ? 'Adding…' : 'Add to Agenda' }}
-      </button>
+      </UButton>
       <span class="spacer" />
-      <NuxtLink :to="agendaLink" class="link">Open in Agenda →</NuxtLink>
+      <UButton color="primary" variant="link" class="p-0" :to="agendaLink">Open in Agenda →</UButton>
     </div>
   </section>
   <p v-else-if="error" class="err">
@@ -258,47 +260,6 @@ h3 {
   border-top: 1px solid var(--line);
   background: var(--panel);
 }
-.act {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--line2);
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-}
-.act:hover:not(:disabled) {
-  background: var(--hover);
-}
-.act.primary {
-  border-color: transparent;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 500;
-}
-.act.primary:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.08);
-}
-.act.chosen.accepted {
-  background: color-mix(in oklab, var(--ok) 22%, transparent);
-  color: var(--text);
-  border-color: color-mix(in oklab, var(--ok) 60%, transparent);
-}
-.act.chosen.tentative {
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
-}
-.act.chosen.declined {
-  border-color: color-mix(in oklab, var(--danger) 60%, transparent);
-  background: color-mix(in oklab, var(--danger) 14%, transparent);
-}
-.act:disabled {
-  opacity: 0.7;
-}
 .status {
   font-size: 12.5px;
   color: var(--faint);
@@ -311,12 +272,6 @@ h3 {
 }
 .spacer {
   flex: 1;
-}
-.link {
-  align-self: center;
-  font-size: 13px;
-  color: var(--accent);
-  text-decoration: none;
 }
 .err {
   display: flex;
