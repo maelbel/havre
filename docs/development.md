@@ -104,7 +104,9 @@ Read in this order — each file is short and commented:
    `crates/core/src/accounts.rs` — one engine per account, started and stopped.
    `crates/core/src/auth.rs` — password hashing (Argon2), sessions.
    `crates/core/src/agenda/` — calendars: REST APIs (`graph.rs`, `google.rs`),
-   WebDAV + XML (`caldav.rs`), iCalendar and repeating events (`ics.rs`).
+   WebDAV + XML (`caldav.rs`), iCalendar and repeating events (`ics.rs`),
+   recurrence rules and time zones (`repeat.rs`: enums with `serde`, `let`-chains,
+   wall-clock time across daylight saving with `chrono-tz`).
    `crates/core/src/compose.rs` — building MIME messages and sending them
    with `lettre`; drafts; `impl` blocks spread over modules.
    `crates/core/src/oauth.rs` — OAuth 2.0 with `reqwest` (HTTP + JSON), a

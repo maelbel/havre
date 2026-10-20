@@ -16,7 +16,7 @@ use serde::Serialize;
 use crate::{
     Error, Result,
     accounts::AccountManager,
-    agenda::{Agenda, Event, ics},
+    agenda::{Agenda, Event, Scope, ics},
 };
 
 /// What the invitation card shows.
@@ -242,7 +242,7 @@ pub async fn respond(
         let mine: Vec<&Event> = existing.iter().filter(|e| !e.read_only).collect();
         if response == "declined" {
             for event in mine {
-                agenda.delete(event.id).await?;
+                agenda.delete(event.id, Scope::This).await?;
             }
         } else if existing.is_empty() {
             agenda.add_from_ics(&text, None).await?;

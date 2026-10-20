@@ -185,6 +185,8 @@ export async function runAiProposal(p: AiProposal, send: boolean): Promise<strin
       end: p.end,
       all_day: false,
       attendees: canInvite ? p.guests : [],
+      repeat: null,
+      time_zone: browserTimeZone(),
     })
     logConfirmed('Created an event', `${created.title} · ${calendar.name}`)
     return `Created “${created.title}”${p.guests.length && !canInvite ? ' (guests not invited: this calendar can’t send invitations)' : ''}`
@@ -203,7 +205,10 @@ export async function runAiProposal(p: AiProposal, send: boolean): Promise<strin
       end: p.end,
       all_day: e.all_day,
       attendees: e.attendees.map((a) => a.email),
-    })
+      // A repeating event: only this occurrence moves.
+      repeat: null,
+      time_zone: browserTimeZone(),
+    }, 'this')
     logConfirmed('Moved an event', `${e.title} → ${aiDayTime(p.start)}`)
     return `Moved “${e.title}”`
   }

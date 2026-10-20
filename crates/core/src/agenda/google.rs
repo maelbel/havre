@@ -2,12 +2,17 @@
 //!
 //! <https://developers.google.com/calendar/api/v3/reference>. With
 //! `singleEvents=true`, repeating events come expanded into occurrences,
-//! each with its own id.
+//! each with its own id; the series is the event they name in
+//! `recurringEventId`, with its rule in `recurrence` (iCalendar lines).
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use serde_json::{Value, json};
 
-use super::{Attendee, EventInput, RemoteCalendar, RemoteEvent};
+use super::{
+    Attendee, EventInput, RemoteCalendar, RemoteEvent, SeriesRule,
+    repeat::{self, Repeat},
+};
 use crate::{Error, Result, oauth::http};
 
 fn base() -> String {
@@ -137,6 +142,8 @@ fn to_remote(e: &Value, calendar_read_only: bool) -> Option<RemoteEvent> {
         .unwrap_or_default();
     let organizer = &e["organizer"];
     let mine = organizer["self"].as_bool().unwrap_or(organizer.is_null());
+    let series = e["recurringEventId"].as_str().map(str::to_owned);
+    let original_start = series.as_ref().map(|_| time(&e["originalStartTime"]).map_or(start, |(t, _)| t));
     Some(RemoteEvent {
         remote_id: e["id"].as_str()?.to_owned(),
         etag: e["etag"].as_str().map(str::to_owned),
@@ -146,7 +153,9 @@ fn to_remote(e: &Value, calendar_read_only: bool) -> Option<RemoteEvent> {
         start,
         end,
         all_day,
-        recurring: e["recurringEventId"].is_string(),
+        recurring: series.is_some(),
+        series,
+        original_start,
         read_only: calendar_read_only || (!mine && e["guestsCanModify"].as_bool() != Some(true)),
         organizer: organizer["email"].as_str().map(|addr| match organizer["displayName"].as_str() {
             Some(name) if !name.is_empty() => format!("{name} <{addr}>"),
@@ -215,10 +224,14 @@ fn rfc3339(ts: i64) -> String {
     Utc.timestamp_opt(ts, 0).single().unwrap_or_default().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
-fn body(input: &EventInput) -> Value {
+/// The event as Google wants it. `tz`: a repeating event repeats in its
+/// time zone (Google needs it to keep the clock time).
+fn body(input: &EventInput, tz: Option<Tz>) -> Value {
     let when = |ts: i64| {
         if input.all_day {
             json!({ "date": Utc.timestamp_opt(ts, 0).single().unwrap_or_default().format("%Y-%m-%d").to_string() })
+        } else if let Some(tz) = tz {
+            json!({ "dateTime": rfc3339(ts), "timeZone": tz.name() })
         } else {
             json!({ "dateTime": rfc3339(ts) })
         }
@@ -236,17 +249,115 @@ fn body(input: &EventInput) -> Value {
     body
 }
 
-/// Creates the event; `sendUpdates=all` makes Google email the invitations.
-pub async fn create(token: &str, calendar: &str, input: &EventInput) -> Result<RemoteEvent> {
+/// Creates the event (a repeating one when `input.repeat` is set: the series
+/// comes back); `sendUpdates=all` makes Google email the invitations.
+pub async fn create(token: &str, calendar: &str, input: &EventInput, tz: Option<Tz>) -> Result<RemoteEvent> {
     let url = format!("{}/calendars/{}/events?sendUpdates=all", base(), enc(calendar));
-    let created = call(http().post(url).bearer_auth(token).json(&body(input))).await?;
+    let mut event = body(input, tz.filter(|_| input.repeat.is_some()));
+    if let Some(repeat) = &input.repeat {
+        let rule = repeat.rrule(input.all_day, tz.unwrap_or(Tz::UTC));
+        event["recurrence"] = json!([format!("RRULE:{rule}")]);
+    }
+    let created = call(http().post(url).bearer_auth(token).json(&event)).await?;
     to_remote(&created, false).ok_or_else(|| Error::Config("Google returned an unreadable event".into()))
 }
 
+/// Changes one event, or one occurrence of a series.
 pub async fn update(token: &str, calendar: &str, id: &str, input: &EventInput) -> Result<RemoteEvent> {
     let url = format!("{}/calendars/{}/events/{}?sendUpdates=all", base(), enc(calendar), enc(id));
-    let updated = call(http().patch(url).bearer_auth(token).json(&body(input))).await?;
+    let updated = call(http().patch(url).bearer_auth(token).json(&body(input, None))).await?;
     to_remote(&updated, false).ok_or_else(|| Error::Config("Google returned an unreadable event".into()))
+}
+
+/// The series (the event its occurrences name in `recurringEventId`).
+async fn master(token: &str, calendar: &str, id: &str) -> Result<(String, Value)> {
+    let url = format!("{}/calendars/{}/events/{}", base(), enc(calendar), enc(id));
+    let master = call(http().get(&url).bearer_auth(token)).await?;
+    Ok((url, master))
+}
+
+fn rule_lines(master: &Value) -> Vec<String> {
+    master["recurrence"]
+        .as_array()
+        .map(|lines| lines.iter().filter_map(|l| l.as_str().map(str::to_owned)).collect())
+        .unwrap_or_default()
+}
+
+/// A series' rule.
+pub async fn series(token: &str, calendar: &str, id: &str) -> Result<SeriesRule> {
+    let (_, master) = master(token, calendar, id).await?;
+    let (start, all_day) =
+        time(&master["start"]).ok_or_else(|| Error::Config("Google: a series without a start".into()))?;
+    let (end, _) = time(&master["end"]).unwrap_or((start, all_day));
+    let tz: Option<Tz> = master["start"]["timeZone"].as_str().and_then(|name| name.parse().ok());
+    let lines = rule_lines(&master);
+    let rrule = lines.iter().find_map(|l| l.strip_prefix("RRULE:")).unwrap_or_default().to_owned();
+    // Extra dates added by hand (`RDATE`): the rule alone doesn't describe it.
+    let repeat = if lines.iter().any(|l| l.starts_with("RDATE")) {
+        None
+    } else {
+        Repeat::parse(&rrule, all_day, tz.unwrap_or(Tz::UTC))
+    };
+    Ok(SeriesRule {
+        series: id.to_owned(),
+        rrule,
+        repeat,
+        time_zone: tz.map(|tz| tz.name().to_owned()),
+        first_start: start,
+        first_end: end,
+        all_day,
+    })
+}
+
+/// Changes the whole series (`input` already moved to its first
+/// occurrence). `repeat`: a new rule, or `None` to keep it. `moved`: the
+/// occurrences moved, so dates removed from it no longer match.
+pub async fn update_series(
+    token: &str,
+    calendar: &str,
+    id: &str,
+    input: &EventInput,
+    repeat: Option<&Repeat>,
+    tz: Tz,
+    moved: bool,
+) -> Result<()> {
+    let (url, master) = master(token, calendar, id).await?;
+    let mut lines: Vec<String> =
+        rule_lines(&master).into_iter().filter(|l| !(moved && l.starts_with("EXDATE"))).collect();
+    if let Some(repeat) = repeat {
+        lines.retain(|l| !l.starts_with("RRULE:"));
+        lines.insert(0, format!("RRULE:{}", repeat.rrule(input.all_day, tz)));
+    }
+    let mut event = body(input, Some(tz));
+    event["recurrence"] = json!(lines);
+    call(http().patch(format!("{url}?sendUpdates=all")).bearer_auth(token).json(&event)).await?;
+    Ok(())
+}
+
+/// Ends a series just before `original_start`. `false`: nothing would be
+/// left (it's the first one), delete the series instead.
+pub async fn cut_series(token: &str, calendar: &str, id: &str, original_start: i64) -> Result<bool> {
+    let (url, master) = master(token, calendar, id).await?;
+    let (first, all_day) = time(&master["start"]).unwrap_or((i64::MIN, false));
+    if original_start <= first {
+        return Ok(false);
+    }
+    let tz: Tz = master["start"]["timeZone"].as_str().and_then(|name| name.parse().ok()).unwrap_or(Tz::UTC);
+    let lines: Vec<String> = rule_lines(&master)
+        .into_iter()
+        .map(|l| match l.strip_prefix("RRULE:") {
+            Some(rule) => format!("RRULE:{}", repeat::cut_rule(rule, original_start, all_day, tz)),
+            None => l,
+        })
+        .collect();
+    call(
+        http()
+            .patch(format!("{url}?sendUpdates=all"))
+            .bearer_auth(token)
+            .json(&json!({ "recurrence": lines })),
+    )
+    .await?;
+    Ok(true)
 }
 
 pub async fn delete(token: &str, calendar: &str, id: &str) -> Result<()> {

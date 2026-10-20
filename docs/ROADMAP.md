@@ -41,7 +41,7 @@ Each step teaches something and leaves the app working.
 - ✅ Local copy kept in sync (5 min, live updates); Havre's own local calendar.
 - ✅ `.ics` invitations detected in mail → "Add to Agenda".
 - ✅ Reply to invitations (accept / maybe / decline) and a shared People list with Mail: see step 5.
-- Later: create repeating events, drag to move, reminders.
+- Later: drag to move, reminders. (Repeating events: step 16.)
 - *Learned:* REST APIs, WebDAV/XML, iCalendar and `RRULE` expansion, time zones.
 
 ## 5 · App platform ✅
@@ -238,7 +238,20 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
   Tailwind's `sm:` classes winning over a plain one, an Iconify icon collection built from code, a design system
   mapped onto another one's variables.
 
-## 16 · Repeating events (next)
-- Designed (canvas *Repeating events*) and planned: create repeating events, change or delete *only this*, *this and
-  the following* or *all*, in Microsoft, Google, CalDAV and Havre's calendar, in your time zone.
+## 16 · Repeating events ✅
+- ✅ The editor's *Repeat* row (Nuxt UI radio cards, checkbox days, number fields): every day / week (days) / month
+  (the same date, or "the third Monday", "the last Friday") / year, every N, ending never, on a date or after N
+  times, with the rule in a sentence. The event panel says how it repeats; the week and month views show a ↻.
+- ✅ Changing or deleting an occurrence: *only this event*, *this and the following ones* (the series is ended the
+  day before, a new one starts, "after N times" keeps counting) or *all events* (the series moves as the edited
+  occurrence did). A dialog, a bottom sheet on phones.
+- ✅ In Microsoft 365 (the series master's `recurrence`), Google Calendar (`RRULE` lines), CalDAV and Havre's own
+  calendar (one iCalendar implementation: modified occurrences, `EXDATE`, a rule cut with `UNTIL`).
+- ✅ Kept in your time zone (`DTSTART;TZID=…`, Microsoft's `recurrenceTimeZone`, Google's `timeZone`): a weekly
+  10:00 stays at 10:00 after the clocks change. Rules Havre can't describe are shown and kept as they are.
+- ✅ Safety: every rule is built by Havre from checked fields (no rule text from the browser); 1–99, at most 730
+  times, time zones from the IANA list; deleting several needs an explicit choice.
+- Later: the assistant proposing repeating events, drag to move, reminders.
+- *Learned:* recurrence rules (`RRULE`, `RECURRENCE-ID`, `EXDATE`, `UNTIL` in UTC), wall-clock time versus UTC
+  across daylight saving (`chrono-tz`), three APIs' ways to describe the same series, Rust's `let`-chains.
 

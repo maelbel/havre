@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AgendaEvent, Calendar, EventInput } from '~/composables/useAgenda'
+import type { AgendaEvent, Calendar, EventInput, Repeat, Scope } from '~/composables/useAgenda'
 
 // Create or edit an event (a dialog over the Agenda).
 const props = defineProps<{
@@ -47,7 +47,13 @@ const form = reactive({
   location: props.event?.location ?? '',
   description: props.event?.description ?? '',
   guests: props.event?.attendees.map((a) => a.email).join(', ') ?? props.guests?.join(', ') ?? '',
+  repeat: (props.event?.repeat ? structuredClone(toRaw(props.event.repeat)) : null) as Repeat | null,
 })
+
+/** An occurrence of a series whose rule was made in another app: Havre keeps that rule. */
+const ruleElsewhere = computed(() => !!props.event?.recurring && !props.event.repeat)
+/** The first event, which the rule follows (its weekday, its date in the month). */
+const firstDay = computed(() => (form.allDay ? (parseIsoDate(form.startDate) ?? new Date()) : at(form.startDate, form.startTime)))
 
 const calendar = computed(() => props.calendars.find((c) => c.id === form.calendar))
 /** Microsoft and Google send invitations; CalDAV and Havre's calendar don't. */
@@ -103,34 +109,69 @@ function input(): EventInput | string {
       ? // Just the addresses, whatever surrounds them ("Anna <anna@x.org>").
         [...new Set(form.guests.match(/[^\s<>,;"]+@[^\s<>,;"]+/g) ?? [])]
       : [],
+    repeat: repeatToSend(form.repeat),
+    time_zone: browserTimeZone(),
   }
+}
+
+// An occurrence of a repeating event: which ones the change is for.
+const asking = ref<{ mode: 'save' | 'delete'; scopes: Scope[]; body?: EventInput } | null>(null)
+
+function saveScopes(body: EventInput): Scope[] {
+  const e = props.event!
+  const following: Scope[] = e.first_occurrence ? [] : ['following']
+  // Another calendar: the series moves as a whole.
+  if (body.calendar !== e.calendar) return ['all']
+  // A new rule doesn't apply to one event alone.
+  if (!ruleElsewhere.value && JSON.stringify(body.repeat) !== JSON.stringify(repeatToSend(e.repeat))) return [...following, 'all']
+  return ['this', ...(ruleElsewhere.value ? [] : following), 'all']
 }
 
 async function save() {
   error.value = null
   const body = input()
   if (typeof body === 'string') return void (error.value = body)
-  busy.value = true
-  try {
-    emit('saved', props.event ? await updateEvent(props.event.id, body) : await createEvent(body))
-  } catch (err) {
-    error.value = apiErrorMessage(err)
-  } finally {
-    busy.value = false
-  }
+  if (props.event?.recurring) return void (asking.value = { mode: 'save', scopes: saveScopes(body), body })
+  await run(async () => emit('saved', props.event ? await updateEvent(props.event.id, body) : await createEvent(body)))
 }
 
 async function remove() {
   if (!props.event) return
+  if (props.event.recurring) {
+    // The dialog is the confirmation: nothing is picked until you choose.
+    const following: Scope[] = props.event.first_occurrence ? [] : ['following']
+    return void (asking.value = { mode: 'delete', scopes: ['this', ...following, 'all'] })
+  }
   if (!confirmDelete.value) {
     confirmDelete.value = true
     setTimeout(() => (confirmDelete.value = false), 3000)
     return
   }
+  await run(async () => {
+    await deleteEvent(props.event!.id)
+    emit('deleted')
+  })
+}
+
+/** The scope was chosen: save or delete. */
+async function chosen(scope: Scope) {
+  const ask = asking.value
+  asking.value = null
+  if (!ask || !props.event) return
+  const id = props.event.id
+  await run(async () => {
+    if (ask.mode === 'save') emit('saved', await updateEvent(id, ask.body!, scope))
+    else {
+      await deleteEvent(id, scope)
+      emit('deleted')
+    }
+  })
+}
+
+async function run(work: () => Promise<void>) {
   busy.value = true
   try {
-    await deleteEvent(props.event.id)
-    emit('deleted')
+    await work()
   } catch (err) {
     error.value = apiErrorMessage(err)
   } finally {
@@ -194,6 +235,14 @@ const calendarItems = computed(() =>
           </div>
         </UFormField>
 
+        <UFormField label="Repeat" orientation="horizontal" class="row top">
+          <p v-if="ruleElsewhere" class="elsewhere">
+            <HIcon name="repeat" :size="14" />
+            Repeats in a way set in another app. Change the rule there; here you can change this event or all of them.
+          </p>
+          <RepeatEditor v-else v-model="form.repeat" :start="firstDay" :all-day="form.allDay" />
+        </UFormField>
+
         <UFormField label="Where" orientation="horizontal" class="row">
           <UInput v-model="form.location" placeholder="Place or meeting link" class="w-full" />
         </UFormField>
@@ -238,6 +287,14 @@ const calendarItems = computed(() =>
           </UButton>
         </div>
       </form>
+      <RepeatScope
+        v-if="asking && event"
+        :event="event"
+        :mode="asking.mode"
+        :scopes="asking.scopes"
+        @choose="chosen"
+        @cancel="asking = null"
+      />
     </template>
   </UModal>
 </template>
@@ -290,6 +347,19 @@ const calendarItems = computed(() =>
   width: 34px;
   color: var(--faint);
   font-size: 13px;
+}
+.elsewhere {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding-top: 7px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.elsewhere :deep(svg) {
+  flex: 0 0 auto;
+  margin-top: 2px;
 }
 .actions {
   display: flex;

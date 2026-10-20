@@ -36,6 +36,7 @@ sha2 = "0.10"
 argon2 = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 icalendar = { version = "0.17", features = ["parser", "recurrence"] }
+chrono-tz = "0.10"       # time zones by name ("Europe/Paris"); already built in by icalendar
 roxmltree = "0.21"
 lettre = { version = "0.11", default-features = false }
 hickory-resolver = "0.24"

@@ -3,7 +3,7 @@
 use serde::Serialize;
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
-use super::{Attendee, COLORS, Calendar, Event, RemoteCalendar, RemoteEvent};
+use super::{Attendee, COLORS, Calendar, Event, RemoteCalendar, RemoteEvent, Repeat, SeriesRule};
 use crate::{Error, Result, secrets::Secrets};
 
 #[derive(Clone)]
@@ -29,7 +29,23 @@ pub(crate) struct EventRow {
     pub href: Option<String>,
     pub etag: Option<String>,
     pub raw: Option<String>,
+    /// Repeating: its series and which occurrence it is.
+    pub series: Option<String>,
+    pub original_start: Option<i64>,
 }
+
+/// A series' rule as stored, plus Havre's own iCalendar text for the series
+/// of its local calendar.
+#[derive(Debug, Clone)]
+pub(crate) struct SeriesRow {
+    pub rule: SeriesRule,
+    pub ics: Option<String>,
+}
+
+/// An event with what the UI needs to know about its series.
+const EVENT_SELECT: &str =
+    "SELECT e.*, s.repeat AS series_repeat, s.first_start AS series_first FROM events e
+     LEFT JOIN event_series s ON s.calendar_id = e.calendar_id AND s.series = e.series";
 
 /// A CalDAV server, as listed in Settings (no password).
 #[derive(Debug, Clone, Serialize)]
@@ -209,11 +225,11 @@ impl AgendaStore {
 
     /// Events of the shown calendars overlapping `[from, to)`.
     pub async fn events(&self, from: i64, to: i64) -> Result<Vec<Event>> {
-        let rows = sqlx::query(
-            "SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id
+        let rows = sqlx::query(&format!(
+            "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id
              WHERE c.enabled = 1 AND e.start_ts < ? AND e.end_ts > ?
-             ORDER BY e.all_day DESC, e.start_ts, e.end_ts DESC",
-        )
+             ORDER BY e.all_day DESC, e.start_ts, e.end_ts DESC"
+        ))
         .bind(to)
         .bind(from)
         .fetch_all(&self.pool)
@@ -222,7 +238,7 @@ impl AgendaStore {
     }
 
     pub(crate) async fn event_row(&self, id: i64) -> Result<EventRow> {
-        let row = sqlx::query("SELECT * FROM events WHERE id = ?")
+        let row = sqlx::query(&format!("{EVENT_SELECT} WHERE e.id = ?"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -236,20 +252,30 @@ impl AgendaStore {
 
     /// After fetching `[from, to)` from the provider: keeps local ids for
     /// events that are still there, drops those that are gone.
+    /// `only_series`: Havre's own calendar, where only repeating events are
+    /// worked out again (the others are kept as they are).
     pub(crate) async fn replace_window(
         &self,
         calendar: i64,
         from: i64,
         to: i64,
         remotes: &[RemoteEvent],
+        only_series: bool,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
+        let mut rules_saved = std::collections::HashSet::new();
         sqlx::query("CREATE TEMP TABLE IF NOT EXISTS seen (remote_id TEXT PRIMARY KEY)")
             .execute(&mut *tx)
             .await?;
         sqlx::query("DELETE FROM seen").execute(&mut *tx).await?;
         for remote in remotes {
             upsert(&mut tx, calendar, remote).await?;
+            // Each occurrence carries its series' rule: saved once.
+            if let Some(rule) = &remote.rule
+                && rules_saved.insert(rule.series.clone())
+            {
+                upsert_series(&mut tx, calendar, rule, None).await?;
+            }
             sqlx::query("INSERT OR IGNORE INTO seen VALUES (?)")
                 .bind(&remote.remote_id)
                 .execute(&mut *tx)
@@ -257,11 +283,21 @@ impl AgendaStore {
         }
         sqlx::query(
             "DELETE FROM events WHERE calendar_id = ? AND start_ts < ? AND end_ts > ?
-             AND remote_id NOT IN (SELECT remote_id FROM seen)",
+             AND remote_id NOT IN (SELECT remote_id FROM seen) AND (? = 0 OR series IS NOT NULL)",
         )
         .bind(calendar)
         .bind(to)
         .bind(from)
+        .bind(only_series)
+        .execute(&mut *tx)
+        .await?;
+        // Rules of series that have no occurrence left (Havre's own keep
+        // theirs: their text is the series).
+        sqlx::query(
+            "DELETE FROM event_series WHERE calendar_id = ?1 AND ics IS NULL
+             AND series NOT IN (SELECT series FROM events WHERE calendar_id = ?1 AND series IS NOT NULL)",
+        )
+        .bind(calendar)
         .execute(&mut *tx)
         .await?;
         sqlx::query(
@@ -286,15 +322,111 @@ impl AgendaStore {
         self.event(id).await
     }
 
+    // ---- Repeating events -------------------------------------------------------------
+
+    /// Saves a series' rule (and, for Havre's calendar, its iCalendar text).
+    pub(crate) async fn save_series(
+        &self,
+        calendar: i64,
+        rule: &SeriesRule,
+        ics: Option<&str>,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        upsert_series(&mut tx, calendar, rule, ics).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn series(&self, calendar: i64, series: &str) -> Result<Option<SeriesRow>> {
+        let row = sqlx::query("SELECT * FROM event_series WHERE calendar_id = ? AND series = ?")
+            .bind(calendar)
+            .bind(series)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.as_ref().map(series_from_row))
+    }
+
+    /// The series of Havre's own calendar (each one's iCalendar text).
+    pub(crate) async fn local_series(&self, calendar: i64) -> Result<Vec<SeriesRow>> {
+        let rows = sqlx::query("SELECT * FROM event_series WHERE calendar_id = ? AND ics IS NOT NULL")
+            .bind(calendar)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(series_from_row).collect())
+    }
+
+    /// Series shown in a calendar whose rule wasn't read yet, or was read
+    /// more than `max_age` seconds ago (Microsoft and Google: one request each).
+    pub(crate) async fn series_to_read(
+        &self,
+        calendar: i64,
+        max_age: i64,
+        limit: u32,
+    ) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT DISTINCT e.series FROM events e
+             LEFT JOIN event_series s ON s.calendar_id = e.calendar_id AND s.series = e.series
+             WHERE e.calendar_id = ? AND e.series IS NOT NULL AND (s.series IS NULL OR s.fetched_at < ?)
+             LIMIT ?",
+        )
+        .bind(calendar)
+        .bind(now() - max_age)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// The rule changed: read it again at the next sync.
+    pub(crate) async fn forget_rule(&self, calendar: i64, series: &str) -> Result<()> {
+        sqlx::query("UPDATE event_series SET fetched_at = 0 WHERE calendar_id = ? AND series = ?")
+            .bind(calendar)
+            .bind(series)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Forgets a series: its occurrences and its rule.
+    pub(crate) async fn delete_series(&self, calendar: i64, series: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        for table in ["events", "event_series"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE calendar_id = ? AND series = ?"))
+                .bind(calendar)
+                .bind(series)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// The occurrence of a series closest to `near` (after a change, to show it).
+    pub(crate) async fn occurrence_near(
+        &self,
+        calendar: i64,
+        series: &str,
+        near: i64,
+    ) -> Result<Option<Event>> {
+        let row = sqlx::query(&format!(
+            "{EVENT_SELECT} WHERE e.calendar_id = ? AND e.series = ? ORDER BY abs(e.start_ts - ?) LIMIT 1"
+        ))
+        .bind(calendar)
+        .bind(series)
+        .bind(near)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| event_from_row(&r).event))
+    }
+
     /// Events with this iCalendar UID (a meeting already in a calendar).
     pub async fn events_by_uid(&self, uid: &str) -> Result<Vec<Event>> {
         // The meeting itself, or your copy of it (see `remember_copy`).
-        let rows = sqlx::query(
-            "SELECT e.* FROM events e WHERE e.uid = ?1 OR EXISTS (
+        let rows = sqlx::query(&format!(
+            "{EVENT_SELECT} WHERE e.uid = ?1 OR EXISTS (
                  SELECT 1 FROM invitation_copies c
                  WHERE c.uid = ?1 AND c.calendar_id = e.calendar_id AND c.remote_id = e.remote_id)
-             ORDER BY e.start_ts",
-        )
+             ORDER BY e.start_ts"
+        ))
         .bind(uid)
         .fetch_all(&self.pool)
         .await?;
@@ -303,11 +435,11 @@ impl AgendaStore {
 
     /// Upcoming meetings you haven't answered yet (shown calendars only).
     pub async fn pending_invitations(&self, from: i64) -> Result<Vec<Event>> {
-        let rows = sqlx::query(
-            "SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id
+        let rows = sqlx::query(&format!(
+            "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id
              WHERE c.enabled = 1 AND e.my_response = 'needs_action' AND e.end_ts > ?
-             ORDER BY e.start_ts LIMIT 50",
-        )
+             ORDER BY e.start_ts LIMIT 50"
+        ))
         .bind(from)
         .fetch_all(&self.pool)
         .await?;
@@ -373,7 +505,7 @@ impl AgendaStore {
             None => ("e.end_ts <= ?2", "e.start_ts DESC"),
         };
         let rows = sqlx::query(&format!(
-            "SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id
+            "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id
              WHERE c.enabled = 1 AND {filter}
                AND (EXISTS (SELECT 1 FROM json_each(e.attendees) a WHERE lower(json_extract(a.value, '$.email')) = ?1)
                     OR lower(e.organizer) LIKE '%' || ?1 || '%'
@@ -453,14 +585,16 @@ async fn upsert(tx: &mut sqlx::SqliteConnection, calendar: i64, e: &RemoteEvent)
     let attendees = serde_json::to_string(&e.attendees).unwrap_or_else(|_| "[]".into());
     Ok(sqlx::query_scalar(
         "INSERT INTO events (calendar_id, remote_id, href, etag, raw, title, location, description, start_ts, end_ts,
-                             all_day, recurring, read_only, organizer, attendees, join_url, uid, my_response)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             all_day, recurring, read_only, organizer, attendees, join_url, uid, my_response,
+                             series, original_start)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (calendar_id, remote_id) DO UPDATE SET
             href = excluded.href, etag = excluded.etag, raw = excluded.raw, title = excluded.title,
             location = excluded.location, description = excluded.description, start_ts = excluded.start_ts,
             end_ts = excluded.end_ts, all_day = excluded.all_day, recurring = excluded.recurring,
             read_only = excluded.read_only, organizer = excluded.organizer, attendees = excluded.attendees,
-            join_url = excluded.join_url, uid = excluded.uid, my_response = excluded.my_response
+            join_url = excluded.join_url, uid = excluded.uid, my_response = excluded.my_response,
+            series = excluded.series, original_start = excluded.original_start
          RETURNING id",
     )
     .bind(calendar)
@@ -481,8 +615,59 @@ async fn upsert(tx: &mut sqlx::SqliteConnection, calendar: i64, e: &RemoteEvent)
     .bind(&e.join_url)
     .bind(&e.uid)
     .bind(&e.my_response)
+    .bind(&e.series)
+    .bind(e.original_start)
     .fetch_one(&mut *tx)
     .await?)
+}
+
+/// Saves a series' rule. `ics` is only written when given (a sync of
+/// Havre's calendar doesn't touch the text it works from).
+async fn upsert_series(
+    tx: &mut sqlx::SqliteConnection,
+    calendar: i64,
+    rule: &SeriesRule,
+    ics: Option<&str>,
+) -> Result<()> {
+    let repeat = rule.repeat.as_ref().and_then(|r| serde_json::to_string(r).ok());
+    sqlx::query(
+        "INSERT INTO event_series (calendar_id, series, rrule, repeat, time_zone, first_start, first_end, all_day,
+                                   ics, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (calendar_id, series) DO UPDATE SET
+            rrule = excluded.rrule, repeat = excluded.repeat, time_zone = excluded.time_zone,
+            first_start = excluded.first_start, first_end = excluded.first_end, all_day = excluded.all_day,
+            ics = COALESCE(excluded.ics, event_series.ics), fetched_at = excluded.fetched_at",
+    )
+    .bind(calendar)
+    .bind(&rule.series)
+    .bind(&rule.rrule)
+    .bind(repeat)
+    .bind(&rule.time_zone)
+    .bind(rule.first_start)
+    .bind(rule.first_end)
+    .bind(rule.all_day)
+    .bind(ics)
+    .bind(now())
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
+}
+
+fn series_from_row(r: &SqliteRow) -> SeriesRow {
+    let repeat: Option<String> = r.get("repeat");
+    SeriesRow {
+        rule: SeriesRule {
+            series: r.get("series"),
+            rrule: r.get::<Option<String>, _>("rrule").unwrap_or_default(),
+            repeat: repeat.and_then(|json| serde_json::from_str(&json).ok()),
+            time_zone: r.get("time_zone"),
+            first_start: r.get("first_start"),
+            first_end: r.get("first_end"),
+            all_day: r.get("all_day"),
+        },
+        ics: r.get("ics"),
+    }
 }
 
 fn calendar_from_row(r: &SqliteRow) -> CalendarRow {
@@ -508,6 +693,10 @@ fn calendar_from_row(r: &SqliteRow) -> CalendarRow {
 
 fn event_from_row(r: &SqliteRow) -> EventRow {
     let attendees: Vec<Attendee> = serde_json::from_str(r.get("attendees")).unwrap_or_default();
+    let repeat: Option<Repeat> =
+        r.get::<Option<String>, _>("series_repeat").and_then(|json| serde_json::from_str(&json).ok());
+    let original_start: Option<i64> = r.get("original_start");
+    let series_first: Option<i64> = r.get("series_first");
     EventRow {
         event: Event {
             id: r.get("id"),
@@ -519,6 +708,8 @@ fn event_from_row(r: &SqliteRow) -> EventRow {
             end: r.get("end_ts"),
             all_day: r.get("all_day"),
             recurring: r.get("recurring"),
+            repeat,
+            first_occurrence: matches!((original_start, series_first), (Some(o), Some(f)) if o <= f),
             read_only: r.get("read_only"),
             organizer: r.get("organizer"),
             attendees,
@@ -530,6 +721,8 @@ fn event_from_row(r: &SqliteRow) -> EventRow {
         href: r.get("href"),
         etag: r.get("etag"),
         raw: r.get("raw"),
+        series: r.get("series"),
+        original_start,
     }
 }
 

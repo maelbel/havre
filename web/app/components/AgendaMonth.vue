@@ -73,7 +73,7 @@ function openTasks(d: Date) {
           @click="emit('select', e)"
         >
           <span v-if="!e.all_day" class="t">{{ timeLabel(new Date(e.start * 1000)) }}</span>
-          {{ e.title }}
+          {{ e.title }}<template v-if="e.recurring"><HIcon name="repeat" :size="10" class="rep" /><span class="sr-only"> · repeats</span></template>
         </button>
         <button
           v-if="openTasks(d)"
@@ -224,5 +224,11 @@ function openTasks(d: Date) {
 }
 .more:hover {
   color: var(--text);
+}
+.rep {
+  display: inline-block;
+  margin-left: 3px;
+  vertical-align: -1px;
+  opacity: 0.75;
 }
 </style>
