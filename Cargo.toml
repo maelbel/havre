@@ -52,7 +52,7 @@ webpki-roots = "1"
 
 # Web server
 axum = "0.8"
-tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+tower-http = { version = "0.7", features = ["fs", "trace", "cors"] }
 
 # Serialization, errors, config, logs
 serde = { version = "1", features = ["derive"] }
