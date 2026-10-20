@@ -10,7 +10,7 @@ By contributing, you agree that your contribution is licensed under the project'
 
 - [Before you start](#before-you-start)
 - [Development setup](#development-setup)
-- [Branches (Gitflow)](#branches-gitflow)
+- [Branches](#branches)
 - [Commit messages (Conventional Commits)](#commit-messages-conventional-commits)
 - [Pull requests](#pull-requests)
 - [Code guidelines](#code-guidelines)
@@ -54,22 +54,24 @@ cd desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D wa
 
 The same checks run on every pull request (GitHub Actions, `.github/workflows/`).
 
-## Branches (Gitflow)
+## Branches
 
-| Branch | Purpose | Created from | Merged into |
-|--------|---------|--------------|-------------|
-| `main` | What is released. Every commit is a version, tagged `vX.Y.Z`. | — | — |
-| `develop` | The next release; always builds and passes the checks. | `main` | `main` (through a release branch) |
-| `feature/<short-name>` | One feature or change, e.g. `feature/repeating-events`. | `develop` | `develop` |
-| `fix/<short-name>` | A bug fix for the next release. | `develop` | `develop` |
-| `release/X.Y.Z` | Freezing a release: version numbers, changelog, last fixes. | `develop` | `main` **and** `develop` |
-| `hotfix/X.Y.Z` | An urgent fix for the released version. | `main` | `main` **and** `develop` |
+Havre follows [GitHub flow](https://docs.github.com/en/get-started/using-github/github-flow): one long-lived branch,
+`main`, and a short branch for each change.
 
+| Branch | Purpose |
+|--------|---------|
+| `main` | Always builds and passes the checks; releases are tags on it (`vX.Y.Z`). |
+| `feature/<short-name>` | A new feature or change, e.g. `feature/repeating-events`. |
+| `fix/<short-name>` | A bug fix, e.g. `fix/login-redirect`. |
+| `chore/<short-name>`, `docs/<short-name>` | Housekeeping or documentation only. |
+
+- Create the branch from an up-to-date `main` (`git switch main && git pull && git switch -c feature/…`).
 - Branch names are lower case, words separated by `-`.
-- Nobody pushes directly to `main` or `develop`: changes arrive through pull requests.
-- Keep a branch up to date by rebasing it on `develop` (`git pull --rebase origin develop`) rather than merging
-  `develop` into it.
-- Delete a branch once it is merged.
+- Nobody pushes directly to `main`: changes arrive through pull requests.
+- Keep a branch up to date by rebasing it on `main` (`git pull --rebase origin main`) rather than merging `main`
+  into it.
+- Delete the branch once it is merged.
 
 ## Commit messages (Conventional Commits)
 
@@ -119,16 +121,17 @@ BREAKING CHANGE: the database needs migration 0018.
 
 ## Pull requests
 
-1. Open the pull request against **`develop`** (or `main` for a `hotfix/` or `release/` branch).
+1. Open the pull request against **`main`**.
 2. Give it a Conventional Commit title (it becomes the squash commit): `feat(tasks): add sub-steps`.
 3. Fill in the template: what changes, why, how it was tested, screenshots for UI changes (dark and light, and phone
    width when the layout changes).
-4. Make sure the checks pass. A reviewer approves before merging; pull requests are **squash-merged** into
-   `develop`, release and hotfix branches are merged with a merge commit.
+4. Make sure the checks pass. The maintainer reviews before merging; pull requests are **squash-merged** into
+   `main`, so each pull request becomes one commit.
 
 A pull request is ready when:
 
 - the checks pass (`fmt`, `clippy` without warnings, tests, `typecheck`, `build`);
+- the commits are signed (`main` only accepts signed commits);
 - new behaviour has tests next to the code (`#[cfg(test)]`);
 - database changes are a **new** migration in `crates/core/migrations/` (released migrations are never edited);
 - user-facing changes are described in the guides (`docs/`), and in `CHANGELOG.md` under *Unreleased*;
@@ -156,11 +159,13 @@ A pull request is ready when:
 Havre uses [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`; before 1.0, minor versions may break
 things).
 
-1. `git switch develop && git switch -c release/X.Y.Z`
-2. Set the version in `Cargo.toml` (`[workspace.package]`), `desktop/src-tauri/Cargo.toml` and
-   `desktop/src-tauri/tauri.conf.json`; move *Unreleased* in `CHANGELOG.md` to the new version with today's date.
-3. Pull request into `main`; once merged, tag it: `git tag -a vX.Y.Z -m "Havre X.Y.Z"` and push the tag.
-4. Merge `main` back into `develop`.
+1. On a `chore/release-X.Y.Z` branch, set the version in `Cargo.toml` (`[workspace.package]`),
+   `desktop/src-tauri/Cargo.toml` and `desktop/src-tauri/tauri.conf.json`, and move *Unreleased* in `CHANGELOG.md`
+   to the new version with today's date. Title the pull request `chore: release X.Y.Z`.
+2. Once it is merged, tag `main`: `git switch main && git pull && git tag -s vX.Y.Z -m "Havre X.Y.Z"`, then
+   `git push origin vX.Y.Z`.
+
+An urgent fix for the released version is an ordinary `fix/` branch, followed by a patch release (`X.Y.Z+1`).
 
 Havre Desktop releases are tagged `desktop-vX.Y.Z`; the *Desktop* workflow builds the installers and drafts the
 GitHub release.

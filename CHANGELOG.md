@@ -38,4 +38,4 @@ First version, not released yet (0.1.0).
 - Email HTML sanitised and sandboxed; the assistant only proposes changes, confirmed by the user.
 - The web UI loads nothing from other servers.
 
-[Unreleased]: https://github.com/maelbel/havre/commits/develop
+[Unreleased]: https://github.com/maelbel/havre/commits/main

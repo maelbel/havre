@@ -116,7 +116,7 @@ synced to the mail server, and off-site backups. See the full [roadmap](docs/ROA
 ## Contributing
 
 Contributions, bug reports and ideas are welcome. Please read the [contributing guide](CONTRIBUTING.md) (setup,
-Gitflow branches, Conventional Commits) and the [code of conduct](CODE_OF_CONDUCT.md). Notable changes are listed in
+branches, Conventional Commits) and the [code of conduct](CODE_OF_CONDUCT.md). Notable changes are listed in
 the [changelog](CHANGELOG.md).
 
 ## Security
