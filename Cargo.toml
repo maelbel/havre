@@ -44,7 +44,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 base64 = "0.22"
 
 # Encrypting stored mail passwords
-chacha20poly1305 = "0.10"
+chacha20poly1305 = "0.11"
 hex = "0.4"
 
 # TLS — `ring` backend only, so it builds on Windows without extra tools (no cmake/nasm).
