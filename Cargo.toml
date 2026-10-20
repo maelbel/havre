@@ -28,7 +28,7 @@ utf7-imap = "0.3"        # folder names use "modified UTF-7" (RFC 3501)
 ammonia = "4"            # HTML sanitizer for email bodies
 
 # Local storage: SQLite, one file, nothing to install.
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 unicode-normalization = "0.1"   # "Réunion" and "reunion" match the same search
 
 # HTTP client for "Sign in with Microsoft" (OAuth). rustls + ring, like IMAP.
