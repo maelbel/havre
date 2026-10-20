@@ -12,6 +12,7 @@
 //!    don't overwrite a change made elsewhere in between.
 
 use chrono::{TimeZone, Utc};
+use chrono_tz::Tz;
 use reqwest::{Method, StatusCode};
 
 use super::{EventInput, RemoteCalendar, RemoteEvent, ics, store::CalDavLogin};
@@ -241,7 +242,7 @@ pub async fn events(
         let Some(data) = prop(response, CALDAV, "calendar-data").and_then(|n| n.text()) else { continue };
         let etag = prop(response, DAV, "getetag").and_then(|n| n.text()).map(|t| t.trim().to_owned());
         let href = absolute(calendar, &href);
-        match ics::events_between(data, Some(&href), etag.as_deref(), from, to, true) {
+        match ics::events_between(data, Some(&href), etag.as_deref(), from, to, false) {
             Ok(events) => out.extend(events.into_iter().map(|mut e| {
                 e.read_only |= read_only;
                 e
@@ -288,10 +289,20 @@ fn read_back(text: &str, href: &str, etag: Option<String>) -> Result<RemoteEvent
     Ok(event)
 }
 
-pub async fn create(login: &CalDavLogin, calendar: &str, input: &EventInput) -> Result<RemoteEvent> {
+/// Creates the event in its own `.ics` file (a repeating one, kept in `tz`,
+/// when `input.repeat` is set).
+pub async fn create(
+    login: &CalDavLogin,
+    calendar: &str,
+    input: &EventInput,
+    tz: Option<Tz>,
+) -> Result<RemoteEvent> {
     let uid = format!("{}@havre", crate::agenda::manager::random_id());
     let href = format!("{}/{uid}.ics", calendar.trim_end_matches('/'));
-    let text = ics::new_ics(&uid, input);
+    let text = match &input.repeat {
+        Some(repeat) => ics::new_series_ics(&uid, input, repeat, tz.unwrap_or(Tz::UTC)),
+        None => ics::new_ics(&uid, input),
+    };
     let etag = put(login, &href, None, &text).await?;
     read_back(&text, &href, etag)
 }
@@ -310,7 +321,13 @@ pub async fn update(
 
 const EVENT_CONFLICT: &str = "This event was changed elsewhere: refresh the Agenda and try again.";
 
-async fn put(login: &CalDavLogin, href: &str, etag: Option<&str>, body: &str) -> Result<Option<String>> {
+/// Writes an event's `.ics` file (only if it didn't change elsewhere: `etag`).
+pub(crate) async fn put(
+    login: &CalDavLogin,
+    href: &str,
+    etag: Option<&str>,
+    body: &str,
+) -> Result<Option<String>> {
     put_with(login, href, etag, body, EVENT_CONFLICT).await
 }
 

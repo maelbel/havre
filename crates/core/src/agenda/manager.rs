@@ -6,6 +6,11 @@
 //! - Looking further back or ahead fetches that period on the spot.
 //! - Creating, changing or deleting an event goes to the provider first
 //!   (it decides, e.g. the event id); the local copy follows.
+//! - Repeating events: a change goes to the series as the provider keeps it
+//!   ([`Scope`]: only this occurrence, this and the following ones, or all),
+//!   then the calendar's occurrences are read again, so each one is right.
+//!   Havre's own calendar keeps each series as iCalendar text and works out
+//!   the occurrences itself.
 
 use std::{
     collections::HashMap,
@@ -14,12 +19,14 @@ use std::{
 };
 
 use chacha20poly1305::aead::{OsRng, rand_core::RngCore};
+use chrono_tz::Tz;
 use tokio::sync::{Mutex, Notify, broadcast};
 
 use super::{
-    AgendaStore, Calendar, Event, EventInput, RemoteCalendar, RemoteEvent, caldav, day_start, google, graph,
-    ics,
-    store::{CalDavAccount, CalDavLogin, CalendarRow},
+    AgendaStore, Calendar, Event, EventInput, RemoteCalendar, RemoteEvent, Scope, SeriesRule, caldav,
+    day_start, google, graph, ics,
+    repeat::{self, Repeat},
+    store::{CalDavAccount, CalDavLogin, CalendarRow, EventRow, SeriesRow},
     validate,
 };
 use crate::{
@@ -31,6 +38,10 @@ use crate::{
 
 const DAY: i64 = 86_400;
 const EVERY: Duration = Duration::from_secs(5 * 60);
+/// A series' rule is read again from Microsoft or Google after this long.
+const RULE_MAX_AGE: i64 = 6 * 3600;
+/// At most this many series rules read per calendar and sync.
+const RULES_PER_SYNC: u32 = 50;
 
 /// Where a calendar's events live.
 enum Source {
@@ -134,11 +145,7 @@ impl Agenda {
         }
         for row in self.store.calendar_rows().await? {
             let covered = matches!((row.sync_from, row.sync_to), (Some(a), Some(b)) if a <= from && b >= to);
-            if row.calendar.enabled
-                && row.calendar.source != "local"
-                && !covered
-                && row.calendar.error.is_none()
-            {
+            if row.calendar.enabled && !covered && row.calendar.error.is_none() {
                 // Fetch a bit more than asked, to make browsing smooth.
                 let (wanted_from, wanted_to) = (day_start(from) - 31 * DAY, day_start(to) + 32 * DAY);
                 if let Err(err) = self.sync_calendar(&row, wanted_from, wanted_to).await {
@@ -183,7 +190,7 @@ impl Agenda {
         }
 
         for row in self.store.calendar_rows().await? {
-            if row.calendar.enabled && row.calendar.source != "local" {
+            if row.calendar.enabled {
                 match self.sync_calendar(&row, from, to).await {
                     Ok(()) => changed = true,
                     Err(err) => {
@@ -230,14 +237,85 @@ impl Agenda {
 
     async fn sync_calendar(&self, row: &CalendarRow, from: i64, to: i64) -> Result<()> {
         let read_only = row.calendar.read_only;
-        let id = &row.remote_id;
-        let events: Vec<RemoteEvent> = match self.source(&row.calendar).await? {
-            Source::Local => return Ok(()),
-            Source::Microsoft(token) => graph::events(&token, id, from, to, read_only).await?,
-            Source::Google(token) => google::events(&token, id, from, to, read_only).await?,
-            Source::CalDav(login) => caldav::events(&login, id, from, to, read_only).await?,
+        let (calendar, id) = (row.calendar.id, &row.remote_id);
+        match self.source(&row.calendar).await? {
+            Source::Local => {
+                // Havre's calendar: its repeating events' occurrences, worked
+                // out from each series' text (its other events are just rows).
+                let mut occurrences = Vec::new();
+                for series in self.store.local_series(calendar).await? {
+                    let text = series.ics.unwrap_or_default();
+                    match ics::events_between(&text, None, None, from, to, false) {
+                        Ok(found) => {
+                            occurrences.extend(found.into_iter().map(|e| RemoteEvent { raw: None, ..e }))
+                        }
+                        Err(err) => tracing::warn!(series = series.rule.series, "unreadable series: {err}"),
+                    }
+                }
+                self.store.replace_window(calendar, from, to, &occurrences, true).await
+            }
+            Source::Microsoft(token) => {
+                let events = graph::events(&token, id, from, to, read_only).await?;
+                self.store.replace_window(calendar, from, to, &events, false).await?;
+                for series in self.store.series_to_read(calendar, RULE_MAX_AGE, RULES_PER_SYNC).await? {
+                    match graph::series(&token, &series).await {
+                        Ok(rule) => self.store.save_series(calendar, &rule, None).await?,
+                        Err(err) => {
+                            tracing::warn!(calendar = row.calendar.name, "can't read a series: {err}")
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Source::Google(token) => {
+                let events = google::events(&token, id, from, to, read_only).await?;
+                self.store.replace_window(calendar, from, to, &events, false).await?;
+                for series in self.store.series_to_read(calendar, RULE_MAX_AGE, RULES_PER_SYNC).await? {
+                    match google::series(&token, id, &series).await {
+                        Ok(rule) => self.store.save_series(calendar, &rule, None).await?,
+                        Err(err) => {
+                            tracing::warn!(calendar = row.calendar.name, "can't read a series: {err}")
+                        }
+                    }
+                }
+                Ok(())
+            }
+            // iCalendar gives each series' rule with its occurrences.
+            Source::CalDav(login) => {
+                let events = caldav::events(&login, id, from, to, read_only).await?;
+                self.store.replace_window(calendar, from, to, &events, false).await
+            }
+        }
+    }
+
+    /// After changing a repeating event: the calendar's occurrences are read
+    /// again over the whole period kept in sync (nothing is guessed locally).
+    /// The change itself is done, so a failure here is only logged: the next
+    /// sync catches up.
+    async fn refresh(&self, calendar: i64) {
+        let refreshed = async {
+            let row = self.store.calendar_row(calendar).await?;
+            let (from, to) = default_window();
+            let from = row.sync_from.map_or(from, |f| f.min(from));
+            let to = row.sync_to.map_or(to, |t| t.max(to));
+            self.sync_calendar(&row, from, to).await
         };
-        self.store.replace_window(row.calendar.id, from, to, &events).await
+        if let Err(err) = refreshed.await {
+            tracing::warn!(calendar, "reading the calendar again: {err}");
+        }
+    }
+
+    /// After a series changed: its rule is read again, its occurrences too;
+    /// returns the occurrence nearest `near` (the one that was edited).
+    async fn after_series_change(&self, calendar: i64, series: &str, near: i64) -> Result<Event> {
+        self.store.forget_rule(calendar, series).await?;
+        self.refresh(calendar).await;
+        self.announce();
+        self.store.occurrence_near(calendar, series, near).await?.ok_or_else(|| {
+            Error::Config(
+                "Saved. Its dates are outside the period the Agenda keeps: refresh to see them.".into(),
+            )
+        })
     }
 
     /// Syncs everything now and waits (the refresh button).
@@ -298,31 +376,168 @@ impl Agenda {
         if row.calendar.read_only {
             return Err(Error::Config(format!("“{}” is read-only.", row.calendar.name)));
         }
+        let tz = repeat::zone(input.time_zone.as_deref())?;
+        if let Some(rule) = &input.repeat {
+            return self.create_series(&row, input, rule, tz).await;
+        }
         let remote = match self.source(&row.calendar).await? {
             Source::Local => local_event(&format!("local-{}", random_id()), input),
-            Source::Microsoft(token) => graph::create(&token, &row.remote_id, input).await?,
-            Source::Google(token) => google::create(&token, &row.remote_id, input).await?,
-            Source::CalDav(login) => caldav::create(&login, &row.remote_id, input).await?,
+            Source::Microsoft(token) => graph::create(&token, &row.remote_id, input, None).await?,
+            Source::Google(token) => google::create(&token, &row.remote_id, input, None).await?,
+            Source::CalDav(login) => caldav::create(&login, &row.remote_id, input, None).await?,
         };
         let event = self.store.save_event(row.calendar.id, &remote).await?;
         self.announce();
         Ok(event)
     }
 
+    /// A new repeating event: the provider makes the series, then its
+    /// occurrences are read.
+    async fn create_series(
+        &self,
+        row: &CalendarRow,
+        input: &EventInput,
+        rule: &Repeat,
+        tz: Tz,
+    ) -> Result<Event> {
+        let series = match self.source(&row.calendar).await? {
+            Source::Local => {
+                let uid = format!("local-{}", random_id());
+                let text = ics::new_series_ics(&uid, input, rule, tz);
+                self.store
+                    .save_series(row.calendar.id, &local_rule(&uid, input, rule, tz), Some(&text))
+                    .await?;
+                uid
+            }
+            Source::Microsoft(token) => {
+                graph::create(&token, &row.remote_id, input, Some(tz)).await?.remote_id
+            }
+            Source::Google(token) => google::create(&token, &row.remote_id, input, Some(tz)).await?.remote_id,
+            Source::CalDav(login) => {
+                let created = caldav::create(&login, &row.remote_id, input, Some(tz)).await?;
+                created.series.unwrap_or(created.remote_id)
+            }
+        };
+        self.after_series_change(row.calendar.id, &series, input.start).await
+    }
+
     /// Changes an event. Moving it to another calendar creates it there and
-    /// deletes the original.
-    pub async fn update(&self, id: i64, input: &EventInput) -> Result<Event> {
+    /// deletes the original. A repeating event changes for `scope`.
+    pub async fn update(&self, id: i64, input: &EventInput, scope: Scope) -> Result<Event> {
         validate(input)?;
         let current = self.store.event_row(id).await?;
         if current.event.read_only {
             return Err(Error::Config("This event can't be changed from Havre.".into()));
         }
+        let tz = repeat::zone(input.time_zone.as_deref())?;
+        let Some(series) = current.series.clone() else {
+            return self.update_single(&current, input, tz).await;
+        };
+        let row = self.store.calendar_row(current.event.calendar).await?;
+        let rule = self.store.series(row.calendar.id, &series).await?;
+        let editable = rule.as_ref().is_some_and(|r| r.rule.repeat.is_some());
+        let original = current.original_start.unwrap_or(current.event.start);
+        let scope = effective_scope(scope, &current, rule.as_ref(), original);
+
+        if input.calendar != current.event.calendar {
+            if scope != Scope::All {
+                return Err(Error::Config(
+                    "A repeating event moves to another calendar as a whole: choose “All events”.".into(),
+                ));
+            }
+            if !editable {
+                return Err(Error::Config(
+                    "This event repeats in a way set in another app: move it there.".into(),
+                ));
+            }
+            let moved = self.create(input).await?;
+            self.delete(id, Scope::All).await?;
+            return Ok(moved);
+        }
+
+        match scope {
+            Scope::This => self.update_occurrence(&row, &current, &series, rule, original, input).await,
+            Scope::Following => {
+                let Some(SeriesRow { rule: old, .. }) = rule.filter(|_| editable) else {
+                    return Err(Error::Config(
+                        "This event repeats in a way set in another app, so Havre can't split it: change only \
+                         this event, or all of them."
+                            .into(),
+                    ));
+                };
+                // The following ones become a series of their own; one that
+                // ends "after 10 times" keeps counting from the start.
+                let mut input = input.clone();
+                if let (Some(asked), Some(was)) = (input.repeat.as_mut(), old.repeat.as_ref())
+                    && asked.clone().normalized() == *was
+                    && let Some(count) = was.count
+                {
+                    let zone = repeat::zone(old.time_zone.as_deref()).unwrap_or(tz);
+                    let before = was.occurrences_before(old.first_start, original, old.all_day, zone);
+                    asked.count = Some(count.saturating_sub(before).max(1));
+                }
+                self.end_series_before(&row, &current, &series, original).await?;
+                self.forget_after_write(row.calendar.id, &series).await?;
+                self.create(&input).await
+            }
+            Scope::All => {
+                if input.repeat.is_none() && editable {
+                    // It stops repeating: one event in place of the series.
+                    let single = self.create(input).await?;
+                    self.delete(id, Scope::All).await?;
+                    return Ok(single);
+                }
+                // A rule made elsewhere is kept as it is.
+                let new_rule = input.repeat.as_ref().filter(|_| editable);
+                self.update_series(&row, &current, &series, rule, original, input, new_rule, tz).await
+            }
+        }
+    }
+
+    /// An event that doesn't repeat (yet: `input.repeat` makes it repeat).
+    async fn update_single(&self, current: &EventRow, input: &EventInput, tz: Tz) -> Result<Event> {
+        let id = current.event.id;
         if input.calendar != current.event.calendar {
             let moved = self.create(input).await?;
-            self.delete(id).await?;
+            self.delete(id, Scope::This).await?;
             return Ok(moved);
         }
         let row = self.store.calendar_row(current.event.calendar).await?;
+        if let Some(rule) = &input.repeat {
+            // It becomes a series: the provider keeps the same event, now
+            // with a rule (Havre's calendar makes a new series in its place).
+            let series = match self.source(&row.calendar).await? {
+                Source::Local => {
+                    let created = self.create_series(&row, input, rule, tz).await?;
+                    self.store.delete_event(id).await?;
+                    return Ok(created);
+                }
+                Source::Microsoft(token) => {
+                    graph::update_series(&token, &current.remote_id, input, Some(rule), tz).await?;
+                    current.remote_id.clone()
+                }
+                Source::Google(token) => {
+                    google::update_series(
+                        &token,
+                        &row.remote_id,
+                        &current.remote_id,
+                        input,
+                        Some(rule),
+                        tz,
+                        true,
+                    )
+                    .await?;
+                    current.remote_id.clone()
+                }
+                Source::CalDav(login) => {
+                    let (href, raw) = caldav_resource(current)?;
+                    let text = ics::update_master(raw, input, current.event.start, Some(rule), tz)?;
+                    caldav::put(&login, href, current.etag.as_deref(), &text).await?;
+                    current.event.uid.clone().unwrap_or_else(|| current.remote_id.clone())
+                }
+            };
+            return self.after_series_change(row.calendar.id, &series, input.start).await;
+        }
         let remote = match self.source(&row.calendar).await? {
             Source::Local => local_event(&current.remote_id, input),
             Source::Microsoft(token) => graph::update(&token, &current.remote_id, input).await?,
@@ -330,10 +545,7 @@ impl Agenda {
                 google::update(&token, &row.remote_id, &current.remote_id, input).await?
             }
             Source::CalDav(login) => {
-                let href =
-                    current.href.as_deref().ok_or_else(|| Error::Config("missing CalDAV address".into()))?;
-                let raw =
-                    current.raw.as_deref().ok_or_else(|| Error::Config("missing CalDAV event".into()))?;
+                let (href, raw) = caldav_resource(current)?;
                 caldav::update(&login, href, current.etag.as_deref(), raw, input).await?
             }
         };
@@ -345,23 +557,192 @@ impl Agenda {
         Ok(event)
     }
 
-    pub async fn delete(&self, id: i64) -> Result<()> {
+    /// *Only this event*: Microsoft and Google change that occurrence;
+    /// iCalendar gets a modified occurrence in the series' text.
+    async fn update_occurrence(
+        &self,
+        row: &CalendarRow,
+        current: &EventRow,
+        series: &str,
+        rule: Option<SeriesRow>,
+        original: i64,
+        input: &EventInput,
+    ) -> Result<Event> {
+        match self.source(&row.calendar).await? {
+            Source::Local => {
+                let stored = rule.ok_or_else(missing_series)?;
+                let text =
+                    ics::override_occurrence(stored.ics.as_deref().unwrap_or_default(), original, input)?;
+                self.store.save_series(row.calendar.id, &stored.rule, Some(&text)).await?;
+            }
+            Source::Microsoft(token) => {
+                graph::update(&token, &current.remote_id, input).await?;
+            }
+            Source::Google(token) => {
+                google::update(&token, &row.remote_id, &current.remote_id, input).await?;
+            }
+            Source::CalDav(login) => {
+                let (href, raw) = caldav_resource(current)?;
+                let text = ics::override_occurrence(raw, original, input)?;
+                caldav::put(&login, href, current.etag.as_deref(), &text).await?;
+            }
+        }
+        self.after_series_change(row.calendar.id, series, input.start).await
+    }
+
+    /// *All events*: the series takes the edited occurrence's fields and
+    /// moves as it did (see [`repeat::shift`]).
+    #[allow(clippy::too_many_arguments)]
+    async fn update_series(
+        &self,
+        row: &CalendarRow,
+        current: &EventRow,
+        series: &str,
+        rule: Option<SeriesRow>,
+        original: i64,
+        input: &EventInput,
+        new_rule: Option<&Repeat>,
+        tz: Tz,
+    ) -> Result<Event> {
+        let first_start = rule.as_ref().map_or(original, |r| r.rule.first_start);
+        // The series' own time zone, else the browser's.
+        let zone = rule
+            .as_ref()
+            .and_then(|r| r.rule.time_zone.as_deref())
+            .and_then(|name| repeat::zone(Some(name)).ok())
+            .unwrap_or(tz);
+        let start = repeat::shift(first_start, original, input.start, input.all_day, zone);
+        let moved = EventInput { start, end: start + (input.end - input.start), ..input.clone() };
+        match self.source(&row.calendar).await? {
+            Source::Local => {
+                let stored = rule.ok_or_else(missing_series)?;
+                let text = ics::update_master(
+                    stored.ics.as_deref().unwrap_or_default(),
+                    input,
+                    original,
+                    new_rule,
+                    tz,
+                )?;
+                self.store.save_series(row.calendar.id, &stored.rule, Some(&text)).await?;
+            }
+            Source::Microsoft(token) => graph::update_series(&token, series, &moved, new_rule, zone).await?,
+            Source::Google(token) => {
+                let shifted = start != first_start;
+                google::update_series(&token, &row.remote_id, series, &moved, new_rule, zone, shifted).await?
+            }
+            Source::CalDav(login) => {
+                let (href, raw) = caldav_resource(current)?;
+                let text = ics::update_master(raw, input, original, new_rule, tz)?;
+                caldav::put(&login, href, current.etag.as_deref(), &text).await?;
+            }
+        }
+        self.after_series_change(row.calendar.id, series, input.start).await
+    }
+
+    /// Ends a series just before an occurrence (or deletes it, when that
+    /// is its first one).
+    async fn end_series_before(
+        &self,
+        row: &CalendarRow,
+        current: &EventRow,
+        series: &str,
+        original: i64,
+    ) -> Result<()> {
+        let calendar = row.calendar.id;
+        match self.source(&row.calendar).await? {
+            Source::Local => {
+                let stored = self.store.series(calendar, series).await?.ok_or_else(missing_series)?;
+                match ics::cut(stored.ics.as_deref().unwrap_or_default(), original)? {
+                    Some(text) => self.store.save_series(calendar, &stored.rule, Some(&text)).await?,
+                    None => self.store.delete_series(calendar, series).await?,
+                }
+            }
+            Source::Microsoft(token) => {
+                if !graph::cut_series(&token, series, original, current.event.all_day).await? {
+                    graph::delete(&token, series).await?;
+                }
+            }
+            Source::Google(token) => {
+                if !google::cut_series(&token, &row.remote_id, series, original).await? {
+                    google::delete(&token, &row.remote_id, series).await?;
+                }
+            }
+            Source::CalDav(login) => {
+                let (href, raw) = caldav_resource(current)?;
+                match ics::cut(raw, original)? {
+                    Some(text) => {
+                        caldav::put(&login, href, current.etag.as_deref(), &text).await?;
+                    }
+                    None => caldav::delete(&login, href, current.etag.as_deref()).await?,
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The series changed: its rule and occurrences are read again.
+    async fn forget_after_write(&self, calendar: i64, series: &str) -> Result<()> {
+        self.store.forget_rule(calendar, series).await?;
+        self.refresh(calendar).await;
+        Ok(())
+    }
+
+    /// Deletes an event; a repeating one for `scope`.
+    pub async fn delete(&self, id: i64, scope: Scope) -> Result<()> {
         let current = self.store.event_row(id).await?;
         if current.event.read_only {
             return Err(Error::Config("This event can't be deleted from Havre.".into()));
         }
         let row = self.store.calendar_row(current.event.calendar).await?;
-        match self.source(&row.calendar).await? {
-            Source::Local => {}
-            Source::Microsoft(token) => graph::delete(&token, &current.remote_id).await?,
-            Source::Google(token) => google::delete(&token, &row.remote_id, &current.remote_id).await?,
-            Source::CalDav(login) => {
-                if let Some(href) = &current.href {
-                    caldav::delete(&login, href, current.etag.as_deref()).await?;
+        let calendar = row.calendar.id;
+        let Some(series) = current.series.clone() else {
+            match self.source(&row.calendar).await? {
+                Source::Local => {}
+                Source::Microsoft(token) => graph::delete(&token, &current.remote_id).await?,
+                Source::Google(token) => google::delete(&token, &row.remote_id, &current.remote_id).await?,
+                Source::CalDav(login) => {
+                    if let Some(href) = &current.href {
+                        caldav::delete(&login, href, current.etag.as_deref()).await?;
+                    }
                 }
+            }
+            self.store.delete_event(id).await?;
+            self.announce();
+            return Ok(());
+        };
+        let rule = self.store.series(calendar, &series).await?;
+        let original = current.original_start.unwrap_or(current.event.start);
+        match effective_scope(scope, &current, rule.as_ref(), original) {
+            Scope::This => match self.source(&row.calendar).await? {
+                Source::Local => {
+                    let stored = rule.ok_or_else(missing_series)?;
+                    let text = ics::exclude(stored.ics.as_deref().unwrap_or_default(), original)?;
+                    self.store.save_series(calendar, &stored.rule, Some(&text)).await?;
+                }
+                Source::Microsoft(token) => graph::delete(&token, &current.remote_id).await?,
+                Source::Google(token) => google::delete(&token, &row.remote_id, &current.remote_id).await?,
+                Source::CalDav(login) => {
+                    let (href, raw) = caldav_resource(&current)?;
+                    let text = ics::exclude(raw, original)?;
+                    caldav::put(&login, href, current.etag.as_deref(), &text).await?;
+                }
+            },
+            Scope::Following => self.end_series_before(&row, &current, &series, original).await?,
+            Scope::All => {
+                match self.source(&row.calendar).await? {
+                    Source::Local => {}
+                    Source::Microsoft(token) => graph::delete(&token, &series).await?,
+                    Source::Google(token) => google::delete(&token, &row.remote_id, &series).await?,
+                    Source::CalDav(login) => {
+                        let (href, _) = caldav_resource(&current)?;
+                        caldav::delete(&login, href, current.etag.as_deref()).await?;
+                    }
+                }
+                self.store.delete_series(calendar, &series).await?;
             }
         }
         self.store.delete_event(id).await?;
+        self.forget_after_write(calendar, &series).await?;
         self.announce();
         Ok(())
     }
@@ -426,6 +807,8 @@ impl Agenda {
                 end: event.end.max(event.start + 60),
                 all_day: event.all_day,
                 attendees: Vec::new(),
+                repeat: None,
+                time_zone: None,
             };
             let created = self.create(&input).await?;
             // Remember which meeting it is a copy of (the invitation card
@@ -485,6 +868,36 @@ impl Agenda {
     }
 }
 
+/// On the first occurrence, "this and the following ones" is all of them.
+fn effective_scope(scope: Scope, current: &EventRow, rule: Option<&SeriesRow>, original: i64) -> Scope {
+    let first = current.event.first_occurrence || rule.is_some_and(|r| original <= r.rule.first_start);
+    if scope == Scope::Following && first { Scope::All } else { scope }
+}
+
+/// A CalDAV event's file: its address and text.
+fn caldav_resource(current: &EventRow) -> Result<(&str, &str)> {
+    let href = current.href.as_deref().ok_or_else(|| Error::Config("missing CalDAV address".into()))?;
+    let raw = current.raw.as_deref().ok_or_else(|| Error::Config("missing CalDAV event".into()))?;
+    Ok((href, raw))
+}
+
+fn missing_series() -> Error {
+    Error::Config("This repeating event is no longer in Havre: refresh the Agenda.".into())
+}
+
+/// A series of Havre's calendar, before its text is read back.
+fn local_rule(uid: &str, input: &EventInput, rule: &Repeat, tz: Tz) -> SeriesRule {
+    SeriesRule {
+        series: uid.to_owned(),
+        rrule: rule.rrule(input.all_day, tz),
+        repeat: Some(rule.clone().normalized()),
+        time_zone: (!input.all_day).then(|| tz.name().to_owned()),
+        first_start: input.start,
+        first_end: input.end,
+        all_day: input.all_day,
+    }
+}
+
 fn local_event(remote_id: &str, input: &EventInput) -> RemoteEvent {
     RemoteEvent {
         remote_id: remote_id.to_owned(),
@@ -504,5 +917,129 @@ fn local_event(remote_id: &str, input: &EventInput) -> RemoteEvent {
             })
             .collect(),
         ..RemoteEvent::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{accounts::AccountManager, agenda::repeat::Freq};
+
+    async fn agenda() -> (Arc<Agenda>, i64) {
+        let db = Database::in_memory().await.unwrap();
+        let accounts = AccountManager::start(db.clone()).await.unwrap();
+        let agenda = Agenda::start(db, accounts.sender());
+        let local =
+            agenda.store().calendars().await.unwrap().into_iter().find(|c| c.source == "local").unwrap();
+        (agenda, local.id)
+    }
+
+    fn weekly(count: u32) -> Repeat {
+        Repeat { freq: Freq::Weekly, interval: 1, days: vec![], on: None, until: None, count: Some(count) }
+    }
+
+    fn input(calendar: i64, title: &str, start: i64, repeat: Option<Repeat>) -> EventInput {
+        EventInput {
+            calendar,
+            title: title.into(),
+            location: String::new(),
+            description: String::new(),
+            start,
+            end: start + 1800,
+            all_day: false,
+            attendees: vec![],
+            repeat,
+            time_zone: Some("Europe/Paris".into()),
+        }
+    }
+
+    /// The series' occurrences in the next two months: (title, start).
+    async fn shown(agenda: &Agenda, from: i64) -> Vec<(String, i64)> {
+        let events = agenda.events(from - DAY, from + 70 * DAY).await.unwrap();
+        events.into_iter().filter(|e| e.recurring).map(|e| (e.title, e.start)).collect()
+    }
+
+    #[tokio::test]
+    async fn repeating_events_in_havres_calendar() {
+        let (agenda, calendar) = agenda().await;
+        // Next week, 08:00 UTC, every week, 5 times.
+        let start = day_start(now()) + 7 * DAY + 8 * 3600;
+        let week = 7 * DAY;
+        let first = agenda.create(&input(calendar, "Check-in", start, Some(weekly(5)))).await.unwrap();
+        assert!(first.recurring && first.first_occurrence);
+        assert_eq!(first.repeat.as_ref().and_then(|r| r.count), Some(5));
+        assert_eq!(shown(&agenda, start).await.len(), 5);
+        let id_of = |start: i64| {
+            let agenda = Arc::clone(&agenda);
+            async move {
+                let events = agenda.events(start - DAY, start + DAY).await.unwrap();
+                events.into_iter().find(|e| e.recurring && (e.start - start).abs() < 4 * 3600).unwrap()
+            }
+        };
+
+        // Only the second one, an hour later.
+        let second = id_of(start + week).await;
+        assert!(!second.first_occurrence);
+        let moved = agenda
+            .update(second.id, &input(calendar, "Moved", second.start + 3600, None), Scope::This)
+            .await
+            .unwrap();
+        assert_eq!(moved.title, "Moved");
+        let titles: Vec<String> = shown(&agenda, start).await.into_iter().map(|(t, _)| t).collect();
+        assert_eq!(titles, ["Check-in", "Moved", "Check-in", "Check-in", "Check-in"]);
+
+        // The third and the following ones: a new series, still 5 in all.
+        let third = id_of(start + 2 * week).await;
+        let later = input(calendar, "Later", third.start, Some(weekly(5)));
+        let new = agenda.update(third.id, &later, Scope::Following).await.unwrap();
+        assert_eq!(new.repeat.as_ref().and_then(|r| r.count), Some(3), "counts on from the old series");
+        let titles: Vec<String> = shown(&agenda, start).await.into_iter().map(|(t, _)| t).collect();
+        assert_eq!(titles, ["Check-in", "Moved", "Later", "Later", "Later"]);
+
+        // All of the first series renamed (from its first occurrence).
+        let first = id_of(start).await;
+        // (The editor sends the rule it shows: since the split, it ends
+        // the day before the third one.)
+        assert_eq!(first.repeat.as_ref().map(|r| (r.count, r.until.is_some())), Some((None, true)));
+        agenda
+            .update(first.id, &input(calendar, "Weekly", first.start, first.repeat.clone()), Scope::All)
+            .await
+            .unwrap();
+        let titles: Vec<String> = shown(&agenda, start).await.into_iter().map(|(t, _)| t).collect();
+        assert_eq!(titles, ["Weekly", "Weekly", "Later", "Later", "Later"]);
+
+        // Deleting one of the new series, then all of it.
+        let fourth = id_of(start + 3 * week).await;
+        agenda.delete(fourth.id, Scope::This).await.unwrap();
+        assert_eq!(shown(&agenda, start).await.len(), 4);
+        let fifth = id_of(start + 4 * week).await;
+        agenda.delete(fifth.id, Scope::All).await.unwrap();
+        let titles: Vec<String> = shown(&agenda, start).await.into_iter().map(|(t, _)| t).collect();
+        assert_eq!(titles, ["Weekly", "Weekly"]);
+
+        // "Following" from the first one is the whole series.
+        let first = id_of(start).await;
+        agenda.delete(first.id, Scope::Following).await.unwrap();
+        assert!(shown(&agenda, start).await.is_empty());
+
+        // A one-off event that becomes a series, then stops repeating.
+        let single = agenda.create(&input(calendar, "Lunch", start, None)).await.unwrap();
+        assert!(!single.recurring);
+        let series = agenda
+            .update(single.id, &input(calendar, "Lunch", start, Some(weekly(3))), Scope::This)
+            .await
+            .unwrap();
+        assert!(series.recurring);
+        assert_eq!(shown(&agenda, start).await.len(), 3);
+        let one = agenda.update(series.id, &input(calendar, "Lunch", start, None), Scope::All).await.unwrap();
+        assert!(!one.recurring);
+        assert!(shown(&agenda, start).await.is_empty());
+
+        // Rules are checked.
+        let bad = Repeat { interval: 0, ..weekly(3) };
+        assert!(agenda.create(&input(calendar, "Bad", start, Some(bad))).await.is_err());
+        let mut zoned = input(calendar, "Bad", start, Some(weekly(3)));
+        zoned.time_zone = Some("Nowhere/Land".into());
+        assert!(agenda.create(&zoned).await.is_err());
     }
 }

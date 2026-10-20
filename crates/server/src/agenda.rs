@@ -5,9 +5,9 @@
 //! | GET    | /agenda/calendars | calendars (all sources) |
 //! | PATCH  | /agenda/calendars/{id} `{enabled?, color?, is_default?}` | show/hide, recolor, default |
 //! | GET    | /agenda/events?from=&to= | events overlapping the period (unix seconds) |
-//! | POST   | /agenda/events `{calendar, title, start, end, all_day…}` | create |
-//! | PATCH  | /agenda/events/{id} (same body) | change (or move to another calendar) |
-//! | DELETE | /agenda/events/{id} | delete |
+//! | POST   | /agenda/events `{calendar, title, start, end, all_day, repeat?, time_zone?…}` | create |
+//! | PATCH  | /agenda/events/{id}?scope=this\|following\|all (same body) | change (or move to another calendar) |
+//! | DELETE | /agenda/events/{id}?scope=this\|following\|all | delete |
 //! | POST   | /agenda/sync | sync now and wait |
 //! | GET · POST | /agenda/caldav `{name, url, username, password}` | CalDAV servers · add one |
 //! | DELETE | /agenda/caldav/{id} | remove one (its calendars go too) |
@@ -28,7 +28,7 @@ use axum::{
     routing::{get, patch, post},
 };
 use havre_core::{
-    agenda::{Agenda, CalDavAccount, Calendar, Event, EventInput},
+    agenda::{Agenda, CalDavAccount, Calendar, Event, EventInput, Scope},
     invitations::{self, InvitationView},
 };
 use serde::Deserialize;
@@ -102,16 +102,28 @@ async fn create_event(
     Ok((StatusCode::CREATED, Json(agenda(&state)?.create(&input).await?)))
 }
 
+/// `?scope=`: which occurrences of a repeating event (ignored for the others).
+#[derive(Deserialize)]
+struct ScopeQuery {
+    #[serde(default)]
+    scope: Scope,
+}
+
 async fn update_event(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(q): Query<ScopeQuery>,
     Json(input): Json<EventInput>,
 ) -> Result<Json<Event>, ApiError> {
-    Ok(Json(agenda(&state)?.update(id, &input).await?))
+    Ok(Json(agenda(&state)?.update(id, &input, q.scope).await?))
 }
 
-async fn delete_event(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
-    agenda(&state)?.delete(id).await?;
+async fn delete_event(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(q): Query<ScopeQuery>,
+) -> Result<StatusCode, ApiError> {
+    agenda(&state)?.delete(id, q.scope).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

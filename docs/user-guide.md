@@ -172,9 +172,39 @@ to put one off, *View email*. The event panel shows who's coming and how
 they answered, the recent emails and files from those people, and *Join
 call* for Teams / Meet.
 
-For now: repeating events are shown, but are created in your usual calendar
-app; repeating CalDAV events are read-only; meetings organized by someone
-else can be answered but not changed.
+### Repeating events
+
+In the event editor, **Repeat** sets how often: every day, week (choose the
+days), month (on the same date, or "the third Monday", "the last Friday") or
+year, every 1 to 99 of them, and when it ends: never, on a date, or after a
+number of times (up to 730). A sentence under it says what you chose ("Every
+2 weeks on Monday and Thursday, until 18 Dec"). Repeating events show a ↻ in
+the week and month views, and the event panel says how they repeat.
+
+A timed repeating event is kept in your time zone: a weekly 10:00 stays at
+10:00 after the clocks change. The rule is saved in the calendar itself, so
+Outlook, Google Calendar, your phone and CalDAV apps repeat it too.
+
+Saving or deleting one occurrence asks which ones it's for:
+
+- **Only this event** — that date changes (or goes); the others stay.
+- **This and the following ones** — the series ends the day before and,
+  when you change it, a new one starts from that date (one that ends "after
+  10 times" keeps counting). Not offered on the first occurrence: it would be
+  all of them.
+- **All events** — the whole series. Moving the occurrence you edit moves
+  every one of them the same way (an hour later, a day later).
+
+A new rule applies to *this and the following ones* or *all events*, not to
+one date alone; moving a repeating event to another calendar moves the whole
+series. Nothing is picked until you choose, and deleting needs that choice.
+
+A rule made in another app that Havre can't describe (say, "the 2nd and 4th
+Monday") is shown as *Repeats (set in Outlook)*: you can change one event or
+all of them (their title, time, place), or delete them, but the rule itself is
+changed in that app.
+
+Meetings organized by someone else can be answered but not changed.
 
 Keyboard: `←` / `→` previous / next, `t` today, `d` / `w` / `m` day / week /
 month, `n` new event, `Esc` close.

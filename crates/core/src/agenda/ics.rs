@@ -4,19 +4,29 @@
 //! Repeating events are expanded here into one [`RemoteEvent`] per
 //! occurrence in the period asked for, using the `RRULE` (with `EXDATE`s
 //! and modified occurrences, `RECURRENCE-ID`).
+//!
+//! Changing a repeating event is also done here, once for CalDAV and
+//! Havre's own calendar (both keep the series as iCalendar text): a
+//! modified occurrence ([`override_occurrence`]), a removed one
+//! ([`exclude`]), the series ended before an occurrence ([`cut`]), the
+//! whole series changed ([`update_master`]).
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use icalendar::{
-    Calendar, CalendarDateTime, Component, DatePerhapsTime, Event as IcsEvent, EventLike, EventStatus,
-    Property,
+    Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, Event as IcsEvent, EventLike,
+    EventStatus, Property,
 };
 
-use super::{Attendee, EventInput, RemoteEvent};
+use super::{
+    Attendee, EventInput, RemoteEvent, SeriesRule,
+    repeat::{self, Repeat},
+};
 use crate::{Error, Result};
 
 /// Outlook and Exchange write Windows time zone names; the iCalendar
 /// libraries know the IANA ones.
-const WINDOWS_ZONES: &[(&str, &str)] = &[
+pub(crate) const WINDOWS_ZONES: &[(&str, &str)] = &[
     ("Romance Standard Time", "Europe/Paris"),
     ("W. Europe Standard Time", "Europe/Berlin"),
     ("Central Europe Standard Time", "Europe/Budapest"),
@@ -181,6 +191,9 @@ pub fn events_between(
     recurring_read_only: bool,
 ) -> Result<Vec<RemoteEvent>> {
     let calendar = parse(text)?;
+    // "Any time" (an invitation, a saved event read back): 1970 to 2100, so
+    // the dates stay ones the expansion can handle.
+    let (from, to) = (from.max(0), to.min(4_102_444_800));
     let mut out = Vec::new();
     let all: Vec<_> = calendar.calendar_events().collect();
     // Modified occurrences ("this one is at 3 pm instead"), by their UID +
@@ -213,6 +226,8 @@ pub fn events_between(
                     end: start + length,
                     recurring: true,
                     read_only: recurring_read_only,
+                    series: Some(uid.clone()),
+                    original_start: Some(original),
                     ..base
                 });
             }
@@ -231,6 +246,7 @@ pub fn events_between(
             tracing::warn!(uid, "can't expand a repeating event");
             continue;
         };
+        let rule = series_rule(event, &uid, start, length, all_day);
         let after = utc(from - length - 1);
         let before = utc(to);
         let occurrences = set
@@ -249,6 +265,9 @@ pub fn events_between(
                     end: start + length,
                     recurring: true,
                     read_only: recurring_read_only,
+                    series: Some(uid.clone()),
+                    original_start: Some(start),
+                    rule: Some(rule.clone()),
                     ..base.clone()
                 });
             }
@@ -259,6 +278,30 @@ pub fn events_between(
 
 fn utc(ts: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(ts, 0).single().unwrap_or_default()
+}
+
+/// A series' rule as Havre keeps it. With an `RDATE` (extra dates added by
+/// hand elsewhere) the rule alone doesn't describe it: not editable.
+fn series_rule(master: &IcsEvent, uid: &str, start: i64, length: i64, all_day: bool) -> SeriesRule {
+    let rrule = master.property_value("RRULE").unwrap_or_default().to_owned();
+    let tz = match form_of(master) {
+        Form::Zone(tz) => Some(tz),
+        _ => None,
+    };
+    let repeat = if master.property_value("RDATE").is_some() {
+        None
+    } else {
+        Repeat::parse(&rrule, all_day, tz.unwrap_or(Tz::UTC))
+    };
+    SeriesRule {
+        series: uid.to_owned(),
+        rrule,
+        repeat,
+        time_zone: tz.map(|tz| tz.name().to_owned()),
+        first_start: start,
+        first_end: start + length,
+        all_day,
+    }
 }
 
 /// The events of an invitation (`.ics` attached to an email).
@@ -330,6 +373,12 @@ pub fn reply_ics(text: &str, me_email: &str, me_name: &str, partstat: &str) -> R
 
 /// Sets an event's fields from the editor.
 fn apply(event: &mut IcsEvent, input: &EventInput) {
+    apply_fields(event, input);
+    set_times(event, input.start, input.end, input.all_day, None);
+}
+
+/// The title, place and notes (not the times).
+fn apply_fields(event: &mut IcsEvent, input: &EventInput) {
     event.summary(input.title.trim());
     event.remove_location();
     if !input.location.trim().is_empty() {
@@ -339,18 +388,230 @@ fn apply(event: &mut IcsEvent, input: &EventInput) {
     if !input.description.trim().is_empty() {
         event.description(input.description.trim());
     }
+    event.timestamp(Utc::now());
+    event.last_modified(Utc::now());
+}
+
+/// `DTSTART` / `DTEND`: dates for all-day events, else clock times in `tz`
+/// (`DTSTART;TZID=Europe/Paris:20261019T100000`) or UTC.
+fn set_times(event: &mut IcsEvent, start: i64, end: i64, all_day: bool, tz: Option<Tz>) {
     event.remove_starts();
     event.remove_ends();
     event.remove_property("DURATION");
-    if input.all_day {
-        event.starts(utc(input.start).date_naive());
-        event.ends(utc(input.end).date_naive());
+    if all_day {
+        event.starts(utc(start).date_naive());
+        event.ends(utc(end).date_naive());
+    } else if let Some(tz) = tz {
+        event.starts((repeat::local_time(start, tz), tz));
+        event.ends((repeat::local_time(end, tz), tz));
     } else {
-        event.starts(utc(input.start));
-        event.ends(utc(input.end));
+        event.starts(utc(start));
+        event.ends(utc(end));
     }
-    event.timestamp(Utc::now());
-    event.last_modified(Utc::now());
+}
+
+/// How a series writes its times: `RECURRENCE-ID` and `EXDATE` must be
+/// written the same way to match.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Form {
+    Date,
+    Zone(Tz),
+    Utc,
+}
+
+fn form_of(event: &IcsEvent) -> Form {
+    let Some(p) = event.properties().get("DTSTART") else { return Form::Utc };
+    if p.value().len() == 8 || p.params().get("VALUE").is_some_and(|v| v.value() == "DATE") {
+        return Form::Date;
+    }
+    match p.params().get("TZID").and_then(|t| t.value().trim_matches('"').parse::<Tz>().ok()) {
+        Some(tz) => Form::Zone(tz),
+        None => Form::Utc,
+    }
+}
+
+/// An occurrence's start, written in the series' form.
+fn instant(form: Form, ts: i64) -> DatePerhapsTime {
+    match form {
+        Form::Date => utc(ts).date_naive().into(),
+        Form::Zone(tz) => (repeat::local_time(ts, tz), tz).into(),
+        Form::Utc => utc(ts).into(),
+    }
+}
+
+/// Which occurrence a modified one replaces (its `RECURRENCE-ID`).
+fn rid(event: &IcsEvent) -> Option<i64> {
+    event.get_recurrence_id().and_then(|r| timestamp(&r)).map(|(ts, _)| ts)
+}
+
+/// The series itself: the event without a `RECURRENCE-ID`.
+fn master(calendar: &mut Calendar) -> Result<&mut IcsEvent> {
+    calendar
+        .components
+        .iter_mut()
+        .find_map(|c| match c {
+            CalendarComponent::Event(e) if e.get_recurrence_id().is_none() => Some(e),
+            _ => None,
+        })
+        .ok_or_else(|| Error::Config("no event in this calendar resource".into()))
+}
+
+/// Removes the modified occurrences `drop` picks.
+fn drop_overrides(calendar: &mut Calendar, drop: impl Fn(i64) -> bool) {
+    calendar.components.retain(|c| !matches!(c, CalendarComponent::Event(e) if rid(e).is_some_and(&drop)));
+}
+
+fn bump(event: &mut IcsEvent) {
+    let sequence = event.get_sequence().unwrap_or(0);
+    event.sequence(sequence + 1);
+}
+
+/// A new calendar resource with a repeating event; a timed one keeps its
+/// clock time in `tz`.
+pub fn new_series_ics(uid: &str, input: &EventInput, repeat: &Repeat, tz: Tz) -> String {
+    let mut event = IcsEvent::with_uid(uid);
+    apply_fields(&mut event, input);
+    set_times(&mut event, input.start, input.end, input.all_day, Some(tz));
+    event.add_property("RRULE", repeat.rrule(input.all_day, tz));
+    event.created(Utc::now());
+    Calendar::new().push(event.done()).done().to_string()
+}
+
+/// *Only this event* changed: a modified occurrence (`RECURRENCE-ID`) in the
+/// same resource, replacing the one that starts at `original_start`.
+pub fn override_occurrence(raw: &str, original_start: i64, input: &EventInput) -> Result<String> {
+    let mut calendar = parse(raw)?;
+    let series = master(&mut calendar)?.clone();
+    let form = form_of(&series);
+    let tz = match form {
+        Form::Zone(tz) => Some(tz),
+        _ => None,
+    };
+    let existing = calendar.components.iter_mut().find_map(|c| match c {
+        CalendarComponent::Event(e) if rid(e) == Some(original_start) => Some(e),
+        _ => None,
+    });
+    match existing {
+        Some(event) => {
+            apply_fields(event, input);
+            set_times(event, input.start, input.end, input.all_day, tz);
+            bump(event);
+        }
+        None => {
+            // A copy of the series (guests, organizer, alarms' settings…)
+            // without its rule, for that one date.
+            let mut event = IcsEvent::new();
+            for (key, p) in series.properties() {
+                if !matches!(
+                    key.as_str(),
+                    "RRULE" | "RDATE" | "EXDATE" | "DTSTART" | "DTEND" | "DURATION" | "RECURRENCE-ID"
+                ) {
+                    event.append_property(p.clone());
+                }
+            }
+            for (key, list) in series.multi_properties() {
+                if key != "EXDATE" && key != "RDATE" {
+                    for p in list {
+                        event.append_multi_property(p.clone());
+                    }
+                }
+            }
+            event.recurrence_id(instant(form, original_start));
+            apply_fields(&mut event, input);
+            set_times(&mut event, input.start, input.end, input.all_day, tz);
+            calendar.push(event.done());
+        }
+    }
+    Ok(calendar.to_string())
+}
+
+/// *Only this event* deleted: an `EXDATE` on the series.
+pub fn exclude(raw: &str, original_start: i64) -> Result<String> {
+    let mut calendar = parse(raw)?;
+    let series = master(&mut calendar)?;
+    let form = form_of(series);
+    series.exdate(instant(form, original_start));
+    bump(series);
+    drop_overrides(&mut calendar, |t| t == original_start);
+    Ok(calendar.to_string())
+}
+
+/// The series ends just before `original_start` (*this and the following
+/// ones*, the first part). `None`: nothing would be left (it's the first one).
+pub fn cut(raw: &str, original_start: i64) -> Result<Option<String>> {
+    let mut calendar = parse(raw)?;
+    let series = master(&mut calendar)?;
+    let first = series.get_start().as_ref().and_then(timestamp).map_or(i64::MIN, |(ts, _)| ts);
+    if original_start <= first {
+        return Ok(None);
+    }
+    let Some(rule) = series.property_value("RRULE").map(str::to_owned) else {
+        return Err(Error::Config("This event doesn't repeat.".into()));
+    };
+    let form = form_of(series);
+    let tz = match form {
+        Form::Zone(tz) => tz,
+        _ => Tz::UTC,
+    };
+    series.add_property("RRULE", repeat::cut_rule(&rule, original_start, form == Form::Date, tz));
+    bump(series);
+    drop_overrides(&mut calendar, |t| t >= original_start);
+    Ok(Some(calendar.to_string()))
+}
+
+/// *All events* changed, from the occurrence that started at
+/// `original_start`: the series moves as that occurrence did (see
+/// [`repeat::shift`]) and takes its fields. `repeat`: a new rule, or `None`
+/// to keep the current one. `tz`: the browser's time zone, used when the
+/// series has none.
+pub fn update_master(
+    raw: &str,
+    input: &EventInput,
+    original_start: i64,
+    repeat: Option<&Repeat>,
+    tz: Tz,
+) -> Result<String> {
+    let mut calendar = parse(raw)?;
+    let series = master(&mut calendar)?;
+    let form = form_of(series);
+    let first = series.get_start().as_ref().and_then(timestamp);
+    let (first_start, was_all_day) = first.unwrap_or((original_start, input.all_day));
+    let zone = match form {
+        Form::Zone(zone) => zone,
+        _ => tz,
+    };
+    // The clock time is kept in the series' zone; a series written in UTC
+    // gets the browser's zone when Havre writes its rule.
+    let write_zone = match form {
+        Form::Zone(zone) => Some(zone),
+        Form::Utc if repeat.is_some() => Some(tz),
+        _ => None,
+    };
+    let start = repeat::shift(first_start, original_start, input.start, input.all_day, zone);
+    let end = start + (input.end - input.start);
+    apply_fields(series, input);
+    set_times(series, start, end, input.all_day, write_zone);
+    if let Some(repeat) = repeat {
+        series.add_property("RRULE", repeat.rrule(input.all_day, write_zone.unwrap_or(Tz::UTC)));
+    }
+    bump(series);
+    if start != first_start || input.all_day != was_all_day {
+        // The occurrences moved: removed and modified dates no longer match.
+        series.remove_multi_property("EXDATE");
+        drop_overrides(&mut calendar, |_| true);
+    } else {
+        // The modified occurrences keep their times, and take the new title,
+        // place and notes like the others.
+        for component in calendar.components.iter_mut() {
+            if let CalendarComponent::Event(e) = component
+                && rid(e).is_some()
+            {
+                apply_fields(e, input);
+                bump(e);
+            }
+        }
+    }
+    Ok(calendar.to_string())
 }
 
 /// A new calendar resource with one event.
@@ -385,6 +646,8 @@ pub fn export(name: &str, events: &[super::Event]) -> String {
                 end: e.end,
                 all_day: e.all_day,
                 attendees: Vec::new(),
+                repeat: None,
+                time_zone: None,
             },
         );
         calendar.push(event.done());
@@ -483,6 +746,8 @@ mod tests {
             end: MONDAY + 7 * DAY,
             all_day: true,
             attendees: vec![],
+            repeat: None,
+            time_zone: None,
         };
         let updated = update_ics(&text, &input).unwrap();
         assert!(updated.contains("VALARM"), "the alarm is kept");
@@ -517,6 +782,149 @@ mod tests {
         assert!(reply.contains("PARTSTAT=ACCEPTED"));
         assert!(reply.contains("mailto:mael@test"));
         assert!(!reply.contains("NEEDS-ACTION"), "only my own status");
+    }
+
+    /// A weekly 10:00 in Paris from Monday 5 Oct 2026, 6 times.
+    fn series_text() -> String {
+        let input = EventInput {
+            calendar: 1,
+            title: "Check-in".into(),
+            location: String::new(),
+            description: String::new(),
+            start: MONDAY + 8 * 3600,
+            end: MONDAY + 8 * 3600 + 1800,
+            all_day: false,
+            attendees: vec![],
+            repeat: None,
+            time_zone: None,
+        };
+        let rule = Repeat {
+            freq: repeat::Freq::Weekly,
+            interval: 1,
+            days: vec![],
+            on: None,
+            until: None,
+            count: Some(6),
+        };
+        new_series_ics("s1", &input, &rule, chrono_tz::Europe::Paris)
+    }
+
+    fn occurrences(text: &str) -> Vec<(String, i64, i64)> {
+        let mut events = events_between(text, None, None, MONDAY - DAY, MONDAY + 60 * DAY, false).unwrap();
+        events.sort_by_key(|e| e.start);
+        events.into_iter().map(|e| (e.title, e.start, e.original_start.unwrap())).collect()
+    }
+
+    #[test]
+    fn writes_a_series_in_its_time_zone() {
+        let text = series_text();
+        assert!(text.contains("DTSTART;TZID=Europe/Paris:20261005T100000"), "{text}");
+        assert!(text.contains("RRULE:FREQ=WEEKLY;COUNT=6"));
+        let all = occurrences(&text);
+        assert_eq!(all.len(), 6);
+        // 10:00 in Paris all along: 08:00 UTC in summer, 09:00 UTC after 25 Oct.
+        assert_eq!(all[2].1, MONDAY + 14 * DAY + 8 * 3600);
+        assert_eq!(all[3].1, MONDAY + 21 * DAY + 9 * 3600);
+        let e = &events_between(&text, None, None, MONDAY, MONDAY + DAY, false).unwrap()[0];
+        let rule = e.rule.as_ref().unwrap();
+        assert_eq!(rule.time_zone.as_deref(), Some("Europe/Paris"));
+        assert_eq!(rule.repeat.as_ref().unwrap().count, Some(6));
+        assert_eq!((e.series.as_deref(), e.original_start), (Some("s1"), Some(e.start)));
+    }
+
+    #[test]
+    fn changes_one_occurrence_or_the_following_ones() {
+        let text = series_text();
+        let second = occurrences(&text)[1].2;
+        let input = EventInput {
+            calendar: 1,
+            title: "Check-in (late)".into(),
+            location: String::new(),
+            description: String::new(),
+            start: second + 3600,
+            end: second + 5400,
+            all_day: false,
+            attendees: vec![],
+            repeat: None,
+            time_zone: None,
+        };
+        // Only this one: moved an hour later, the others stay.
+        let text = override_occurrence(&text, second, &input).unwrap();
+        let all = occurrences(&text);
+        assert_eq!(all.len(), 6);
+        assert_eq!((all[1].0.as_str(), all[1].1, all[1].2), ("Check-in (late)", second + 3600, second));
+        // Changed again: the same modified occurrence, not a second one.
+        let text = override_occurrence(&text, second, &EventInput { title: "Late".into(), ..input.clone() })
+            .unwrap();
+        assert_eq!(text.matches("RECURRENCE-ID").count(), 1);
+
+        // Deleting the fifth one.
+        let fifth = occurrences(&text)[4].2;
+        let text = exclude(&text, fifth).unwrap();
+        assert_eq!(occurrences(&text).len(), 5);
+
+        // This and the following ones, from the third: the first two stay.
+        let third = occurrences(&text)[2].2;
+        let first_part = cut(&text, third).unwrap().unwrap();
+        let left = occurrences(&first_part);
+        assert_eq!(left.len(), 2);
+        assert_eq!(left[1].0, "Late", "the modified one before the cut stays");
+        assert_eq!(cut(&text, occurrences(&text)[0].2).unwrap(), None, "cut at the first: nothing left");
+    }
+
+    #[test]
+    fn changes_the_whole_series() {
+        let text = series_text();
+        let all = occurrences(&text);
+        let third = all[2].2;
+        let input = |start: i64, title: &str| EventInput {
+            calendar: 1,
+            title: title.into(),
+            location: "Room 2".into(),
+            description: String::new(),
+            start,
+            end: start + 1800,
+            all_day: false,
+            attendees: vec![],
+            repeat: None,
+            time_zone: None,
+        };
+        let with_override = override_occurrence(&text, all[1].2, &input(all[1].2 + 3600, "Moved")).unwrap();
+        // Same time, new title: the moved one keeps its time, takes the title.
+        let renamed =
+            update_master(&with_override, &input(third, "Weekly"), third, None, chrono_tz::Europe::Paris)
+                .unwrap();
+        let after = occurrences(&renamed);
+        assert!(after.iter().all(|(t, _, _)| t == "Weekly"));
+        assert_eq!(after[1].1, all[1].2 + 3600);
+        // An hour later: every occurrence moves, at 11:00 Paris time.
+        let later = update_master(
+            &with_override,
+            &input(third + 3600, "Weekly"),
+            third,
+            None,
+            chrono_tz::Europe::Paris,
+        )
+        .unwrap();
+        let after = occurrences(&later);
+        assert_eq!(after.len(), 6);
+        assert_eq!(after[0].1, MONDAY + 9 * 3600);
+        assert_eq!(after[3].1, MONDAY + 21 * DAY + 10 * 3600);
+        assert!(!later.contains("RECURRENCE-ID"), "modified occurrences no longer match");
+        // A new rule: every 2 weeks, 2 times.
+        let rule = Repeat {
+            freq: repeat::Freq::Weekly,
+            interval: 2,
+            days: vec![],
+            on: None,
+            until: None,
+            count: Some(2),
+        };
+        let fewer =
+            update_master(&text, &input(all[0].2, "Weekly"), all[0].2, Some(&rule), chrono_tz::Europe::Paris)
+                .unwrap();
+        let after = occurrences(&fewer);
+        assert_eq!(after.iter().map(|o| o.1).collect::<Vec<_>>(), vec![all[0].1, all[2].1]);
     }
 
     #[test]

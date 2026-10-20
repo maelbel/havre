@@ -43,7 +43,8 @@ calendar providers, and loads nothing from third-party servers.
 - **Agenda**
   - Microsoft 365, Google Calendar and [CalDAV](https://www.rfc-editor.org/rfc/rfc4791) calendars side by side, plus
     Havre's own
-  - Day, week and month views; meeting invitations answered straight from Mail
+  - Day, week and month views; repeating events, kept in your time zone; meeting invitations answered straight
+    from Mail
 - **People and Today**
   - Everyone you write to or meet, with your shared mail, meetings, notes, tasks and files — no address book to keep
   - A daily overview: meetings, invitations waiting for an answer, unread mail, tasks due
@@ -110,8 +111,8 @@ Building from source, configuration, HTTPS and backups are covered in the [insta
 
 ## Roadmap
 
-Mail, Agenda, People, Today, Tasks, Notes, Files, AI and Havre Desktop are built. Next up: repeating events, drafts
-synced to the mail server, and off-site backups. See the full [roadmap](docs/ROADMAP.md).
+Mail, Agenda, People, Today, Tasks, Notes, Files, AI and Havre Desktop are built. Next up: drafts synced to the mail
+server, and off-site backups. See the full [roadmap](docs/ROADMAP.md).
 
 ## Contributing
 

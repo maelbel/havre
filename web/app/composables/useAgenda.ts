@@ -34,6 +34,10 @@ export interface AgendaEvent {
   end: number
   all_day: boolean
   recurring: boolean
+  /** How its series repeats; `null` when it doesn't, or repeats in a way set in another app. */
+  repeat: Repeat | null
+  /** The first occurrence of its series. */
+  first_occurrence: boolean
   read_only: boolean
   organizer: string | null
   attendees: Attendee[]
@@ -97,6 +101,118 @@ export interface EventInput {
   end: number
   all_day: boolean
   attendees: string[]
+  /** Repeats like this (`null`: doesn't repeat). */
+  repeat: Repeat | null
+  /** The browser's time zone: a repeating event keeps its clock time in it. */
+  time_zone: string
+}
+
+// ---- Repeating events -----------------------------------------------------------
+// Mirrors `crates/core/src/agenda/repeat.rs`.
+
+export type Freq = 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type WeekDay = 'mo' | 'tu' | 'we' | 'th' | 'fr' | 'sa' | 'su'
+
+export interface Repeat {
+  freq: Freq
+  /** Every `interval` days / weeks / months / years. */
+  interval: number
+  /** Weekly: on these days (empty: the first event's day). */
+  days: WeekDay[]
+  /** Monthly: "the third Monday" (`nth` 1–4) or "the last Friday" (`nth` −1); `null`: the same day number. */
+  on: { nth: number; day: WeekDay } | null
+  /** The last day it can happen (midnight UTC of that date, like all-day events). */
+  until: number | null
+  /** Or how many times in all (1–730). */
+  count: number | null
+}
+
+/** The rule as the server keeps it: the days only when weekly, "the third Monday" only when monthly. */
+export function repeatToSend(r: Repeat | null): Repeat | null {
+  if (!r) return null
+  return {
+    freq: r.freq,
+    interval: r.interval,
+    days: r.freq === 'weekly' ? WEEK_DAYS.filter((d) => r.days.includes(d)) : [],
+    on: r.freq === 'monthly' ? r.on : null,
+    until: r.until,
+    count: r.count,
+  }
+}
+
+/** Which occurrences of a repeating event a change is for. */
+export type Scope = 'this' | 'following' | 'all'
+
+export const WEEK_DAYS: WeekDay[] = ['mo', 'tu', 'we', 'th', 'fr', 'sa', 'su']
+export const WEEK_DAY_NAMES: Record<WeekDay, string> = {
+  mo: 'Monday',
+  tu: 'Tuesday',
+  we: 'Wednesday',
+  th: 'Thursday',
+  fr: 'Friday',
+  sa: 'Saturday',
+  su: 'Sunday',
+}
+
+/** The browser's time zone (`Europe/Paris`). */
+export function browserTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+}
+
+export function weekDayOf(d: Date): WeekDay {
+  return WEEK_DAYS[(d.getDay() + 6) % 7]!
+}
+
+/** Which one of the month `d` is: 19 Oct 2026 is the third Monday; `last` when no other follows. */
+export function nthOfMonth(d: Date) {
+  return { nth: Math.floor((d.getDate() - 1) / 7) + 1, last: addDays(d, 7).getMonth() !== d.getMonth() }
+}
+
+const ORDINALS = ['', 'first', 'second', 'third', 'fourth']
+
+/** 1st, 2nd, 3rd, 19th… */
+export function dayNumber(n: number) {
+  const s = n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'
+  return `${n}${s}`
+}
+
+/** "the third Monday", "the last Friday". */
+export function nthLabel(on: { nth: number; day: WeekDay }) {
+  return `the ${on.nth === -1 ? 'last' : ORDINALS[on.nth]} ${WEEK_DAY_NAMES[on.day]}`
+}
+
+function list(names: string[]) {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+}
+
+/**
+ * The rule in words: "Every 2 weeks on Monday and Thursday, until 18 Dec".
+ * `start`: the first event (local), for the day it falls on.
+ */
+export function repeatSummary(r: Repeat, start: Date) {
+  const units: Record<Freq, [string, string]> = {
+    daily: ['day', 'days'],
+    weekly: ['week', 'weeks'],
+    monthly: ['month', 'months'],
+    yearly: ['year', 'years'],
+  }
+  const [one, many] = units[r.freq]
+  let text = r.interval === 1 ? `Every ${one}` : `Every ${r.interval} ${many}`
+  if (r.freq === 'weekly') {
+    const days = r.days.length ? WEEK_DAYS.filter((d) => r.days.includes(d)) : [weekDayOf(start)]
+    const weekdays = days.length === 5 && !days.includes('sa') && !days.includes('su')
+    text = weekdays && r.interval === 1 ? 'Every weekday' : `${text} on ${list(days.map((d) => WEEK_DAY_NAMES[d]))}`
+  }
+  if (r.freq === 'monthly') text += ` on ${r.on ? nthLabel(r.on) : `the ${dayNumber(start.getDate())}`}`
+  if (r.freq === 'yearly') text += ` on ${start.toLocaleDateString([], { day: 'numeric', month: 'long' })}`
+  if (r.until !== null) {
+    const last = utcDateToLocal(r.until)
+    const sameYear = last.getFullYear() === start.getFullYear()
+    text += `, until ${last.toLocaleDateString([], { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) })}`
+  } else if (r.count !== null) {
+    text += r.count === 1 ? ', once' : `, ${r.count} times`
+  }
+  return text
 }
 
 export interface CalDavAccount {
@@ -123,12 +239,13 @@ export function createEvent(input: EventInput) {
   return $fetch<AgendaEvent>('/api/agenda/events', { method: 'POST', body: input })
 }
 
-export function updateEvent(id: number, input: EventInput) {
-  return $fetch<AgendaEvent>(`/api/agenda/events/${id}`, { method: 'PATCH', body: input })
+/** `scope`: for an occurrence of a repeating event, which ones change. */
+export function updateEvent(id: number, input: EventInput, scope: Scope = 'this') {
+  return $fetch<AgendaEvent>(`/api/agenda/events/${id}`, { method: 'PATCH', body: input, query: { scope } })
 }
 
-export function deleteEvent(id: number) {
-  return $fetch(`/api/agenda/events/${id}`, { method: 'DELETE' })
+export function deleteEvent(id: number, scope: Scope = 'this') {
+  return $fetch(`/api/agenda/events/${id}`, { method: 'DELETE', query: { scope } })
 }
 
 export function syncAgenda() {

@@ -248,7 +248,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
           :style="{ gridColumn: `${b.from + 1} / ${b.to + 2}`, gridRow: b.lane + 1, '--c': color(b.event) }"
           @click="emit('select', b.event)"
         >
-          {{ b.event.title }}
+          {{ b.event.title }}<template v-if="b.event.recurring"><HIcon name="repeat" :size="11" class="rep" /><span class="sr-only"> · repeats</span></template>
         </button>
       </div>
     </div>
@@ -307,7 +307,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
             }"
             @click="emit('select', b.event)"
           >
-            <span class="title">{{ b.event.title }}</span>
+            <span class="title">{{ b.event.title }}<template v-if="b.event.recurring"><HIcon name="repeat" :size="11" class="rep" /><span class="sr-only"> · repeats</span></template></span>
             <span class="time">
               {{ timeLabel(new Date(b.event.start * 1000)) }}<template v-if="b.event.location"> · {{ b.event.location }}</template>
             </span>
@@ -659,5 +659,11 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
     align-items: center;
     gap: 2px;
   }
+}
+.rep {
+  display: inline-block;
+  margin-left: 4px;
+  vertical-align: -1px;
+  opacity: 0.75;
 }
 </style>

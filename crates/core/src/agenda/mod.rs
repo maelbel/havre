@@ -19,10 +19,12 @@ mod google;
 mod graph;
 pub mod ics;
 mod manager;
+pub mod repeat;
 pub(crate) mod store;
 
 pub use manager::Agenda;
 pub(crate) use manager::random_id;
+pub use repeat::Repeat;
 use serde::{Deserialize, Serialize};
 pub use store::{AgendaStore, CalDavAccount};
 
@@ -72,8 +74,14 @@ pub struct Event {
     pub all_day: bool,
     /// An occurrence of a repeating event.
     pub recurring: bool,
+    /// How it repeats, when Havre can describe the rule (`None` for a rule
+    /// made elsewhere that Havre shows but doesn't rewrite).
+    pub repeat: Option<Repeat>,
+    /// The first occurrence of its series (there are no "following" ones to
+    /// split off: they are all of them).
+    pub first_occurrence: bool,
     /// Can't be changed from Havre (someone else's meeting, a read-only
-    /// calendar, a repeating CalDAV event).
+    /// calendar).
     pub read_only: bool,
     pub organizer: Option<String>,
     pub attendees: Vec<Attendee>,
@@ -103,6 +111,40 @@ pub struct EventInput {
     /// Email addresses to invite (Microsoft and Google send the invitations).
     #[serde(default)]
     pub attendees: Vec<String>,
+    /// Repeats like this (`None`: doesn't repeat).
+    #[serde(default)]
+    pub repeat: Option<Repeat>,
+    /// The browser's time zone (`Europe/Paris`): a repeating event keeps its
+    /// clock time in it.
+    #[serde(default)]
+    pub time_zone: Option<String>,
+}
+
+/// Which occurrences of a repeating event a change or a deletion is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Scope {
+    /// Only this event.
+    #[default]
+    This,
+    /// This one and the following ones.
+    Following,
+    /// All events of the series.
+    All,
+}
+
+/// A series' rule, as a provider gives it (read once per series).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SeriesRule {
+    /// The provider's id for the series.
+    pub series: String,
+    /// The rule as the provider wrote it (`RRULE` text, or Microsoft's JSON).
+    pub rrule: String,
+    pub repeat: Option<Repeat>,
+    pub time_zone: Option<String>,
+    pub first_start: i64,
+    pub first_end: i64,
+    pub all_day: bool,
 }
 
 /// An event as a provider describes it, before it gets a local id.
@@ -126,6 +168,13 @@ pub struct RemoteEvent {
     pub join_url: Option<String>,
     pub uid: Option<String>,
     pub my_response: Option<String>,
+    /// Repeating: the series it belongs to…
+    pub series: Option<String>,
+    /// …and which of its occurrences it is.
+    pub original_start: Option<i64>,
+    /// The series' rule, when the provider gives it with the occurrences
+    /// (iCalendar does; Microsoft and Google are asked separately).
+    pub rule: Option<SeriesRule>,
 }
 
 /// A calendar as a provider lists it.
@@ -160,6 +209,10 @@ pub(crate) fn validate(input: &EventInput) -> crate::Result<()> {
     }
     if input.all_day && (input.start % 86_400 != 0 || input.end % 86_400 != 0) {
         return Err(crate::Error::Config("All-day events start and end at midnight (UTC).".into()));
+    }
+    if let Some(repeat) = &input.repeat {
+        let tz = repeat::zone(input.time_zone.as_deref())?;
+        repeat.validate(input.start, input.all_day, tz)?;
     }
     for email in &input.attendees {
         if !email.contains('@') || email.contains(char::is_whitespace) {

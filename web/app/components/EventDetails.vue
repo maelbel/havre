@@ -31,7 +31,6 @@ const why = computed(() => {
   if (!props.event.read_only) return null
   if (props.calendar?.read_only) return 'This calendar is read-only.'
   if (props.event.organizer && props.event.attendees.length) return 'Organized by someone else: changes go through them.'
-  if (props.event.recurring) return 'Repeating CalDAV events are changed in your calendar app for now.'
   return 'Read-only.'
 })
 
@@ -59,6 +58,13 @@ const when = computed(() => {
   const day = start.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
   if (props.event.all_day) return `${day} · all day`
   return `${day} · ${timeLabel(start)} – ${timeLabel(end)}`
+})
+/** "Every week on Monday, until 18 Dec", or where a rule Havre can't change comes from. */
+const repeats = computed(() => {
+  if (!props.event.recurring) return null
+  if (props.event.repeat) return repeatSummary(props.event.repeat, eventSpan(props.event).start)
+  const app = props.calendar ? SOURCE_LABELS[props.calendar.source] : 'another app'
+  return `Repeats (set in ${props.calendar?.source === 'microsoft' ? 'Outlook' : app})`
 })
 const place = computed(() => {
   const loc = props.event.location.trim()
@@ -137,7 +143,8 @@ function fileKindLabel(name: string, mime: string) {
       </div>
       <h2 class="serif">{{ event.title }}</h2>
       <div class="facts">
-        <span><HIcon name="clock" :size="15" /> {{ when }}<template v-if="event.recurring"> · repeats</template></span>
+        <span><HIcon name="clock" :size="15" /> {{ when }}</span>
+        <span v-if="repeats"><HIcon name="repeat" :size="15" /> {{ repeats }}</span>
         <span v-if="place"><HIcon name="pin" :size="15" /> {{ place }}</span>
       </div>
       <div v-if="event.join_url || !event.read_only" class="acts">
