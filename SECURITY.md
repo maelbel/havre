@@ -5,13 +5,13 @@ security reports are taken seriously and handled before anything else.
 
 ## Supported versions
 
-Havre is in early development (0.x). Security fixes are made on the latest release and on `develop`; older versions
+Havre is in early development (0.x). Security fixes are made on the latest release and on `main`; older versions
 are not patched. Please update to the latest release before reporting.
 
 | Version | Supported |
 |---------|-----------|
 | Latest release | ✅ |
-| `develop` | ✅ |
+| `main` | ✅ |
 | Older releases | ❌ |
 
 ## Reporting a vulnerability

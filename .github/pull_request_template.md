@@ -1,4 +1,4 @@
-<!-- Title: a Conventional Commit, e.g. `feat(agenda): create repeating events`. Target: `develop`. -->
+<!-- Title: a Conventional Commit, e.g. `feat(agenda): create repeating events`. Target: `main`. -->
 
 ## What and why
 
