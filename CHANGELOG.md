@@ -20,6 +20,8 @@ First version, not released yet (0.1.0).
 - **Apps you add**: Tasks (Microsoft To Do, Google Tasks, CalDAV, reminders), Notes (Markdown, linked to meetings
   and people), Files (every attachment, copies and versions), AI (local with Ollama or a provider you choose; the AI
   tab, summaries, drafts, a morning brief, an assistant that proposes and never acts alone).
+- **Drafts on the mail server**: drafts are also saved in each account's Drafts folder (other mail apps see them),
+  and drafts started elsewhere can be finished in Havre.
 - **Repeating events** in every calendar (Microsoft, Google, CalDAV, Havre's): every day, week, month or year,
   ending on a date or after a number of times, kept in your time zone; change or delete only one, this and the
   following ones, or all.

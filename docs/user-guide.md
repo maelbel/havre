@@ -108,8 +108,19 @@ and the folders of the account you're in.
 (recipients, `Re:` / `Fwd:`, the quoted text, the forwarded attachments).
 `Ctrl`/`⌘` + `Enter` sends; `Esc` closes.
 
-- What you write is saved as you type: a closed window stays in **Drafts**
-  (top of the mail sidebar) until you send or discard it.
+- What you write is saved as you type, in Havre and, a few seconds after you
+  stop typing (or when you close the window), in the account's **Drafts**
+  folder on the mail server: Outlook, Gmail, Thunderbird and your phone see
+  it, and you can finish it there. Each save replaces the previous copy;
+  sending or discarding the draft removes it. The line under the text says
+  where it is saved.
+- A draft started in another app is in the Drafts folder: open it and click
+  **Edit draft** to finish it in Havre (recipients, subject, text and
+  attachments come with it; formatting becomes plain text).
+- **Unsent**, in the mail sidebar, lists the drafts that aren't on the server:
+  not yet (just written), or not possible (the account has no Drafts folder,
+  or the server didn't answer — Havre tries again every few minutes). Your
+  draft is never lost: Havre's copy is the reference.
 - Recipients are suggested from the people who wrote to you.
 - Attach files with the paperclip or by dropping them on the window (25 MB
   per message).

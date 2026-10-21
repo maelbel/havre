@@ -25,6 +25,12 @@ export interface Draft {
   body: string
   attachments: DraftAttachment[]
   updated_at: number
+  /** When its copy was last saved in the server's Drafts folder (`null`: never). */
+  server_saved_at: number | null
+  /** Changed since: the server copy is behind (saved after a pause, or on close). */
+  server_pending: boolean
+  /** Why the last save to the server failed. */
+  server_error: string | null
 }
 
 export type DraftChanges = Partial<Pick<Draft, 'account' | 'to' | 'cc' | 'bcc' | 'subject' | 'body'>>
@@ -39,7 +45,7 @@ export function useComposer() {
   return useState<{ id: number; minimized: boolean; ai?: boolean } | null>('composer', () => null)
 }
 
-/** Unsent drafts, for the "Drafts" list in the sidebar. */
+/** Every draft (the sidebar's "Unsent" lists those not on the server). */
 export function useDrafts() {
   return useFetch<Draft[]>('/api/drafts', { key: 'drafts', lazy: true, server: false, default: () => [] })
 }
@@ -66,6 +72,24 @@ export async function compose(start: {
 
 export function openDraft(id: number) {
   useComposer().value = { id, minimized: false }
+}
+
+/** A draft from the server's Drafts folder (started in another app), opened to finish it here. */
+export async function editServerDraft(at: { account: number; folder: string; uid: number }) {
+  const draft = await $fetch<Draft>('/api/drafts/from-message', { method: 'POST', body: at })
+  useComposer().value = { id: draft.id, minimized: false }
+  refreshNuxtData('drafts')
+  return draft
+}
+
+/** The window closed: the draft goes to the server now, not after the pause. */
+export function closeDraft(id: number) {
+  return $fetch<Draft>(`/api/drafts/${id}/close`, { method: 'POST' })
+}
+
+/** Not in the server's Drafts folder (yet, or it can't be). */
+export function onlyInHavre(d: Draft) {
+  return !d.server_saved_at || !!d.server_error
 }
 
 export function fetchDraft(id: number) {

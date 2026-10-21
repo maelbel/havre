@@ -746,6 +746,8 @@ const labelsOpen = ref(false)
 // ---- Writing ----------------------------------------------------------------
 const composer = useComposer()
 const drafts = useDrafts()
+// Drafts on the server are in each account's Drafts folder; the others here.
+const unsent = computed(() => drafts.data.value.filter(onlyInHavre))
 
 /** A new message, from the account being read. */
 async function write() {
@@ -759,6 +761,16 @@ async function write() {
 }
 
 /** Reply, reply all or forward the open message (`ai`: the AI writes it). */
+/** A message in the Drafts folder: finish it in the compose window. */
+async function editDraft() {
+  if (!accountId.value || !selectedUid.value) return
+  try {
+    await editServerDraft({ account: accountId.value, folder: folder.value, uid: selectedUid.value })
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+
 async function reply(kind: 'reply' | 'reply_all' | 'forward', ai = false) {
   if (!accountId.value || !selectedUid.value) return
   try {
@@ -986,10 +998,10 @@ const splitPanes: SplitPaneSpec[] = [
           <span v-if="l.count" class="mono n faint">{{ l.count }}</span>
         </button>
         <!-- Unsent messages, saved as you type. -->
-        <template v-if="drafts.data.value.length">
+        <template v-if="unsent.length">
           <div class="eyebrow sec">Unsent</div>
           <button
-            v-for="d in drafts.data.value"
+            v-for="d in unsent"
             :key="d.id"
             type="button"
             class="draft"
@@ -998,6 +1010,7 @@ const splitPanes: SplitPaneSpec[] = [
           >
             <span class="draft-subject">{{ d.subject || '(no subject)' }}</span>
             <span class="draft-to">{{ d.to ? `To ${d.to}` : 'No recipient yet' }}</span>
+            <span v-if="d.server_error" class="draft-why">{{ d.server_error }}</span>
           </button>
         </template>
         <NuxtLink to="/settings?add=1" class="add-account">
@@ -1334,6 +1347,7 @@ const splitPanes: SplitPaneSpec[] = [
       :snoozed="box === 'snoozed'"
       :position="selectedIndex >= 0 ? selectedIndex + 1 : 0"
       :total="visible.length"
+      :is-draft="currentFolder?.role === 'drafts'"
       @star="star()"
       @label="toggleLabel"
       @snooze="snooze"
@@ -1345,6 +1359,7 @@ const splitPanes: SplitPaneSpec[] = [
       @trash="act('trash')"
       @move="(to) => act('move', to)"
       @reply="reply"
+      @edit-draft="editDraft"
       @load-images="selectedUid && load(selectedUid, true)"
       @retry="selectedUid && load(selectedUid)"
     />
@@ -1541,6 +1556,15 @@ const splitPanes: SplitPaneSpec[] = [
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.draft-why {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--danger);
 }
 .draft-subject {
   font-size: 13.5px;

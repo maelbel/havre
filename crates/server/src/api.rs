@@ -27,7 +27,9 @@
 //! | GET    | /events                                          | live changes (Server-Sent Events) |
 //! | GET    | /contacts?q=                                     | recipient suggestions             |
 //! | GET    | /drafts · POST /drafts `{account, kind, folder?, uid?}` | drafts · start one (reply…) |
-//! | GET/PATCH/DELETE | /drafts/{id}  `{to?, cc?, subject?, body?…}` | one draft (autosave)     |
+//! | POST   | /drafts/from-message `{account, folder, uid}`  | finish a draft from the Drafts folder |
+//! | GET/PATCH/DELETE | /drafts/{id}  `{to?, cc?, subject?, body?…}` | one draft (autosave; delete: also on the server) |
+//! | POST   | /drafts/{id}/close                               | save it on the server now (window closed) |
 //! | POST   | /drafts/{id}/attachments?filename=  (raw body)   | attach a file                     |
 //! | DELETE | /drafts/{id}/attachments/{attachment}            | remove it                         |
 //! | POST   | /drafts/{id}/send                                | send, file in Sent, delete draft  |
@@ -92,7 +94,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/events", get(events))
         .route("/contacts", get(contacts))
         .route("/drafts", get(list_drafts).post(create_draft))
+        .route("/drafts/from-message", post(draft_from_message))
         .route("/drafts/{id}", get(get_draft).patch(update_draft).delete(delete_draft))
+        .route("/drafts/{id}/close", post(close_draft))
         .route(
             "/drafts/{id}/attachments",
             post(add_attachment).layer(DefaultBodyLimit::max(compose::MAX_ATTACHMENTS + 1024 * 1024)),
@@ -293,8 +297,26 @@ async fn update_draft(
 }
 
 async fn delete_draft(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
-    state.mail.drafts()?.delete(id).await?;
+    state.mail.discard_draft(id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct FromMessage {
+    account: i64,
+    folder: String,
+    uid: u32,
+}
+
+async fn draft_from_message(
+    State(state): State<AppState>,
+    Json(m): Json<FromMessage>,
+) -> Result<Json<Draft>, ApiError> {
+    Ok(Json(state.mail.draft_from_message(m.account, &m.folder, m.uid).await?))
+}
+
+async fn close_draft(State(state): State<AppState>, Path(id): Path<i64>) -> Result<Json<Draft>, ApiError> {
+    Ok(Json(state.mail.save_draft_to_server(id).await?))
 }
 
 #[derive(Deserialize)]

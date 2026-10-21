@@ -39,7 +39,8 @@ calendar providers, and loads nothing from third-party servers.
     with OAuth2 sign-in where the provider requires it
   - New mail pushed in a second (IMAP IDLE), instant local search, search by meaning with AI
   - Stars, labels, snooze, actions on several messages, undo
-  - Writing with drafts saved as you type, attachments and recipient suggestions
+  - Writing with drafts saved as you type, also in the server's Drafts folder, attachments and recipient
+    suggestions
 - **Agenda**
   - Microsoft 365, Google Calendar and [CalDAV](https://www.rfc-editor.org/rfc/rfc4791) calendars side by side, plus
     Havre's own
@@ -111,8 +112,8 @@ Building from source, configuration, HTTPS and backups are covered in the [insta
 
 ## Roadmap
 
-Mail, Agenda, People, Today, Tasks, Notes, Files, AI and Havre Desktop are built. Next up: drafts synced to the mail
-server, and off-site backups. See the full [roadmap](docs/ROADMAP.md).
+Mail, Agenda, People, Today, Tasks, Notes, Files, AI and Havre Desktop are built. Next up: off-site backups. See the
+full [roadmap](docs/ROADMAP.md) for the rest.
 
 ## Contributing
 
