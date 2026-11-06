@@ -216,7 +216,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
 </script>
 
 <template>
-  <div class="week" :style="{ '--cols': days.length, '--hour': `${HOUR}px` }">
+  <div class="week" :class="{ one: days.length === 1 }" :style="{ '--cols': days.length, '--hour': `${HOUR}px` }">
     <!-- Day names -->
     <div class="head">
       <div class="gutter" />
@@ -653,6 +653,10 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
 @media (max-width: 720px) {
   .week {
     --gutter: 40px;
+  }
+  /* One day on a phone: its name is in the week strip above. */
+  .week.one .head {
+    display: none;
   }
   .day-name {
     flex-direction: column;

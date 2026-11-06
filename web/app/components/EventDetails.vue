@@ -480,4 +480,12 @@ h2 {
     box-shadow: -20px 0 60px -20px rgb(0 0 0 / 0.5);
   }
 }
+/* Phones: the whole screen, clear of the notch and the home bar. */
+@media (max-width: 720px) {
+  .details {
+    width: 100vw;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
 </style>

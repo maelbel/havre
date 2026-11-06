@@ -128,6 +128,28 @@ const firstName = computed(() => (detail.value?.name || detail.value?.email || '
 useHead({ title: () => (detail.value ? `${personName(detail.value)} · People · Havre` : 'People · Havre') })
 
 const canWrite = computed(() => accounts.data.value.find((a) => a.can_send))
+
+// ---- Phones: chips pick which list shows ----------------------------------------
+const phone = useIsPhone()
+type Only = 'all' | 'mail' | 'meet' | 'files' | 'tasks' | 'notes'
+const only = ref<Only>('all')
+// Back to "Everything" for each new person.
+watch(email, () => (only.value = 'all'))
+const chips = computed(() => {
+  const d = detail.value
+  if (!d) return []
+  const list: { id: Only; label: string }[] = [
+    { id: 'all', label: 'Everything' },
+    { id: 'mail', label: `Mail · ${d.recent_messages.length}` },
+    { id: 'meet', label: `Meetings · ${d.upcoming.length + d.past.length}` },
+  ]
+  if (d.files.length) list.push({ id: 'files', label: `Files · ${d.files.length}` })
+  if (tasksOn.value) list.push({ id: 'tasks', label: `Tasks · ${personTasks.value.length}` })
+  if (notesOn.value) list.push({ id: 'notes', label: `Notes · ${personNotes.value.length}` })
+  return list
+})
+/** On a phone, is this list shown? (Everything shows all of them.) */
+const shows = (kind: Only) => !phone.value || only.value === 'all' || only.value === kind
 async function write() {
   if (!detail.value || !canWrite.value) return
   const to = detail.value.name ? `${detail.value.name} <${detail.value.email}>` : detail.value.email
@@ -159,6 +181,7 @@ const splitPanes: SplitPaneSpec[] = [
     <SplitView id="people" :panes="splitPanes">
     <template #list>
     <aside class="list" aria-label="People">
+      <PhoneHeader title="People" />
       <div class="list-head">
         <h1 class="serif">People</h1>
         <p class="faint small">From your mail and your meetings.</p>
@@ -191,15 +214,20 @@ const splitPanes: SplitPaneSpec[] = [
     <template #person>
     <main class="detail">
       <template v-if="detail">
-        <UButton
-          icon="i-havre-back"
-          color="neutral"
-          variant="ghost"
-          square
-          class="back"
-          to="/people"
-          aria-label="Back to People"
-        />
+        <PhoneHeader back="/people" back-label="Back to People">
+          <template #actions>
+            <UButton v-if="canWrite" color="neutral" variant="ghost" size="lg" square icon="i-havre-pen" :aria-label="`Write to ${firstName}`" @click="write" />
+            <UButton
+              color="neutral"
+              variant="ghost"
+              size="lg"
+              square
+              icon="i-havre-calendar"
+              :aria-label="`Plan a meeting with ${firstName}`"
+              :to="{ path: '/agenda', query: { new: 1, guest: detail.email } }"
+            />
+          </template>
+        </PhoneHeader>
         <header class="card-head">
           <span class="avatar big" :style="{ background: personColor(detail.email) }">{{ initials(personName(detail)) }}</span>
           <div class="id">
@@ -207,11 +235,29 @@ const splitPanes: SplitPaneSpec[] = [
             <p class="faint">{{ detail.email }}</p>
             <p class="faint small">{{ counts(detail) || 'Nothing in common yet.' }}</p>
           </div>
-          <UButton v-if="canWrite" icon="i-havre-pen" type="button" @click="write">Write</UButton>
+          <UButton v-if="canWrite" icon="i-havre-pen" type="button" class="desk" @click="write">Write</UButton>
         </header>
+
+        <!-- Phones: one list at a time, picked with these chips. -->
+        <div v-if="phone" class="chips" role="tablist" aria-label="With them">
+          <UButton
+            v-for="c in chips"
+            :key="c.id"
+            role="tab"
+            :aria-selected="only === c.id"
+            :color="only === c.id ? 'primary' : 'neutral'"
+            :variant="only === c.id ? 'solid' : 'outline'"
+            size="sm"
+            class="rounded-full shrink-0"
+            @click="only = c.id"
+          >
+            {{ c.label }}
+          </UButton>
+        </div>
 
         <div class="cols">
           <section aria-labelledby="p-mail">
+            <div v-show="shows('mail')">
             <h3 id="p-mail" class="ph">Recent mail</h3>
             <p v-if="!detail.recent_messages.length" class="empty">No mail from {{ detail.name || 'them' }}.</p>
             <ul>
@@ -223,7 +269,8 @@ const splitPanes: SplitPaneSpec[] = [
                 </NuxtLink>
               </li>
             </ul>
-            <template v-if="detail.files.length">
+            </div>
+            <div v-if="detail.files.length" v-show="shows('files')">
               <h3 class="ph later">Shared files</h3>
               <ul>
                 <li v-for="f in detail.files" :key="`${f.account}-${f.uid}-${f.index}`">
@@ -238,11 +285,11 @@ const splitPanes: SplitPaneSpec[] = [
               <NuxtLink v-if="filesOn" :to="{ path: '/files', query: { person: detail.email } }" class="to-files">
                 All files from {{ (detail.name || detail.email).split(' ')[0] }} in Files →
               </NuxtLink>
-            </template>
+            </div>
           </section>
 
           <section aria-labelledby="p-meet">
-            <template v-if="tasksOn">
+            <div v-if="tasksOn" v-show="shows('tasks')">
               <h3 id="p-tasks" class="ph">Tasks<template v-if="personTasks.length"> · {{ personTasks.length }}</template></h3>
               <TaskRow
                 v-for="t in personTasks"
@@ -265,8 +312,8 @@ const splitPanes: SplitPaneSpec[] = [
                   class="new-task"
                 />
               </form>
-            </template>
-            <template v-if="notesOn">
+            </div>
+            <div v-if="notesOn" v-show="shows('notes')">
               <h3 id="p-notes" class="ph" :class="{ later: tasksOn }">Notes<template v-if="personNotes.length"> · {{ personNotes.length }}</template></h3>
               <ul>
                 <li v-for="n in personNotes.slice(0, 5)" :key="n.id">
@@ -282,7 +329,8 @@ const splitPanes: SplitPaneSpec[] = [
               <button type="button" class="note-about" @click="noteAbout">
                 <HIcon name="plus" :size="14" />Note about {{ firstName }}
               </button>
-            </template>
+            </div>
+            <div v-show="shows('meet')">
             <h3 id="p-meet" class="ph" :class="{ later: tasksOn || notesOn }">Upcoming meetings</h3>
             <p v-if="!detail.upcoming.length" class="empty">None planned.</p>
             <ul>
@@ -304,6 +352,7 @@ const splitPanes: SplitPaneSpec[] = [
                 </li>
               </ul>
             </template>
+            </div>
           </section>
         </div>
       </template>
@@ -435,9 +484,6 @@ ul {
   padding: 32px 40px 48px;
   background: var(--panel);
 }
-.back {
-  display: none;
-}
 .card-head {
   display: flex;
   align-items: center;
@@ -568,12 +614,44 @@ h2 {
   .people.open .detail {
     display: block;
   }
-  .back {
-    display: inline-flex;
-    margin-bottom: 12px;
+  .detail {
+    padding: 0 0 40px;
   }
-  .card-head {
-    flex-wrap: wrap;
+  .detail > :not(.phone-head) {
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+  /* The phone header has Back and Write. */
+  .desk,
+  .list-head h1 {
+    display: none;
+  }
+  .chips {
+    display: flex;
+    gap: 6px;
+    margin: 0 0 16px;
+    padding: 0 16px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .detail > .chips {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .list-head {
+    padding-top: 0;
+  }
+  h2 {
+    font-size: 26px;
+    /* A long address as the name breaks anywhere rather than overflowing. */
+    overflow-wrap: anywhere;
+  }
+  /* With a chip picked, the hidden lists leave no gap. */
+  .cols {
+    gap: 0;
+  }
+  .cols > section + section {
+    margin-top: 28px;
   }
 }
 .kind {
