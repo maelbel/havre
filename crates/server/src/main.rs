@@ -164,7 +164,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state.clone())
         .layer(TraceLayer::new_for_http());
 
-    let addr: SocketAddr = std::env::var("HAVRE_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into()).parse()?;
+    let addr = bind_address(std::env::var("HAVRE_BIND").ok().as_deref())?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     // Claude Code (as the AI provider) calls back here for Havre's tools.
     if let Some(ai) = &state.ai {
@@ -205,5 +205,48 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+/// Where to listen, from `HAVRE_BIND` (`127.0.0.1:8080` when unset).
+///
+/// Spaces and a Windows line ending (`\r`, from a `.env` written on Windows)
+/// are ignored. A bad value stops Havre with a sentence saying what's wrong,
+/// rather than Rust's bare "invalid socket address syntax".
+///
+/// `Option<&str>` (not `String`) lets the tests call it without touching the
+/// real environment.
+fn bind_address(value: Option<&str>) -> anyhow::Result<SocketAddr> {
+    let value = value.map(str::trim).filter(|v| !v.is_empty()).unwrap_or("127.0.0.1:8080");
+    value.parse().map_err(|_| {
+        anyhow::anyhow!(
+            "HAVRE_BIND must be an IP address and a port, like 0.0.0.0:8080 (every network) or \
+             127.0.0.1:8080 (this computer only); it is {value:?}. A name such as localhost isn't accepted."
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bind_address;
+
+    #[test]
+    fn bind_address_reads_the_usual_values() {
+        assert_eq!(bind_address(None).unwrap().to_string(), "127.0.0.1:8080");
+        assert_eq!(bind_address(Some("")).unwrap().to_string(), "127.0.0.1:8080");
+        assert_eq!(bind_address(Some("0.0.0.0:8080")).unwrap().to_string(), "0.0.0.0:8080");
+        assert_eq!(bind_address(Some("[::]:9988")).unwrap().to_string(), "[::]:9988");
+    }
+
+    #[test]
+    fn bind_address_ignores_spaces_and_windows_line_endings() {
+        assert_eq!(bind_address(Some(" 0.0.0.0:8080\r")).unwrap().to_string(), "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn bind_address_explains_a_bad_value() {
+        let error = bind_address(Some("localhost:8080")).unwrap_err().to_string();
+        assert!(error.contains("HAVRE_BIND"), "{error}");
+        assert!(error.contains("\"localhost:8080\""), "{error}");
     }
 }
