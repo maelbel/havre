@@ -12,6 +12,9 @@ name: Desktop
 
 on:
   push:
+    # Branches only: on a tag push GitHub ignores `paths`, and release.yml
+    # already builds the installers for `v*` tags.
+    branches: ["**"]
     paths: ["desktop/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
   workflow_call:
