@@ -409,7 +409,7 @@ const reminderItems = computed(() => [
   padding: 4px 6px;
   margin-left: -6px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 4px;
   font-family: var(--font-serif);
   font-size: 24px;
   line-height: 1.2;
@@ -461,7 +461,7 @@ const reminderItems = computed(() => [
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--text);
@@ -512,14 +512,14 @@ const reminderItems = computed(() => [
   gap: 10px;
   padding: 4px;
   margin: -4px;
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
 }
 .avatar {
   flex: 0 0 30px;
   height: 30px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   font-size: 11px;
@@ -527,7 +527,7 @@ const reminderItems = computed(() => [
   color: #1b1b1b;
 }
 .day {
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--panel);
   overflow: hidden;

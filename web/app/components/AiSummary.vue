@@ -95,7 +95,7 @@ const lines = computed(() =>
   flex-direction: column;
   gap: 10px;
   padding: 14px 18px 16px;
-  border-radius: 14px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--bg);
 }

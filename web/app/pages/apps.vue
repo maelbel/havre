@@ -269,7 +269,7 @@ h1 {
 .status {
   flex: 0 1 320px;
   padding: 18px 20px;
-  border-radius: 16px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--bg);
   display: flex;
@@ -345,7 +345,7 @@ h2 {
 }
 .card {
   padding: 20px;
-  border-radius: 16px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--raise);
   display: flex;
@@ -374,7 +374,7 @@ h2 {
   flex: 0 0 44px;
   width: 44px;
   height: 44px;
-  border-radius: 12px;
+  border-radius: 4px;
   display: grid;
   place-items: center;
   background: color-mix(in oklab, var(--t) 18%, transparent);
@@ -384,7 +384,7 @@ h2 {
   width: 40px;
   height: 40px;
   flex-basis: 40px;
-  border-radius: 11px;
+  border-radius: 4px;
 }
 .tile.empty {
   background: transparent;
@@ -405,7 +405,7 @@ h2 {
   height: 32px;
   padding: 0 12px;
   border: 1px solid var(--line2);
-  border-radius: 8px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   color: var(--text);
@@ -430,7 +430,7 @@ h2 {
 }
 .chip {
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
 }
 .controls {

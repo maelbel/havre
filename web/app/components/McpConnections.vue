@@ -85,7 +85,7 @@ header p {
   gap: 12px;
   padding: 12px 10px;
   margin: 0 -10px;
-  border-radius: 10px;
+  border-radius: 4px;
   cursor: pointer;
 }
 </style>

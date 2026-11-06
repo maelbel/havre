@@ -25,7 +25,13 @@ export default defineAppConfig({
           class: 'ring-accented text-default hover:bg-(--hover) active:bg-(--hover)',
         },
         { color: 'neutral', variant: 'ghost', class: 'text-muted hover:text-default hover:bg-(--hover) active:bg-(--hover)' },
-        { color: 'primary', variant: 'solid', class: 'hover:bg-primary hover:brightness-108 active:bg-primary' },
+        // Primary: Limestone on Ink (Ink on Limestone in light), not brass —
+        // the design system keeps brass for links, focus and small marks.
+        {
+          color: 'primary',
+          variant: 'solid',
+          class: 'bg-(--primary) text-(--on-primary) hover:bg-(--primary) hover:brightness-108 active:bg-(--primary) disabled:bg-(--primary) aria-disabled:bg-(--primary)',
+        },
       ],
     },
     input: {
@@ -33,33 +39,41 @@ export default defineAppConfig({
       // xl: Tasks' quick add (46 px).
       variants: { size: { md: { base: 'px-2.5 py-2 text-sm gap-1.5' }, lg: { base: 'px-3 py-2.5 text-sm gap-2' }, xl: { base: 'px-3.5 py-3 text-[14.5px] gap-2.5 rounded-lg' } } },
     },
+    // Lists that open from a field: a 1 px rule, no shadow.
     select: {
+      slots: { content: 'shadow-none ring-(--line2)' },
       variants: { size: { md: { base: 'px-2.5 py-2 text-sm gap-1.5' } } },
     },
     selectMenu: {
+      slots: { content: 'shadow-none ring-(--line2)' },
       variants: { size: { md: { base: 'px-2.5 py-2 text-sm gap-1.5' } } },
     },
+    inputMenu: { slots: { content: 'shadow-none ring-(--line2)' } },
+    contextMenu: { slots: { content: 'shadow-none ring-(--line2)' } },
+    tooltip: { slots: { content: 'shadow-none ring-(--line2)' } },
+    toast: { slots: { root: 'shadow-none ring-(--line2)' } },
     textarea: {
       variants: { size: { md: { base: 'px-2.5 py-2 text-sm gap-1.5' } } },
     },
     popover: {
-      slots: { content: 'bg-(--raise) ring-(--line2) rounded-(--radius) shadow-[0_16px_48px_rgb(0_0_0/0.35)]' },
+      // A 1 px rule, no shadow (the design system has none).
+      slots: { content: 'bg-(--raise) ring-(--line2) rounded-(--radius) shadow-none' },
     },
     dropdownMenu: {
-      slots: { content: 'bg-(--raise) ring-(--line2) rounded-(--radius) shadow-[0_16px_48px_rgb(0_0_0/0.35)] min-w-56' },
+      slots: { content: 'bg-(--raise) ring-(--line2) rounded-(--radius) shadow-none min-w-56' },
     },
     modal: {
       slots: {
         overlay: 'bg-black/35',
-        content: 'bg-(--panel) ring-(--line2) rounded-(--radius-lg) shadow-[0_30px_80px_-20px_rgb(0_0_0/0.55)]',
+        content: 'bg-(--panel) ring-(--line2) rounded-(--radius-lg) shadow-none',
       },
     },
     slideover: {
-      slots: { overlay: 'bg-black/35', content: 'bg-(--panel) ring-(--line2)' },
+      slots: { overlay: 'bg-black/35', content: 'bg-(--panel) ring-(--line2) sm:shadow-none' },
     },
     // Segmented switches (Day / Week / Month, All / Unread…): Havre's pill.
     tabs: {
-      variants: { variant: { pill: { list: 'p-0.5 bg-(--bg) ring ring-default rounded-(--radius-sm)', trigger: 'rounded-md' } } },
+      variants: { variant: { pill: { list: 'p-0.5 bg-(--bg) ring ring-default rounded-(--radius-sm)', trigger: 'rounded-md', indicator: 'shadow-none' } } },
       compoundVariants: [
         {
           color: 'neutral',
@@ -73,13 +87,13 @@ export default defineAppConfig({
       slots: { cellTrigger: 'data-today:not-data-[selected]:text-primary' },
     },
     // The Settings menu: quiet rows, the open page on Havre's selection grey.
-    // Group titles in the Ctrl+K palette: Havre's small mono capitals.
+    // Group titles in the Ctrl+K palette: the small capital labels (Josefin Sans, brass).
     commandPalette: {
-      slots: { label: 'font-mono font-normal text-[11px] uppercase tracking-[0.06em] text-dimmed' },
+      slots: { label: 'font-(family-name:--font-display) font-normal text-[11px] uppercase tracking-[0.2em] text-primary' },
     },
     // Key hints as Havre writes them: "Ctrl K", quiet, in the mono font.
     kbd: {
-      base: 'normal-case font-mono font-normal rounded-[5px] px-1.5',
+      base: 'normal-case font-mono font-normal rounded-[3px] px-1.5',
       compoundVariants: [{ color: 'neutral', variant: 'outline', class: 'ring-(--line2) text-dimmed' }],
       defaultVariants: { color: 'neutral', variant: 'outline' },
     },

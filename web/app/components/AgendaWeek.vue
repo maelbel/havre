@@ -364,7 +364,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
   gap: 6px;
   min-width: 0;
   padding: 2px 4px;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 1px dashed var(--line2);
   font-size: 12px;
 }
@@ -416,7 +416,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
   align-items: center;
   gap: 6px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 1px solid var(--accent);
   background: var(--panel);
   color: var(--text);
@@ -464,7 +464,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
 }
 .day-name .num {
   padding: 2px 6px;
-  border-radius: 8px;
+  border-radius: 4px;
   font-family: var(--font-serif);
   font-size: 22px;
   line-height: 1;
@@ -509,7 +509,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
   margin: 0 3px;
   padding: 0 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 4px;
   background: color-mix(in oklab, var(--c) 26%, var(--panel));
   color: var(--text);
   font: inherit;
@@ -580,7 +580,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
   gap: 1px;
   padding: 4px 7px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 4px;
   background: color-mix(in oklab, var(--c) 24%, var(--panel));
   box-shadow:
     inset 3px 0 0 var(--c),
@@ -624,7 +624,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
   left: 2px;
   right: 4px;
   padding: 4px 7px;
-  border-radius: 7px;
+  border-radius: 4px;
   border: 1px dashed var(--accent);
   background: color-mix(in oklab, var(--accent) 18%, transparent);
   color: var(--text);

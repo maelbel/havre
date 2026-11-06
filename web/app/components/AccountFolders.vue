@@ -106,7 +106,7 @@ const bodyId = `account-${props.account.id}-folders`
 .dot {
   flex: 0 0 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius);
 }
 .name {
   flex: 1;
@@ -129,7 +129,7 @@ const bodyId = `account-${props.account.id}-folders`
 .warn {
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   font-size: 11px;

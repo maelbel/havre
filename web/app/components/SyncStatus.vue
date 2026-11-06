@@ -55,7 +55,7 @@ const view = computed(() => {
 .dot {
   flex: 0 0 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--ok);
 }
 .error .dot {
@@ -67,7 +67,7 @@ const view = computed(() => {
 .spin {
   flex: 0 0 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   border: 1.5px solid color-mix(in oklab, var(--accent) 25%, transparent);
   border-top-color: var(--accent);
   animation: spin 0.8s linear infinite;

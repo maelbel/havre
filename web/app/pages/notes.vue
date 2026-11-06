@@ -796,7 +796,7 @@ h1 {
   height: 34px;
   padding: 0 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -833,7 +833,7 @@ h1 {
   flex: none;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -852,7 +852,7 @@ h1 {
 }
 .meetings {
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--panel);
   display: flex;
@@ -941,7 +941,7 @@ h2 {
   width: 100%;
   padding: 10px 12px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -1050,7 +1050,7 @@ h2 {
 :deep(.note-text) {
   min-height: 420px;
   padding: 16px 18px;
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--panel);
   font-family: var(--font-mono);
   font-size: 13.5px;
@@ -1069,7 +1069,7 @@ h2 {
   gap: 8px;
   height: 32px;
   padding: 0 12px 0 10px;
-  border-radius: 8px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: transparent;
   color: var(--text);
@@ -1096,7 +1096,7 @@ h2 {
   display: inline-flex;
   align-items: center;
   height: 32px;
-  border-radius: 999px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
 }
 .pc {
@@ -1105,7 +1105,7 @@ h2 {
   gap: 7px;
   height: 100%;
   padding: 0 12px 0 5px;
-  border-radius: 999px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
   font-size: 13px;
@@ -1116,7 +1116,7 @@ h2 {
   margin-right: 3px;
   margin-left: -6px;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--muted);
   display: inline-flex;
@@ -1141,10 +1141,10 @@ h2 {
   margin: 0;
   padding: 4px;
   list-style: none;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--raise);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: none;
 }
 .suggest button {
   width: 100%;
@@ -1153,7 +1153,7 @@ h2 {
   align-items: flex-start;
   padding: 7px 10px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -1238,7 +1238,7 @@ h2 {
     height: 34px;
     padding: 0 12px;
     border: 1px solid var(--line2);
-    border-radius: 999px;
+    border-radius: 4px;
     white-space: nowrap;
     flex: none;
   }

@@ -128,7 +128,7 @@ defineExpose({ focus: () => input.value?.focus() })
 .bare input {
   height: 38px;
   padding: 0 10px;
-  border-radius: 9px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--bg);
 }
@@ -167,17 +167,17 @@ input {
   margin: 2px 0 0;
   padding: 4px;
   list-style: none;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--raise);
-  box-shadow: 0 16px 40px -16px rgb(0 0 0 / 0.5);
+  box-shadow: none;
 }
 .suggest li {
   display: flex;
   gap: 8px;
   align-items: baseline;
   padding: 7px 10px;
-  border-radius: 7px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 13.5px;
 }

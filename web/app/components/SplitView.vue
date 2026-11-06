@@ -221,7 +221,7 @@ function onKeydown(e: KeyboardEvent) {
   justify-content: center;
   padding: 0;
   border: 1px solid var(--line2);
-  border-radius: 8px;
+  border-radius: 4px;
   background: var(--raise);
   color: var(--muted);
   cursor: pointer;

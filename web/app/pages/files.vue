@@ -404,7 +404,7 @@ h1 {
   height: 34px;
   padding: 0 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   text-align: left;
@@ -444,7 +444,7 @@ h1 {
   flex: none;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -460,7 +460,7 @@ h1 {
 .looked {
   margin: 0 4px;
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--panel);
   display: flex;
@@ -542,7 +542,7 @@ h2 {
   width: 100%;
   padding: 10px 8px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -557,7 +557,7 @@ h2 {
 .tile {
   flex: 0 0 36px;
   height: 40px;
-  border-radius: 8px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -633,7 +633,7 @@ h2 {
 }
 .preview {
   height: 190px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: color-mix(in oklab, var(--t) 10%, var(--panel));
   display: flex;
@@ -689,7 +689,7 @@ dd {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: 9px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: transparent;
   color: var(--text);
@@ -774,7 +774,7 @@ dd {
     height: 34px;
     padding: 0 12px;
     border: 1px solid var(--line2);
-    border-radius: 999px;
+    border-radius: 4px;
     white-space: nowrap;
     flex: none;
   }

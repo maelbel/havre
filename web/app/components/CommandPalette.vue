@@ -743,7 +743,7 @@ function onPlanKey(e: KeyboardEvent) {
 .q {
   margin: 0;
   padding: 8px 12px;
-  border-radius: 12px 12px 4px 12px;
+  border-radius: 4px 4px 4px 4px;
   background: var(--sel);
   font-size: 14px;
   white-space: pre-wrap;
@@ -782,7 +782,7 @@ function onPlanKey(e: KeyboardEvent) {
   display: inline;
   padding: 0 6px;
   margin: 0 1px;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
   background: color-mix(in oklab, var(--accent) 10%, transparent);
   color: var(--text);
@@ -810,7 +810,7 @@ function onPlanKey(e: KeyboardEvent) {
   gap: 0 8px;
   align-items: center;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--bg);
   color: var(--muted);

@@ -120,9 +120,8 @@ onMounted(() => input.value?.inputRef?.focus())
   display: grid;
   place-items: center;
   padding: 32px 16px;
-  background:
-    radial-gradient(1200px 600px at 50% -10%, color-mix(in oklab, var(--accent) 7%, transparent), transparent),
-    var(--bg);
+  /* Flat: the design system has no gradients. */
+  background: var(--bg);
 }
 .card {
   width: min(400px, 100%);
@@ -133,12 +132,12 @@ onMounted(() => input.value?.inputRef?.focus())
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   background: var(--panel);
-  box-shadow: 0 30px 80px -40px rgb(0 0 0 / 0.5);
+  box-shadow: none;
 }
 .logo {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;

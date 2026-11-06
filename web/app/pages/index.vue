@@ -409,7 +409,7 @@ const briefTime = computed(() =>
 }
 .due-row {
   position: relative;
-  border-radius: 10px;
+  border-radius: 4px;
 }
 .due-row.late {
   background: color-mix(in oklab, var(--danger) 9%, transparent);
@@ -503,7 +503,10 @@ h1 {
   border-top: 1px solid var(--line);
 }
 .time {
-  flex: 0 0 52px;
+  /* At least 52 px; "08:30 AM" stays on one line in the wider mono font. */
+  flex: 0 0 auto;
+  min-width: 52px;
+  white-space: nowrap;
   font-size: 12.5px;
   color: var(--faint);
   padding-top: 1px;
@@ -528,7 +531,7 @@ h1 {
 .dot {
   flex: 0 0 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius);
 }
 .title,
 .strong {
@@ -543,14 +546,14 @@ h1 {
 }
 .tag {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: 4px;
   font-size: 11.5px;
   background: color-mix(in oklab, var(--accent) 18%, transparent);
   color: var(--accent);
 }
 .prep {
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--bg);
   font-size: 13.5px;
   line-height: 1.55;
@@ -580,14 +583,14 @@ h1 {
   gap: 12px 16px;
   padding: 16px;
   margin-bottom: 6px;
-  border-radius: 14px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--raise);
 }
 .avatar {
   flex: 0 0 34px;
   height: 34px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -614,7 +617,7 @@ h1 {
   gap: 12px;
   padding: 9px 10px;
   margin: 0 -10px;
-  border-radius: 8px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
   font-size: 13.5px;
@@ -640,7 +643,7 @@ h1 {
 }
 .box {
   padding: 18px 20px;
-  border-radius: 16px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--bg);
   display: flex;
@@ -729,7 +732,7 @@ h1 {
     flex-direction: column;
     gap: 2px;
     padding: 14px;
-    border-radius: 14px;
+    border-radius: 4px;
     border: 1px solid var(--line);
     background: var(--raise);
     color: var(--text);

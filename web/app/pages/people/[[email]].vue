@@ -248,7 +248,7 @@ const splitPanes: SplitPaneSpec[] = [
             :color="only === c.id ? 'primary' : 'neutral'"
             :variant="only === c.id ? 'solid' : 'outline'"
             size="sm"
-            class="rounded-full shrink-0"
+            class="rounded-(--radius) shrink-0"
             @click="only = c.id"
           >
             {{ c.label }}
@@ -378,7 +378,7 @@ const splitPanes: SplitPaneSpec[] = [
 .new-task {
   width: 100%;
   margin: 4px 0 0;
-  border-radius: 9px;
+  border-radius: 4px;
   border: 1px dashed var(--line2);
 }
 .new-task:focus-within {
@@ -433,7 +433,7 @@ ul {
   align-items: center;
   gap: 11px;
   padding: 8px;
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
 }
@@ -446,7 +446,7 @@ ul {
 .avatar {
   flex: 0 0 34px;
   height: 34px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   font-size: 12.5px;
@@ -524,7 +524,7 @@ h2 {
   margin-top: 4px;
   padding: 0 10px;
   border: 1px dashed var(--line2);
-  border-radius: 8px;
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
@@ -546,7 +546,7 @@ h2 {
   gap: 10px;
   padding: 8px 10px;
   margin: 0 -10px;
-  border-radius: 9px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
   font-size: 13.5px;
@@ -575,7 +575,7 @@ h2 {
 .acc {
   flex: 0 0 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius);
 }
 .empty {
   color: var(--faint);

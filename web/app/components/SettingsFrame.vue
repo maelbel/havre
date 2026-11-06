@@ -177,7 +177,7 @@ h1 {
 }
 .group {
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 4px;
   background: var(--raise);
   overflow: hidden;
 }

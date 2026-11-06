@@ -128,7 +128,7 @@ const who = (p: { name: string | null; email: string }) => p.name || p.email
   display: flex;
   gap: 14px;
   padding: 14px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--panel);
 }
@@ -138,7 +138,7 @@ const who = (p: { name: string | null; email: string }) => p.name || p.email
 .sicon {
   flex: 0 0 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -191,12 +191,12 @@ const who = (p: { name: string | null; email: string }) => p.name || p.email
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
 }
 .mailbox {
   padding: 10px 12px;
-  border-radius: 9px;
+  border-radius: 4px;
   border: 1px dashed var(--line2);
   font-size: 13.5px;
   line-height: 1.55;

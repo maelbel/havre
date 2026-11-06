@@ -728,7 +728,7 @@ const ago = (seconds: number) => {
   align-items: center;
   gap: 9px;
   padding: 5px 6px;
-  border-radius: 8px;
+  border-radius: 4px;
   font-size: 13.5px;
   cursor: pointer;
 }
@@ -748,7 +748,7 @@ const ago = (seconds: number) => {
   height: 16px;
   display: grid;
   place-items: center;
-  border-radius: 5px;
+  border-radius: 4px;
   border: 2px solid var(--c);
   color: var(--bg);
 }
@@ -767,7 +767,7 @@ const ago = (seconds: number) => {
 }
 .notice {
   padding: 8px 10px;
-  border-radius: 9px;
+  border-radius: 4px;
   background: color-mix(in oklab, var(--accent) 10%, transparent);
   color: var(--muted);
   font-size: 12.5px;
@@ -851,7 +851,7 @@ const ago = (seconds: number) => {
 .loading {
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   border: 2px solid var(--line2);
   border-top-color: var(--accent);
   animation: spin 0.7s linear infinite;
@@ -892,7 +892,7 @@ const ago = (seconds: number) => {
   gap: 2px;
   padding: 6px 0;
   border: 0;
-  border-radius: 12px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -937,8 +937,8 @@ const ago = (seconds: number) => {
   right: 16px;
   bottom: calc(76px + env(safe-area-inset-bottom));
   z-index: 5;
-  border-radius: 999px;
-  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+  border-radius: 4px;
+  box-shadow: none;
 }
 @media (max-width: 720px) {
   .toolbar {
@@ -962,7 +962,7 @@ const ago = (seconds: number) => {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--raise);
 }

@@ -333,7 +333,7 @@ h2 {
   align-items: center;
   gap: 6px;
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--raise);
 }
@@ -371,7 +371,7 @@ h2 {
 .av {
   flex: 0 0 28px;
   height: 28px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   font-size: 10.5px;
@@ -400,7 +400,7 @@ h2 {
   gap: 2px;
   padding: 10px;
   margin: 0 -10px;
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
 }
@@ -443,7 +443,7 @@ h2 {
   gap: 10px;
   padding: 8px 10px;
   border: 1px solid var(--line2);
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
   font-size: 13px;
@@ -477,7 +477,7 @@ h2 {
     top: 0;
     bottom: 0;
     width: min(360px, 100vw);
-    box-shadow: -20px 0 60px -20px rgb(0 0 0 / 0.5);
+    box-shadow: none;
   }
 }
 /* Phones: the whole screen, clear of the notch and the home bar. */

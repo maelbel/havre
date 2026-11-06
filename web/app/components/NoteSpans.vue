@@ -21,7 +21,7 @@ defineProps<{ spans: NoteSpan[] }>()
 <style scoped>
 code {
   padding: 1px 5px;
-  border-radius: 5px;
+  border-radius: 4px;
   background: var(--raise);
   border: 1px solid var(--line);
   font-size: 0.88em;

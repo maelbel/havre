@@ -104,7 +104,7 @@ const move = (n: number) => (shown.value = new Date(shown.value.getFullYear(), s
   position: relative;
   height: 27px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
   font: inherit;

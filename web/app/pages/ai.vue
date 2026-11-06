@@ -371,7 +371,7 @@ const IDEAS = [
                   :key="idea.label"
                   color="neutral"
                   variant="outline"
-                  class="rounded-full"
+                  class="rounded-(--radius)"
                   @click="question = idea.question; send()"
                 >
                   {{ idea.label }}
@@ -567,7 +567,7 @@ h1 {
   height: 40px;
   padding: 0 12px;
   margin-bottom: 12px;
-  border-radius: 10px;
+  border-radius: 4px;
   font-weight: 500;
 }
 .grow {
@@ -588,7 +588,7 @@ h1 {
   width: 100%;
   padding: 8px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 4px;
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -619,7 +619,7 @@ h1 {
 }
 .can {
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--panel);
   display: flex;
@@ -690,7 +690,7 @@ h1 {
   height: 32px;
   padding: 0 8px;
   border: 1px solid var(--accent);
-  border-radius: 8px;
+  border-radius: 4px;
   background: var(--bg);
   color: var(--text);
   font-size: 15px;
@@ -731,7 +731,7 @@ h1 {
   align-self: flex-end;
   max-width: 80%;
   padding: 10px 14px;
-  border-radius: 14px 14px 4px 14px;
+  border-radius: 4px 4px 4px 4px;
   background: var(--sel);
   font-size: 14.5px;
   white-space: pre-wrap;
@@ -779,7 +779,7 @@ h1 {
   display: inline;
   padding: 0 4px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   background: color-mix(in oklab, var(--accent) 14%, transparent);
   color: var(--accent);
   font: inherit;
@@ -795,7 +795,7 @@ h1 {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--bg);
   color: var(--text);
@@ -849,7 +849,7 @@ a.card {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--bg);
 }
@@ -983,7 +983,7 @@ a.card {
 .avatar {
   flex: 0 0 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -997,7 +997,7 @@ a.card {
   font-size: 13.5px;
 }
 .frame {
-  border-radius: 10px;
+  border-radius: 4px;
   overflow: hidden;
 }
 .plain-text {
@@ -1018,7 +1018,7 @@ a.card {
     top: 0;
     bottom: 0;
     width: min(420px, 100vw);
-    box-shadow: -20px 0 60px -20px rgb(0 0 0 / 0.5);
+    box-shadow: none;
   }
 }
 

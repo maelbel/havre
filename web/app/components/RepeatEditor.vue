@@ -143,7 +143,7 @@ const zone = browserTimeZone()
 const pills = {
   fieldset: 'gap-1.5',
   item: [
-    'items-center rounded-full py-0 px-3 h-8 border-(--line2) text-muted',
+    'items-center rounded-(--radius) py-0 px-3 h-8 border-(--line2) text-muted',
     'has-data-[state=checked]:border-primary has-data-[state=checked]:bg-primary/14 has-data-[state=checked]:text-default',
   ].join(' '),
   label: 'font-normal text-inherit text-[12.5px] whitespace-nowrap',
@@ -151,7 +151,7 @@ const pills = {
 const dayPills = {
   fieldset: 'gap-1.5',
   item: [
-    'size-[34px] p-0 justify-center items-center rounded-full border-(--line2) text-muted',
+    'size-[34px] p-0 justify-center items-center rounded-(--radius) border-(--line2) text-muted',
     'has-data-[state=checked]:bg-primary has-data-[state=checked]:border-primary has-data-[state=checked]:text-(--on-accent)',
   ].join(' '),
   label: 'font-normal text-inherit text-[12px]',
@@ -264,7 +264,7 @@ const dayPills = {
   gap: 8px;
   margin: 0;
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: color-mix(in oklab, var(--accent) 10%, transparent);
   color: var(--text);
   font-size: 13px;

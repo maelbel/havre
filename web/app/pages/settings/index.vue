@@ -236,7 +236,7 @@ code {
 .dot {
   flex: 0 0 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--radius);
 }
 .info {
   flex: 1 1 260px;

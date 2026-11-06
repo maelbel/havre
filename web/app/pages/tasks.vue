@@ -537,7 +537,7 @@ h1 {
   height: 34px;
   padding: 0 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -608,7 +608,7 @@ h1 {
 }
 .sync {
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--panel);
   display: flex;
@@ -779,7 +779,7 @@ h2 {
     height: 34px;
     padding: 0 12px;
     border: 1px solid var(--line2);
-    border-radius: 999px;
+    border-radius: 4px;
     white-space: nowrap;
     flex: none;
   }

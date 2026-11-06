@@ -176,7 +176,7 @@ async function setInDock(on: boolean) {
 .tile {
   flex: 0 0 52px;
   height: 52px;
-  border-radius: 14px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -210,7 +210,7 @@ h3 {
 .none {
   margin: 0;
   padding: 14px 16px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px dashed var(--line2);
   color: var(--muted);
   font-size: 13.5px;
@@ -237,7 +237,7 @@ dd {
 }
 .chip {
   padding: 2px 9px;
-  border-radius: 999px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   font-size: 12.5px;
 }
