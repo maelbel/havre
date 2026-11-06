@@ -23,7 +23,7 @@ jobs:
   test:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: System libraries (WebKitGTK, tray)
         run: |
           sudo apt-get update
@@ -54,7 +54,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: System libraries (Linux)
         if: runner.os == 'Linux'
         run: |
