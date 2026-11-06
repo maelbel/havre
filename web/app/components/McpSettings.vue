@@ -254,7 +254,7 @@ h2 {
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--bg);
 }

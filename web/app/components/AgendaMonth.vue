@@ -147,7 +147,7 @@ function openTasks(d: Date) {
   height: 26px;
   padding: 0 6px;
   border: 0;
-  border-radius: 13px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -167,7 +167,7 @@ function openTasks(d: Date) {
   width: 100%;
   padding: 2px 6px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
   font: inherit;

@@ -101,7 +101,7 @@ const sender = computed(() => props.message.from?.name || props.message.from?.ad
             :color="due === c.day ? 'primary' : 'neutral'"
             :variant="due === c.day ? 'soft' : 'outline'"
             size="sm"
-            class="rounded-full"
+            class="rounded-(--radius)"
             :aria-pressed="due === c.day"
             @click="pick(c.day)"
           >
@@ -112,7 +112,7 @@ const sender = computed(() => props.message.from?.name || props.message.from?.ad
             :color="pickedLabel ? 'primary' : 'neutral'"
             :variant="pickedLabel ? 'soft' : 'outline'"
             size="sm"
-            class="rounded-full"
+            class="rounded-(--radius)"
             :aria-pressed="!!pickedLabel"
             @click="picking = true"
           >

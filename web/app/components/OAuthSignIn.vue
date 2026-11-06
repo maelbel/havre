@@ -377,7 +377,7 @@ code {
 }
 .code {
   padding: 8px 16px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px dashed var(--line2);
   background: var(--bg);
   font-size: 22px;
@@ -396,7 +396,7 @@ code {
   flex: 0 0 auto;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   border: 2px solid var(--line2);
   border-top-color: var(--accent);
   animation: spin 0.7s linear infinite;

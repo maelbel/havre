@@ -43,9 +43,13 @@ export default defineNuxtConfig({
   },
 
   css: [
-    '@fontsource-variable/geist',
-    '@fontsource-variable/geist-mono',
-    '@fontsource-variable/newsreader',
+    // The design system's fonts, bundled (nothing is fetched from Google):
+    // Jost (text, titles, with its italic), Josefin Sans (small capital
+    // labels), JetBrains Mono (dates, figures, code).
+    '@fontsource-variable/jost',
+    '@fontsource-variable/jost/wght-italic.css',
+    '@fontsource-variable/josefin-sans',
+    '@fontsource-variable/jetbrains-mono',
     '~/assets/css/main.css',
   ],
 

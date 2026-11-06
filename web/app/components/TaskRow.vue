@@ -71,7 +71,7 @@ const who = computed(() => props.task.person?.name || props.task.person?.email |
   align-items: flex-start;
   gap: 12px;
   padding: 9px 8px;
-  border-radius: 10px;
+  border-radius: 4px;
 }
 .task:hover {
   background: var(--hover);
@@ -84,7 +84,7 @@ const who = computed(() => props.task.person?.name || props.task.person?.email |
   height: 20px;
   margin-top: 1px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 1.5px solid var(--line2);
   background: transparent;
   color: var(--on-accent);
@@ -162,7 +162,7 @@ const who = computed(() => props.task.person?.name || props.task.person?.email |
 .mini-avatar {
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: inline-grid;
   place-items: center;
   font-size: 7.5px;
@@ -195,7 +195,7 @@ const who = computed(() => props.task.person?.name || props.task.person?.email |
 .compact .check {
   flex-basis: 16px;
   height: 16px;
-  border-radius: 5px;
+  border-radius: 4px;
 }
 .compact .title {
   font-size: 13.5px;
@@ -209,7 +209,7 @@ const who = computed(() => props.task.person?.name || props.task.person?.email |
     flex-basis: 22px;
     height: 22px;
     margin: 0 0 0 2px;
-    border-radius: 7px;
+    border-radius: 4px;
     position: relative;
   }
   .check::before {

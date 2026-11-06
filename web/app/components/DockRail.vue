@@ -206,7 +206,7 @@ function openSearch() {
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: 8px;
+  border-radius: 4px;
   background: var(--accent);
   color: var(--on-accent);
   font-size: 10px;
@@ -228,7 +228,7 @@ function openSearch() {
 .avatar {
   width: 34px;
   height: 34px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   border: 1px solid var(--line2);
   background: var(--raise);
   color: var(--text);
@@ -240,7 +240,7 @@ function openSearch() {
   width: 34px;
   height: 34px;
   margin-bottom: 14px;
-  border-radius: 10px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -251,7 +251,7 @@ function openSearch() {
   width: 44px;
   height: 44px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;

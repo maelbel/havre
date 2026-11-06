@@ -550,11 +550,11 @@ const fromItems = computed(() =>
   height: min(680px, calc(100vh - 64px));
   display: flex;
   flex-direction: column;
-  border-radius: 14px 14px 0 0;
+  border-radius: 4px 4px 0 0;
   border: 1px solid var(--line2);
   border-bottom: 0;
   background: var(--panel);
-  box-shadow: 0 30px 80px -20px rgb(0 0 0 / 0.55);
+  box-shadow: none;
   overflow: hidden;
 }
 .composer.minimized {
@@ -687,7 +687,7 @@ h2 {
   max-width: 100%;
   height: 30px;
   padding: 0 4px 0 10px;
-  border-radius: 8px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--raise);
   font-size: 12.5px;
@@ -741,7 +741,7 @@ footer {
 .spinner {
   width: 16px;
   height: 16px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   border: 2px solid var(--line2);
   border-top-color: var(--accent);
   animation: spin 0.7s linear infinite;
@@ -779,7 +779,7 @@ footer {
   gap: 8px;
   margin: 8px 12px 0;
   padding: 6px 6px 6px 12px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid color-mix(in oklab, var(--accent) 45%, var(--line2));
   background: color-mix(in oklab, var(--accent) 7%, var(--bg));
   color: var(--accent);

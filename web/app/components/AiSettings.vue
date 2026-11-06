@@ -640,7 +640,7 @@ legend {
   display: flex;
   gap: 12px;
   padding: 14px 16px;
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--bg);
   border: 1px solid var(--line);
   color: var(--ok);
@@ -687,7 +687,7 @@ legend {
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--raise);
   font-size: 13.5px;

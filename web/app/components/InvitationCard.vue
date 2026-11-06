@@ -160,7 +160,7 @@ const partOfDay = computed(() => {
 <style scoped>
 .card {
   border: 1px solid var(--line2);
-  border-radius: 16px;
+  border-radius: 4px;
   background: var(--raise);
   overflow: hidden;
 }
@@ -180,7 +180,7 @@ const partOfDay = computed(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--panel);
 }

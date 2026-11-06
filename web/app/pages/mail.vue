@@ -1504,9 +1504,9 @@ const splitPanes: SplitPaneSpec[] = [
   padding: 0 12px;
   margin-bottom: 16px;
   border: 0;
-  border-radius: 10px;
-  background: var(--accent);
-  color: var(--on-accent);
+  border-radius: 4px;
+  background: var(--primary);
+  color: var(--on-primary);
   font-weight: 500;
   cursor: pointer;
 }
@@ -1544,7 +1544,7 @@ const splitPanes: SplitPaneSpec[] = [
   height: 34px;
   padding: 0 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   font-size: 14px;
@@ -1582,7 +1582,7 @@ const splitPanes: SplitPaneSpec[] = [
   width: 100%;
   padding: 7px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 4px;
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -1664,7 +1664,7 @@ const splitPanes: SplitPaneSpec[] = [
 .spinner {
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   border: 2px solid color-mix(in oklab, var(--accent) 25%, transparent);
   border-top-color: var(--accent);
   animation: spin 0.7s linear infinite;
@@ -1784,13 +1784,13 @@ const splitPanes: SplitPaneSpec[] = [
   color: transparent;
   background: transparent;
   border: 1.5px solid var(--line2);
-  border-radius: 9px;
+  border-radius: 4px;
 }
 .rowwrap.checked .pick .avatar {
   color: transparent;
   background: var(--accent);
   border: 1.5px solid var(--accent);
-  border-radius: 9px;
+  border-radius: 4px;
 }
 .rowwrap.checked .pick .avatar::after {
   content: '';
@@ -1810,7 +1810,7 @@ const splitPanes: SplitPaneSpec[] = [
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 7px;
+  border-radius: 4px;
   background: transparent;
   color: var(--faint);
   cursor: pointer;
@@ -1844,7 +1844,7 @@ const splitPanes: SplitPaneSpec[] = [
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 4px;
   font-size: 12px;
   border: 1px solid var(--line2);
   color: var(--muted);
@@ -1878,7 +1878,7 @@ const splitPanes: SplitPaneSpec[] = [
   gap: 2px;
   margin: 6px 8px 8px;
   padding: 4px 6px 4px 10px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: color-mix(in oklab, var(--accent) 12%, var(--panel));
 }
 .count-sel {
@@ -1888,7 +1888,7 @@ const splitPanes: SplitPaneSpec[] = [
 .avatar {
   flex: 0 0 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   font-size: 11.5px;
@@ -1911,7 +1911,7 @@ const splitPanes: SplitPaneSpec[] = [
 .dot {
   flex: 0 0 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--accent);
 }
 .from,
@@ -1950,7 +1950,7 @@ const splitPanes: SplitPaneSpec[] = [
 .acc {
   flex: 0 0 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   opacity: 0.8;
 }
 .invite {
@@ -1960,7 +1960,7 @@ const splitPanes: SplitPaneSpec[] = [
   align-items: center;
   gap: 6px;
   padding: 3px 9px 3px 7px;
-  border-radius: 999px;
+  border-radius: 4px;
   font-size: 12px;
   background: color-mix(in oklab, var(--accent) 14%, transparent);
   color: var(--accent);
@@ -2043,7 +2043,7 @@ code {
 .big-avatar {
   width: 52px;
   height: 52px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   font-size: 17px;
@@ -2081,7 +2081,7 @@ code {
   gap: 12px;
   padding: 10px;
   margin: 0 -10px;
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
 }
@@ -2112,7 +2112,7 @@ code {
   gap: 10px;
   padding: 7px 10px;
   margin: 0 -10px;
-  border-radius: 8px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
   font-size: 13px;
@@ -2144,8 +2144,8 @@ code {
   /* Above the dock (and the home bar). */
   bottom: calc(76px + env(safe-area-inset-bottom));
   z-index: 5;
-  border-radius: 999px;
-  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+  border-radius: 4px;
+  box-shadow: none;
 }
 .has-selection .write-fab {
   display: none;
@@ -2226,7 +2226,7 @@ code {
 .welcome-icon {
   width: 48px;
   height: 48px;
-  border-radius: 14px;
+  border-radius: 4px;
   display: grid;
   place-items: center;
   background: color-mix(in oklab, var(--accent) 16%, transparent);

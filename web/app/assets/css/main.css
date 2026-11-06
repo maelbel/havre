@@ -1,6 +1,7 @@
 /*
- * Havre design tokens — the same values as the mockup.
- * Dark is the default; `<html data-theme="light">` switches to light.
+ * Havre design tokens, from Mael Belliard's design system (the canvas shows
+ * them): Ink, Slate, Limestone and brass, Jost, square-ish corners, no
+ * shadows. Dark is the default; `<html data-theme="light">` switches to light.
  * Every component uses these variables, never raw colors.
  *
  * Nuxt UI (and the Tailwind CSS it is built with) comes first; its
@@ -16,32 +17,42 @@
 @source '../../layouts';
 
 :root {
-  --bg: #121210;
-  --panel: #171714;
-  --raise: #1f1e1a;
-  --line: #292823;
-  --line2: #36342e;
-  --text: #ede9df;
-  --muted: #a6a194;
-  --faint: #8c887c;
-  --accent: #e3bc6a;
-  --on-accent: #1a1408;
-  --sel: #24231e;
-  --hover: #1d1c18;
+  /* Ink behind, Slate panels (the system's `bg` and `surface`). */
+  --bg: #0e0f11;
+  --panel: #16181b;
+  --raise: #16181b;
+  /* Rules (`line`) and control borders (`line-strong`, at least 3:1). */
+  --line: #2a2d33;
+  --line2: #6b6f77;
+  /* Limestone text, then secondary (6.9:1) and Stone (5.2:1, the quietest). */
+  --text: #e9e4da;
+  --muted: #a8a398;
+  --faint: #8a857c;
+  /* Light brass: links, focus, selection marks, small capital labels. */
+  --accent: #c9a66b;
+  --on-accent: #0e0f11;
+  /* Primary buttons: Limestone on Ink (the system's `fill-primary`). */
+  --primary: #e9e4da;
+  --on-primary: #0e0f11;
+  --sel: #24272c;
+  --hover: #1b1d21;
   --ok: #9cc59a;
   --danger: #e0a27a;
   --c-work: #86a9d1;
   --c-personal: #a9c79c;
-  --c-lyon: #e3bc6a;
+  --c-lyon: #c9a66b;
   --c-hol: #c99ab0;
 
-  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
-  --font-serif: 'Newsreader Variable', Georgia, serif;
+  --font-sans: 'Jost Variable', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, Menlo, Consolas, monospace;
+  /* Titles are Jost too (500); the name stays for the `.serif` helper. */
+  --font-serif: var(--font-sans);
+  --font-display: 'Josefin Sans Variable', Futura, 'Century Gothic', sans-serif;
 
-  --radius-sm: 8px;
-  --radius: 12px;
-  --radius-lg: 16px;
+  /* 4 px at most, everywhere (the system's `radius-md`). */
+  --radius-sm: 4px;
+  --radius: 4px;
+  --radius-lg: 4px;
   color-scheme: dark;
 }
 
@@ -67,25 +78,31 @@
   --ui-primary: var(--accent);
   --ui-success: var(--ok);
   --ui-error: var(--danger);
-  /* Buttons and fields at 9px corners, cards at 12px (Nuxt UI multiplies this). */
-  --ui-radius: 6px;
+  /* Nuxt UI multiplies this (`rounded-md` = 1.5×, `rounded-lg` = 2×): 2 px
+     keeps buttons and fields at 3–4 px. */
+  --ui-radius: 2px;
 }
 
 :root[data-theme='light'] {
-  --bg: #f3f1ea;
-  --panel: #faf9f5;
-  --raise: #ffffff;
-  --line: #e3dfd3;
-  --line2: #d6d1c3;
-  --text: #1c1b17;
-  --muted: #5d5950;
-  --faint: #6f6b61;
-  --accent: #8c5e0e;
-  --on-accent: #ffffff;
-  --sel: #ece8dc;
-  --hover: #f1eee6;
-  --ok: #3f7a3d;
-  --danger: #9a4a1c;
+  /* Limestone behind, off-white panels. */
+  --bg: #e9e4da;
+  --panel: #f7f5f0;
+  --raise: #f7f5f0;
+  --line: #cfc8ba;
+  --line2: #7a756c;
+  --text: #0e0f11;
+  --muted: #3a3f47;
+  --faint: #3a3f47;
+  /* Deep brass: light brass is too pale for text on Limestone. */
+  --accent: #765a31;
+  --on-accent: #f7f5f0;
+  --primary: #0e0f11;
+  --on-primary: #f7f5f0;
+  --sel: #dfd9cd;
+  --hover: #efebe3;
+  /* Darker than before so they pass 4.5:1 on Limestone and the selection too. */
+  --ok: #2f6a2d;
+  --danger: #8a3f14;
   --c-work: #3e6a9e;
   --c-personal: #4f7c43;
   --c-lyon: #9a6a12;
@@ -164,18 +181,20 @@
   font-family: var(--font-mono);
 }
 
+/* Titles (the class kept its old name): Jost 500, a hair tighter. */
 .serif {
   font-family: var(--font-serif);
-  font-weight: 400;
+  font-weight: 500;
   letter-spacing: -0.01em;
 }
 
+/* Small capital labels: Josefin Sans, widely spaced, in brass. */
 .eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--accent);
 }
 
 .sr-only {
@@ -193,7 +212,7 @@
   gap: 8px;
   height: 36px;
   padding: 0 14px;
-  border-radius: 9px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: transparent;
   color: var(--text);
@@ -208,14 +227,15 @@
   padding: 0 11px;
   font-size: 13px;
 }
+/* Primary: Limestone on Ink (Ink on Limestone in light); brass is for marks. */
 .btn-primary {
   border: 0;
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--primary);
+  color: var(--on-primary);
   font-weight: 500;
 }
 .btn-primary:hover {
-  background: var(--accent);
+  background: var(--primary);
   filter: brightness(1.08);
 }
 
@@ -223,7 +243,7 @@
   width: 36px;
   height: 36px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   display: inline-flex;

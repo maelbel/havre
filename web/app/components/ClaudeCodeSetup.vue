@@ -330,7 +330,7 @@ const ready = computed(() => !!status.value?.command && status.value.logged_in)
 .mark {
   flex: 0 0 24px;
   height: 24px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   border: 1px solid var(--line2);
@@ -380,7 +380,7 @@ pre {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line2);
   background: var(--bg);
 }
@@ -396,7 +396,7 @@ pre {
 .login {
   margin: 4px 0 0;
   padding: 12px 14px 12px 32px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--bg);
   display: flex;
@@ -432,7 +432,7 @@ details summary {
 details pre {
   margin: 6px 0 0;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 4px;
   background: var(--bg);
   font-size: 11.5px;
   white-space: pre-wrap;
@@ -443,7 +443,7 @@ details pre {
   justify-content: space-between;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: color-mix(in oklab, var(--ok) 10%, transparent);
   font-size: 13.5px;
 }

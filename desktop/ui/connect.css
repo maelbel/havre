@@ -1,14 +1,17 @@
 /* The same tokens as the web app (web/app/assets/css/main.css). No web
-   fonts here: this page must work before any server is reachable. */
+   fonts here: this page must work before any server is reachable, so the
+   design system's fonts fall back to the closest ones on the computer. */
 :root {
-  --bg: #121210; --panel: #171714; --raise: #1f1e1a; --line: #292823; --line2: #36342e;
-  --text: #ede9df; --muted: #a6a194; --faint: #8c887c; --accent: #e3bc6a; --on-accent: #1a1408; --danger: #e0a27a;
+  --bg: #0e0f11; --panel: #16181b; --raise: #16181b; --line: #2a2d33; --line2: #6b6f77;
+  --text: #e9e4da; --muted: #a8a398; --faint: #8a857c; --accent: #c9a66b; --danger: #e0a27a;
+  --primary: #e9e4da; --on-primary: #0e0f11;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f3f1ea; --panel: #faf9f5; --raise: #ffffff; --line: #e3dfd3; --line2: #d6d1c3;
-    --text: #1c1b17; --muted: #5d5950; --faint: #6f6b61; --accent: #8c5e0e; --on-accent: #ffffff; --danger: #9a4a1c;
+    --bg: #e9e4da; --panel: #f7f5f0; --raise: #f7f5f0; --line: #cfc8ba; --line2: #7a756c;
+    --text: #0e0f11; --muted: #3a3f47; --faint: #3a3f47; --accent: #765a31; --danger: #8a3f14;
+    --primary: #0e0f11; --on-primary: #f7f5f0;
     color-scheme: light;
   }
 }
@@ -17,33 +20,33 @@ html, body { height: 100%; margin: 0; }
 body {
   display: grid; place-items: center; padding: 24px 16px;
   background: var(--panel); color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased;
+  font: 14px/1.5 Jost, Futura, "Avenir Next", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
 }
 main { width: min(440px, 100%); display: flex; flex-direction: column; gap: 14px; }
 .logo {
-  width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center;
+  width: 52px; height: 52px; border-radius: 4px; display: grid; place-items: center;
   background: var(--text); color: var(--bg); margin-bottom: 6px;
 }
 .eyebrow {
-  margin: 0; font: 11px/1 ui-monospace, "Cascadia Mono", Menlo, monospace;
-  letter-spacing: .06em; text-transform: uppercase; color: var(--faint);
+  margin: 0; font: 11.5px/1 "Josefin Sans", Futura, "Century Gothic", sans-serif;
+  letter-spacing: .2em; text-transform: uppercase; color: var(--accent);
 }
-h1 { margin: 0; font: 400 34px/1.1 "Newsreader", Georgia, "Times New Roman", serif; letter-spacing: -.015em; }
+h1 { margin: 0; font: 500 34px/1.1 Jost, Futura, "Avenir Next", "Segoe UI", sans-serif; letter-spacing: -.01em; }
 .lead { margin: 0 0 8px; color: var(--muted); font-size: 15px; line-height: 1.6; }
-form { display: flex; flex-direction: column; gap: 8px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--raise); }
+form { display: flex; flex-direction: column; gap: 8px; padding: 20px; border: 1px solid var(--line); border-radius: 4px; background: var(--raise); }
 label { font-size: 13px; font-weight: 500; }
 input {
-  height: 42px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2);
+  height: 42px; padding: 0 12px; border-radius: 4px; border: 1px solid var(--line2);
   background: var(--bg); color: var(--text); font: inherit; font-size: 15px; outline: none;
 }
 input:focus { border-color: var(--accent); }
 button {
-  height: 42px; margin-top: 6px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent);
+  height: 42px; margin-top: 6px; border: 0; border-radius: 4px; background: var(--primary); color: var(--on-primary);
   font: inherit; font-weight: 500; cursor: pointer;
 }
 button:hover { filter: brightness(1.08); }
 button:disabled { opacity: .6; cursor: progress; }
 .error { margin: 0; color: var(--danger); font-size: 13px; }
 .hint { margin: 0; color: var(--faint); font-size: 12.5px; line-height: 1.55; }
-code { font: 12px ui-monospace, "Cascadia Mono", Menlo, monospace; color: var(--muted); }
+code { font: 12px "JetBrains Mono", ui-monospace, "Cascadia Mono", Menlo, monospace; color: var(--muted); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

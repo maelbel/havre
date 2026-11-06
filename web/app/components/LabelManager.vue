@@ -130,7 +130,7 @@ function add() {
 .swatch {
   width: 16px;
   height: 16px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   border: 2px solid transparent;
   cursor: pointer;
 }

@@ -163,7 +163,7 @@ ol {
   gap: 10px;
   padding: 3px 6px;
   margin: 0 -6px;
-  border-radius: 8px;
+  border-radius: 4px;
 }
 .todo:hover {
   background: var(--hover);
@@ -173,7 +173,7 @@ ol {
   height: 18px;
   margin-top: 3px;
   padding: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   border: 1.5px solid var(--line2);
   background: transparent;
   color: var(--on-accent);
@@ -212,7 +212,7 @@ ol {
   height: 26px;
   padding: 0 8px;
   border: 1px solid var(--line2);
-  border-radius: 7px;
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   font-size: 12px;
@@ -231,7 +231,7 @@ blockquote {
 pre {
   margin: 0;
   padding: 12px 14px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--panel);
   font-size: 13px;

@@ -506,7 +506,7 @@ function kind(mime: string, filename: string) {
   height: 46px;
   padding: 0 16px;
   border: 1px solid var(--line2);
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--bg);
   color: var(--faint);
   font-size: 14px;
@@ -554,7 +554,7 @@ function kind(mime: string, filename: string) {
 .avatar {
   flex: 0 0 38px;
   height: 38px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   font-size: 13px;
@@ -611,7 +611,7 @@ function kind(mime: string, filename: string) {
   max-width: 100%;
   padding: 8px 12px;
   border: 1px solid var(--line2);
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--text);
   text-decoration: none;
   font-size: 13px;
@@ -642,7 +642,7 @@ function kind(mime: string, filename: string) {
 .skeleton span {
   display: block;
   height: 12px;
-  border-radius: 5px;
+  border-radius: 4px;
   background: var(--line);
 }
 .skeleton .l1 {

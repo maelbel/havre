@@ -254,14 +254,14 @@ h2 {
   align-items: center;
   gap: 14px;
   padding: 16px 18px;
-  border-radius: 14px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--bg);
 }
 .dot {
   flex: 0 0 9px;
   height: 9px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--ok);
 }
 .state.warn .dot {
@@ -309,7 +309,7 @@ legend {
   gap: 12px;
   padding: 12px 10px;
   margin: 0 -10px;
-  border-radius: 10px;
+  border-radius: 4px;
   cursor: pointer;
 }
 .block {
@@ -326,7 +326,7 @@ legend {
 .path {
   margin: 0;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: 4px;
   background: var(--bg);
   border: 1px solid var(--line);
   font-size: 12.5px;
@@ -366,7 +366,7 @@ code {
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--bg);
 }
@@ -384,7 +384,7 @@ code {
 .cdot {
   flex: 0 0 9px;
   height: 9px;
-  border-radius: 50%;
+  border-radius: var(--radius);
 }
 .error {
   display: flex;

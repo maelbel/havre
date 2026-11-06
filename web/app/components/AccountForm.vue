@@ -404,7 +404,7 @@ legend {
   display: block;
   width: 24px;
   height: 24px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   border: 2px solid transparent;
   box-shadow: 0 0 0 2px var(--raise);
 }
