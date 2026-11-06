@@ -28,8 +28,14 @@ onBeforeUnmount(() => clearInterval(clock))
 
 // ---- What's shown ---------------------------------------------------------------
 
+// Phones: one day at a time under a strip of the week's days. The Week view
+// becomes the day view there (seven columns don't fit), but the whole week is
+// still loaded so the strip can mark the busy days.
+const phone = useIsPhone()
+const phoneDay = computed(() => phone.value && view.value !== 'month')
+
 const days = computed(() => {
-  if (view.value === 'day') return [anchor.value]
+  if (view.value === 'day' || phoneDay.value) return [anchor.value]
   const first = startOfWeek(anchor.value)
   return Array.from({ length: 7 }, (_, i) => addDays(first, i))
 })
@@ -40,13 +46,38 @@ const range = computed(() => {
     const first = startOfWeek(startOfMonth(anchor.value))
     return { from: first, to: addDays(first, 42) }
   }
+  if (phoneDay.value) {
+    const first = startOfWeek(anchor.value)
+    return { from: first, to: addDays(first, 7) }
+  }
   return { from: days.value[0]!, to: addDays(days.value[days.value.length - 1]!, 1) }
+})
+
+/** The week strip (phones): the seven days around the shown one. */
+const strip = computed(() => {
+  const first = startOfWeek(anchor.value)
+  const today = isoDate(now.value)
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = addDays(first, i)
+    const key = isoDate(d)
+    return {
+      date: d,
+      key,
+      weekday: d.toLocaleDateString([], { weekday: 'narrow' }),
+      day: d.getDate(),
+      label: d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }),
+      today: key === today,
+      selected: key === isoDate(anchor.value),
+      busy: busyDays.value.has(key),
+    }
+  })
 })
 
 const title = computed(() => {
   const a = anchor.value
   if (view.value === 'month') return a.toLocaleDateString([], { month: 'long', year: 'numeric' })
-  if (view.value === 'day') return a.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  if (view.value === 'day' || phoneDay.value)
+    return a.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
   // "12 – 18 October 2026" or "October 12 – 18, 2026", as the language wants.
   const format = new Intl.DateTimeFormat([], { day: 'numeric', month: 'long', year: 'numeric' })
   return format.formatRange(days.value[0]!, days.value[6]!)
@@ -60,6 +91,8 @@ function step(n: number) {
   if (view.value === 'month') go({ date: new Date(a.getFullYear(), a.getMonth() + n, 1) })
   else go({ date: addDays(a, n * (view.value === 'week' ? 7 : 1)) })
 }
+/** Phones: the strip's arrows move a week (the day keeps its weekday). */
+const stepWeek = (n: number) => go({ date: addDays(anchor.value, n * 7) })
 
 /** The event shown in the side panel. */
 const selectedId = ref<number | null>(null)
@@ -223,6 +256,16 @@ const shown = computed(() => {
   const from = range.value.from.getTime()
   const to = range.value.to.getTime()
   return events.value.filter((e) => {
+    const { start, end } = eventSpan(e)
+    return start.getTime() < to && end.getTime() > from
+  })
+})
+/** What the grid draws: on a phone the whole week is loaded, one day shown. */
+const gridEvents = computed(() => {
+  if (!phoneDay.value) return shown.value
+  const from = anchor.value.getTime()
+  const to = addDays(anchor.value, 1).getTime()
+  return shown.value.filter((e) => {
     const { start, end } = eventSpan(e)
     return start.getTime() < to && end.getTime() > from
   })
@@ -480,6 +523,40 @@ const ago = (seconds: number) => {
     </aside>
 
     <main class="main">
+      <PhoneHeader :title="view === 'month' ? title : weekLabel">
+        <template #actions>
+          <UButton color="neutral" variant="ghost" size="lg" @click="go({ date: startOfDay(new Date()) })">Today</UButton>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            size="lg"
+            square
+            :icon="view === 'month' ? 'i-havre-clock' : 'i-havre-calendar'"
+            :aria-label="view === 'month' ? 'Show days' : 'Show the month'"
+            @click="go({ view: view === 'month' ? 'day' : 'month' })"
+          />
+        </template>
+        <!-- The week: tap a day to see it, arrows for the weeks around. -->
+        <nav v-if="phoneDay" class="strip" aria-label="Days of the week">
+          <UButton color="neutral" variant="ghost" square icon="i-havre-back" aria-label="Previous week" @click="stepWeek(-1)" />
+          <button
+            v-for="d in strip"
+            :key="d.key"
+            type="button"
+            class="sday"
+            :class="{ on: d.selected, today: d.today }"
+            :aria-label="d.label + (d.busy ? ', has events' : '')"
+            :aria-current="d.selected ? 'date' : undefined"
+            @click="go({ date: d.date })"
+          >
+            <span class="mono wd">{{ d.weekday }}</span>
+            <span class="num">{{ d.day }}</span>
+            <span class="busy" :class="{ shown: d.busy }" aria-hidden="true" />
+          </button>
+          <UButton color="neutral" variant="ghost" square icon="i-havre-back" class="flip" aria-label="Next week" @click="stepWeek(1)" />
+        </nav>
+        <p v-if="phoneDay" class="mono faint strip-day">{{ title }}</p>
+      </PhoneHeader>
       <div class="toolbar">
         <h2 class="serif title">{{ title }}</h2>
         <span v-if="weekLabel" class="mono faint week">{{ weekLabel }}</span>
@@ -542,6 +619,7 @@ const ago = (seconds: number) => {
         </UButton>
       </div>
       <p v-if="loadError" class="load-error" role="alert">{{ loadError }}</p>
+      <UButton v-if="phone" icon="i-havre-plus" size="xl" class="new-fab" aria-label="New event" @click="create()">Event</UButton>
 
       <div class="body">
         <AgendaMonth
@@ -560,7 +638,7 @@ const ago = (seconds: number) => {
           v-else
           :key="view"
           :days="days"
-          :events="shown"
+          :events="gridEvents"
           :calendars="calendarMap"
           :now="now"
           :selected="selectedId"
@@ -798,18 +876,72 @@ const ago = (seconds: number) => {
     display: none;
   }
 }
+/* ---- Phones: the header and the week strip replace the toolbar ---- */
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: -4px -6px 0 -10px;
+}
+.sday {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.sday .wd {
+  font-size: 10.5px;
+  color: var(--faint);
+  text-transform: uppercase;
+}
+.sday .num {
+  font-size: 16px;
+  font-weight: 500;
+}
+.sday.today .num {
+  color: var(--accent);
+}
+.sday.on {
+  background: var(--text);
+  color: var(--bg);
+}
+.sday.on .wd,
+.sday.on.today .num {
+  color: var(--bg);
+}
+.busy {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+.busy.shown {
+  background: var(--accent);
+}
+.sday.on .busy.shown {
+  background: var(--bg);
+}
+.strip-day {
+  margin: 6px 0 8px;
+  font-size: 12px;
+}
+.new-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 5;
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+}
 @media (max-width: 720px) {
   .toolbar {
-    flex-wrap: wrap;
-    padding: 10px 12px;
-    gap: 6px;
-  }
-  .title {
-    flex-basis: 100%;
-    margin: 0;
-    font-size: 21px;
-  }
-  .week {
     display: none;
   }
 }

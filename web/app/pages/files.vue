@@ -144,6 +144,7 @@ const splitPanes: SplitPaneSpec[] = [
 
 <template>
   <div class="files-app" :class="{ 'has-file': selectedKey != null }">
+    <PhoneHeader v-if="selectedKey == null" title="Files" />
     <SplitView id="files" :panes="splitPanes">
     <template #views>
     <aside class="side" aria-label="Files views">
@@ -750,8 +751,12 @@ dd {
     overflow-x: auto;
     align-items: center;
   }
+  /* The title is in the phone header; the views scroll sideways. */
   .side-head {
-    padding: 0 6px 0 0;
+    display: none;
+  }
+  .side {
+    scrollbar-width: none;
   }
   .side-head .tiny,
   .section,
@@ -759,9 +764,6 @@ dd {
   .grow,
   .looked {
     display: none;
-  }
-  h1 {
-    font-size: 26px;
   }
   .views {
     flex-direction: row;

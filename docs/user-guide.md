@@ -385,6 +385,15 @@ Up to 720 px wide, Havre shows one screen at a time:
   message, the toolbar keeps Back, Archive, Delete, Move, Label and Snooze;
   **⋯** has Star, Mark as unread, Reply all, Forward (and Summarize, a note
   about the email, when those apps are on).
+- **Agenda** shows one day at a time under a strip of the week's days (a
+  dot marks the days with events; ‹ › move a week). **Today** comes back to
+  today, the calendar button switches to the month, and **Event** (above the
+  dock) adds one. An event opens full screen.
+- **People**: a person's page has *Write* and *Plan a meeting* at the top,
+  and chips (*Everything*, *Mail*, *Meetings*, *Files*, *Tasks*, *Notes*) to
+  see one list at a time.
+- **Tasks, Notes, Files, AI**: the views are chips under the title that
+  scroll sideways; Notes has **+** for a new note at the top.
 - **Settings** is a menu (your accounts, your apps, Havre's sections,
   Appearance); each opens on its own screen with *‹ Settings* to go back.
 - On phones with a notch or a home bar, Havre keeps clear of them.

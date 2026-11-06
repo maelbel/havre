@@ -249,6 +249,7 @@ const IDEAS = [
 
 <template>
   <div class="ai-app" :class="{ 'has-conv': showConversation, 'has-panel': !!panel }">
+    <PhoneHeader v-if="!showConversation" title="AI" :eyebrow="modelLabel" />
     <SplitView id="ai" :panes="splitPanes">
     <template #conversations>
     <aside class="side" aria-label="Conversations">
@@ -258,7 +259,7 @@ const IDEAS = [
       </div>
       <UButton icon="i-havre-plus" block class="new" @click="newConversation">
         <span class="grow">New conversation</span>
-        <template #trailing><UKbd value="N" /></template>
+        <template #trailing><UKbd value="N" class="kbd" /></template>
       </UButton>
 
       <p v-if="!loadingList && !list.length" class="faint small empty-list">Your conversations will be listed here.</p>
@@ -1032,6 +1033,11 @@ a.card {
     border-right: 0;
   }
   .can {
+    display: none;
+  }
+  /* The title is in the phone header; no keys on a phone. */
+  .side-head,
+  .kbd {
     display: none;
   }
   .conv-main {

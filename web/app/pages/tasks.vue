@@ -325,6 +325,7 @@ const splitPanes = computed<SplitPaneSpec[]>(() => [
 
 <template>
   <div class="tasks-app" :class="{ 'has-task': !!selected }">
+    <PhoneHeader v-if="!selected" title="Tasks" />
     <SplitView id="tasks" :panes="splitPanes">
     <template #lists>
     <aside class="side" aria-label="Task lists">
@@ -762,9 +763,12 @@ h2 {
     overflow-x: auto;
     align-items: center;
   }
-  h1 {
-    padding: 0 8px 0 0;
-    font-size: 26px;
+  /* The title is in the phone header; the views scroll sideways. */
+  .side > h1 {
+    display: none;
+  }
+  .side {
+    scrollbar-width: none;
   }
   .views {
     flex-direction: row;

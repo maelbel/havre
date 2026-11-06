@@ -439,6 +439,11 @@ const splitPanes: SplitPaneSpec[] = [
 
 <template>
   <div class="notes-app" :class="{ 'has-note': selectedId != null }">
+    <PhoneHeader v-if="selectedId == null" title="Notes">
+      <template #actions>
+        <UButton color="neutral" variant="ghost" size="lg" square icon="i-havre-plus" aria-label="New note" @click="newNote" />
+      </template>
+    </PhoneHeader>
     <SplitView id="notes" :panes="splitPanes">
     <template #views>
     <aside class="side" aria-label="Notes views">
@@ -1217,14 +1222,12 @@ h2 {
     overflow-x: auto;
     align-items: center;
   }
+  /* The title and New are in the phone header; the views scroll sideways. */
   .side-head {
-    padding: 0 6px 0 0;
+    display: none;
   }
-  h1 {
-    font-size: 26px;
-  }
-  .new {
-    flex: none;
+  .side {
+    scrollbar-width: none;
   }
   .views {
     flex-direction: row;
