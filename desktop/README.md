@@ -16,8 +16,10 @@ the server, so the app, the browser and your phone all show the same thing.
 
 ## Install
 
-Download the installer for your system from the **Desktop** workflow's
-latest run (GitHub › Actions › Desktop › Artifacts), or a release:
+Download the installer for your system from a
+[release](https://github.com/maelbel/havre/releases) (or, between releases,
+the **Desktop** workflow's latest run: GitHub › Actions › Desktop ›
+Artifacts):
 
 | System | File | First launch |
 |---|---|---|

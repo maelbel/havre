@@ -164,11 +164,19 @@ things).
    to the new version with today's date. Title the pull request `chore: release X.Y.Z`.
 2. Once it is merged, tag `main`: `git switch main && git pull && git tag -s vX.Y.Z -m "Havre X.Y.Z"`, then
    `git push origin vX.Y.Z`.
+3. The *Release* workflow (`.github/workflows/release.yml`) checks that the tag matches the three versions and that
+   the changelog has a `## [X.Y.Z]` section, runs the checks, then builds the Linux server (x86_64, arm64), the
+   Docker image (`ghcr.io/maelbel/havre:X.Y.Z`, `:X.Y`, `:latest`) and the Desktop installers, and prepares a
+   **draft** release with the changelog's notes, the files and `SHA256SUMS`. Check it on GitHub and press
+   *Publish release*.
+
+A tag with a dash (`vX.Y.Z-rc.1`) is a pre-release: same build, marked as such, and `latest` doesn't move (before
+the version's changelog section exists, its notes are *Unreleased*). To rehearse a release, push one, look at the
+draft, then delete the draft, the tag and its image.
+
+The workflow never creates tags; one tag releases both the server and Havre Desktop.
 
 An urgent fix for the released version is an ordinary `fix/` branch, followed by a patch release (`X.Y.Z+1`).
-
-Havre Desktop releases are tagged `desktop-vX.Y.Z`; the *Desktop* workflow builds the installers and drafts the
-GitHub release.
 
 ## Reporting bugs and security issues
 

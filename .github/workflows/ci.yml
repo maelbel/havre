@@ -1,11 +1,13 @@
 # Checks on every pull request and on pushes to main: the server (Rust) and the web UI.
-# Havre Desktop has its own workflow (desktop.yml).
+# Havre Desktop has its own workflow (desktop.yml). release.yml runs these too
+# before building a release.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
