@@ -50,10 +50,30 @@ const menuItems = computed(() => [
     ...(auth.value?.enabled ? [{ label: 'Sign out', icon: 'i-havre-back', onSelect: () => signOut() }] : []),
   ],
 ])
+// ---- Phones ------------------------------------------------------------
+const phone = useIsPhone()
+// Room for five icons and the avatar: Today and four apps. With more apps
+// than that, three stay and the fourth slot becomes "More" (the rest).
+const BAR_APPS = 4
+const barApps = computed(() => (apps.value.length > BAR_APPS ? apps.value.slice(0, BAR_APPS - 1) : apps.value))
+const moreApps = computed(() => apps.value.slice(barApps.value.length))
+const route = useRoute()
+const inMore = computed(() => moreApps.value.some((a) => route.path.startsWith(a.to)))
+// Which sheet is open, if any (one at a time).
+const sheet = ref<'more' | 'account' | null>(null)
+const close = (open: boolean) => {
+  if (!open) sheet.value = null
+}
+// Close a sheet when the page changes (a link inside it was followed).
+watch(() => route.fullPath, () => (sheet.value = null))
+function openSearch() {
+  sheet.value = null
+  palette.value = true
+}
 </script>
 
 <template>
-  <nav class="rail" aria-label="Apps">
+  <nav v-if="!phone" class="rail" aria-label="Apps">
     <div class="logo" role="img" aria-label="Havre">
       <HIcon name="logo" :size="22" :stroke-width="1.9" />
     </div>
@@ -105,6 +125,64 @@ const menuItems = computed(() => [
       </UDropdownMenu>
     </div>
   </nav>
+  <!-- Phones: a bottom bar for the thumb. Today, the first apps of your
+       dock, "More" for the rest, and your account. Search sits at the top
+       of each screen (and in the account sheet). -->
+  <nav v-else class="bar" aria-label="Apps">
+    <NuxtLink to="/" class="item" aria-label="Today" exact-active-class="active">
+      <HIcon name="sun" />
+    </NuxtLink>
+    <NuxtLink
+      v-for="app in barApps"
+      :key="app.to"
+      :to="app.to"
+      class="item"
+      :aria-label="label(app)"
+      active-class="active"
+    >
+      <HIcon :name="app.icon" />
+      <span v-if="app.id === 'mail' && unread" class="badge mono" aria-hidden="true">{{ unread > 99 ? '99+' : unread }}</span>
+      <span v-else-if="app.id === 'tasks' && due" class="badge quiet mono" aria-hidden="true">{{ due > 99 ? '99+' : due }}</span>
+    </NuxtLink>
+    <button
+      v-if="moreApps.length"
+      type="button"
+      class="item"
+      :class="{ active: inMore }"
+      :aria-label="`More apps: ${moreApps.map((a) => a.label).join(', ')}`"
+      @click="sheet = 'more'"
+    >
+      <HIcon name="apps" />
+    </button>
+    <button type="button" class="avatar" :aria-label="me ? `Account and settings: ${me}` : 'Account and settings'" @click="sheet = 'account'">
+      {{ me ? initials(me) : '·' }}
+    </button>
+  </nav>
+
+  <UDrawer v-if="phone" :open="sheet === 'more'" title="More apps" @update:open="close">
+    <template #body>
+      <nav class="sheet" aria-label="More apps">
+        <NuxtLink v-for="app in moreApps" :key="app.to" :to="app.to" class="row" active-class="active" @click="sheet = null">
+          <HIcon :name="app.icon" /><span>{{ app.label }}</span>
+        </NuxtLink>
+        <span class="sep" aria-hidden="true" />
+        <NuxtLink to="/apps" class="row" @click="sheet = null"><HIcon name="apps" /><span>App library</span></NuxtLink>
+        <NuxtLink to="/apps#available" class="row" @click="sheet = null"><HIcon name="plus" /><span>Add an app</span></NuxtLink>
+      </nav>
+    </template>
+  </UDrawer>
+
+  <UDrawer v-if="phone" :open="sheet === 'account'" :title="me || 'Havre'" @update:open="close">
+    <template #body>
+      <nav class="sheet" aria-label="Account">
+        <button type="button" class="row" @click="openSearch"><HIcon name="search" /><span>Search, go to, ask</span></button>
+        <NuxtLink to="/settings" class="row" @click="sheet = null"><HIcon name="settings" /><span>Settings</span></NuxtLink>
+        <NuxtLink v-if="!moreApps.length" to="/apps" class="row" @click="sheet = null"><HIcon name="apps" /><span>App library</span></NuxtLink>
+        <button type="button" class="row" @click="toggle"><HIcon :name="theme === 'dark' ? 'sun' : 'moon'" /><span>{{ theme === 'dark' ? 'Light theme' : 'Dark theme' }}</span></button>
+        <button v-if="auth?.enabled" type="button" class="row" @click="signOut()"><HIcon name="back" /><span>Sign out</span></button>
+      </nav>
+    </template>
+  </UDrawer>
 </template>
 
 <style scoped>
@@ -181,9 +259,13 @@ const menuItems = computed(() => [
   color: var(--muted);
   cursor: pointer;
 }
-.item:hover {
-  background: var(--hover);
-  color: var(--text);
+/* Only with a real pointer: on a touch screen the hover look would stay
+   on the last button tapped. */
+@media (hover: hover) {
+  .item:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
 }
 .item.active {
   background: var(--sel);
@@ -203,27 +285,51 @@ const menuItems = computed(() => [
   flex: 1;
 }
 
-/* Phones: the rail becomes a bottom bar. */
-@media (max-width: 720px) {
-  .rail {
-    order: 2;
-    flex: 0 0 auto;
-    flex-direction: row;
-    justify-content: space-around;
-    padding: 6px 8px;
-    border-right: 0;
-    border-top: 1px solid var(--line);
-  }
-  .logo,
-  .divider,
-  .spacer,
-  .add,
-  .rail > a[href='/settings'] {
-    display: none;
-  }
-  .account {
-    margin-top: 0;
-    align-self: center;
-  }
+/* ---- Phones: the bottom bar and its sheets ---- */
+.bar {
+  order: 2;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  /* Clear of the iPhone home bar / Android gesture bar. */
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+.bar .item.active {
+  color: var(--accent);
+}
+.sheet {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 48px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.row :deep(svg) {
+  color: var(--muted);
+}
+.row:active,
+.row.active {
+  background: var(--sel);
+}
+.sep {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--line);
 }
 </style>

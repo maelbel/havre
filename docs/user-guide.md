@@ -370,9 +370,29 @@ smallest width or press Enter on the line, and click › to bring it back.
 Widths are remembered in that browser, for each app. Smaller screens and
 phones keep their own layout.
 
+### On a phone
+
+Up to 720 px wide, Havre shows one screen at a time:
+
+- **The dock** is at the bottom: Today, then the apps of your dock in your
+  order. With more than four apps, the last button is **More** (the other
+  apps, the App library, *Add an app*). Your initials open **Search**,
+  **Settings**, the theme and *Sign out*.
+- **Search** is the button at the top of a screen: it opens Ctrl+K full
+  screen, with *Mail*, *Event* and *Task* buttons at the bottom.
+- **Mail**: the folder button (top right) opens your inboxes, folders, labels
+  and *Unsent* in a sheet; **Write** is the round button above the dock. In a
+  message, the toolbar keeps Back, Archive, Delete, Move, Label and Snooze;
+  **⋯** has Star, Mark as unread, Reply all, Forward (and Summarize, a note
+  about the email, when those apps are on).
+- **Settings** is a menu (your accounts, your apps, Havre's sections,
+  Appearance); each opens on its own screen with *‹ Settings* to go back.
+- On phones with a notch or a home bar, Havre keeps clear of them.
+
 ## Ctrl+K
 
-**Ctrl+K** (⌘K on a Mac), or the search button in the dock, opens the
+**Ctrl+K** (⌘K on a Mac), or the search button in the dock (on a phone, at
+the top of the screen), opens the
 command palette from anywhere: type to go to an app, start a message, an
 event, a task (`task …`) or a note (`note …`), switch the theme, find a
 person, a task, a note or an email (sender and subject, all accounts). With

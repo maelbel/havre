@@ -123,6 +123,25 @@ async function openNote() {
 }
 defineExpose({ toggleSummary, openTask, openNote })
 
+// Phones: the toolbar keeps Back, Archive, Delete and the menus (move,
+// label, snooze, task); the rest goes in "More" (built here, as data, for
+// Nuxt UI's dropdown).
+const phone = useIsPhone()
+const moreItems = computed(() => [
+  [
+    { label: props.flagged ? 'Unstar' : 'Star', icon: props.flagged ? 'i-havre-star-filled' : 'i-havre-star', onSelect: () => emit('star') },
+    { label: 'Mark as unread', icon: 'i-havre-unread', onSelect: () => emit('markUnread') },
+  ],
+  [
+    { label: 'Reply all', icon: 'i-havre-reply-all', onSelect: () => emit('reply', 'reply_all') },
+    { label: 'Forward', icon: 'i-havre-forward', onSelect: () => emit('reply', 'forward') },
+  ],
+  [
+    ...(ai.value.enabled ? [{ label: 'Summarize', icon: 'i-havre-sparkle', onSelect: toggleSummary }] : []),
+    ...(notesOn.value ? [{ label: 'Note about this email', icon: 'i-havre-note', onSelect: openNote }] : []),
+  ],
+].filter((group) => group.length))
+
 /** "Claire" in "Reply to Claire…". */
 const firstName = computed(() => {
   const from = props.message?.from
@@ -183,6 +202,7 @@ function kind(mime: string, filename: string) {
         </UButton>
         <MoveMenu :folders="folders" :current="message.folder" @move="(to) => emit('move', to)" />
         <UButton
+          class="desk"
           :icon="flagged ? 'i-havre-star-filled' : 'i-havre-star'"
           :color="flagged ? 'primary' : 'neutral'"
           variant="ghost"
@@ -197,6 +217,7 @@ function kind(mime: string, filename: string) {
         <SnoozeMenu :snoozed="snoozed" @snooze="(until) => emit('snooze', until)" />
         <TaskFromMail v-if="tasksOn" ref="taskMenu" :account="account" :message="message" />
         <UButton
+          class="desk"
           v-if="notesOn"
           icon="i-havre-note"
           color="neutral"
@@ -208,7 +229,7 @@ function kind(mime: string, filename: string) {
           :disabled="noting"
           @click="openNote"
         />
-        <span class="sep" aria-hidden="true" />
+        <span class="sep desk" aria-hidden="true" />
         <UButton
           v-if="isDraft"
           icon="i-havre-pen"
@@ -222,6 +243,7 @@ function kind(mime: string, filename: string) {
           <span class="edit-label">Edit draft</span>
         </UButton>
         <UButton
+          class="desk"
           icon="i-havre-reply"
           color="neutral"
           variant="ghost"
@@ -232,6 +254,7 @@ function kind(mime: string, filename: string) {
           @click="emit('reply', 'reply')"
         />
         <UButton
+          class="desk"
           icon="i-havre-reply-all"
           color="neutral"
           variant="ghost"
@@ -242,6 +265,7 @@ function kind(mime: string, filename: string) {
           @click="emit('reply', 'reply_all')"
         />
         <UButton
+          class="desk"
           icon="i-havre-forward"
           color="neutral"
           variant="ghost"
@@ -251,8 +275,9 @@ function kind(mime: string, filename: string) {
           title="Forward (F)"
           @click="emit('reply', 'forward')"
         />
-        <span class="sep" aria-hidden="true" />
+        <span class="sep desk" aria-hidden="true" />
         <UButton
+          class="desk"
           v-if="ai.enabled"
           icon="i-havre-sparkle"
           :color="summarizing ? 'primary' : 'neutral'"
@@ -264,6 +289,7 @@ function kind(mime: string, filename: string) {
           @click="toggleSummary"
         />
         <UButton
+          class="desk"
           icon="i-havre-unread"
           color="neutral"
           variant="ghost"
@@ -274,7 +300,7 @@ function kind(mime: string, filename: string) {
           @click="emit('markUnread')"
         />
         <span class="grow" />
-        <template v-if="position && total">
+        <template v-if="position && total && !phone">
           <span class="pos mono">{{ position }} of {{ total }}</span>
           <UButton
             icon="i-havre-up"
@@ -301,6 +327,10 @@ function kind(mime: string, filename: string) {
             @click="emit('next')"
           />
         </template>
+        <!-- Phones: what doesn't fit in the toolbar, in one menu. -->
+        <UDropdownMenu v-if="phone" :items="moreItems" :content="{ align: 'end' }">
+          <UButton icon="i-havre-ellipsis" color="neutral" variant="ghost" square type="button" aria-label="More: star, unread, reply all, forward…" />
+        </UDropdownMenu>
       </template>
     </div>
 
@@ -384,8 +414,19 @@ function kind(mime: string, filename: string) {
       <button type="button" class="reply-box" @click="emit('reply', 'reply')">
         <HIcon name="reply" :size="16" />
         <span class="grow">Reply to {{ firstName }}…</span>
-        <UKbd value="R" />
+        <UKbd value="R" class="desk" />
       </button>
+      <UButton
+        v-if="phone"
+        icon="i-havre-reply-all"
+        color="neutral"
+        variant="outline"
+        size="lg"
+        square
+        type="button"
+        aria-label="Reply all"
+        @click="emit('reply', 'reply_all')"
+      />
     </div>
 
     <p v-if="!message && !loading && !error" class="state faint">Select a conversation.</p>
@@ -618,6 +659,18 @@ function kind(mime: string, filename: string) {
 @media (max-width: 760px) {
   .back {
     display: inline-flex;
+  }
+  /* Phones: these are in the "More" menu. */
+  .desk {
+    display: none;
+  }
+  .toolbar {
+    gap: 0;
+    overflow-x: auto;
+  }
+  .replybar {
+    display: flex;
+    gap: 8px;
   }
   .body {
     padding: 20px 16px 40px;

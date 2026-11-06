@@ -761,6 +761,9 @@ footer {
     width: 100%;
     height: 100%;
     border-radius: 0;
+    /* Clear of the notch and the home bar. */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
   .composer.minimized {
     right: 12px;

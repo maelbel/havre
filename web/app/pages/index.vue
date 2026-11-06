@@ -228,6 +228,14 @@ async function answer(e: AgendaEvent, response: Response) {
   }
 }
 
+const dateLabel = computed(() => now.value.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }))
+/** "Thomas, Claire +2": who the unread mail is from (the phone tile). */
+const unreadFrom = computed(() => {
+  const names = [...new Set(unread.value.messages.map((m) => (personLabel(m.from) || '').split(' ')[0]).filter(Boolean))]
+  const more = unread.value.total - Math.min(2, names.length)
+  return names.length ? names.slice(0, 2).join(', ') + (more > 0 ? ` +${more}` : '') : ''
+})
+
 const briefTime = computed(() =>
   ai.value.brief_at ? new Date(ai.value.brief_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
 )
@@ -235,16 +243,37 @@ const briefTime = computed(() =>
 
 <template>
   <main class="today">
+    <PhoneHeader :eyebrow="dateLabel" />
     <div class="wrap">
       <div class="col">
         <header class="head">
-          <div class="mono date">{{ now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }) }}</div>
+          <div class="mono date">{{ dateLabel }}</div>
           <h1 class="serif">{{ greeting }}{{ name ? `, ${name}` : '' }}.</h1>
           <p v-if="ai.enabled && brief" class="serif lead" aria-live="polite">{{ brief }}</p>
           <p v-else-if="ai.enabled && briefBusy" class="serif lead faint">Reading your day…</p>
           <p v-else class="serif lead">{{ counted }}</p>
           <p v-if="briefWarning" class="warn">{{ briefWarning }}</p>
         </header>
+
+        <!-- Phones: two tiles to jump to what's waiting (the full lists are
+             further down). -->
+        <nav class="tiles" aria-label="At a glance">
+          <NuxtLink to="/mail" class="tile">
+            <span class="eyebrow">Unread</span>
+            <span class="serif big">{{ unread.total }}</span>
+            <span class="faint small ellipsis">{{ unreadFrom || 'Inbox zero' }}</span>
+          </NuxtLink>
+          <NuxtLink v-if="tasksOn" :to="{ path: '/tasks', query: { view: 'today' } }" class="tile">
+            <span class="eyebrow">Due today</span>
+            <span class="serif big">{{ openDue }}</span>
+            <span class="small ellipsis" :class="lateCount ? 'late' : 'faint'">{{ lateCount ? `${lateCount} late` : 'Nothing late' }}</span>
+          </NuxtLink>
+          <NuxtLink v-else :to="{ path: '/agenda', query: { view: 'day' } }" class="tile">
+            <span class="eyebrow">Meetings</span>
+            <span class="serif big">{{ timed.filter((e) => !isPast(e)).length }}</span>
+            <span class="faint small ellipsis">left today</span>
+          </NuxtLink>
+        </nav>
 
         <section aria-labelledby="t-today" class="block">
           <h2 id="t-today" class="eyebrow-h">Today</h2>
@@ -675,10 +704,52 @@ h1 {
   font: inherit;
   font-size: 13px;
 }
+/* The tiles are for phones only. */
+.tiles {
+  display: none;
+}
 @media (max-width: 720px) {
   .wrap {
-    padding: 28px 16px 40px;
+    padding: 4px 16px 40px;
     gap: 32px;
+  }
+  /* The date is in the phone header. */
+  .date {
+    display: none;
+  }
+  .tiles {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin: -8px 0 28px;
+  }
+  .tile {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 14px;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: var(--raise);
+    color: var(--text);
+    text-decoration: none;
+  }
+  .tile .big {
+    font-size: 30px;
+    line-height: 1.1;
+  }
+  .tile .late {
+    color: var(--danger);
+  }
+  /* Invitations: the answers in a row of their own, easy to tap. */
+  .actions {
+    flex: 1 1 100%;
+  }
+  .actions > * {
+    flex: 1;
+    justify-content: center;
+    min-height: 40px;
   }
   h1 {
     font-size: 34px;

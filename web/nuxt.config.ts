@@ -54,7 +54,9 @@ export default defineNuxtConfig({
       title: 'Havre',
       htmlAttrs: { lang: 'en' },
       meta: [
-        { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+        // `viewport-fit=cover`: on phones with a notch or a home bar the page
+        // fills the screen, and CSS keeps clear of them with `env(safe-area-*)`.
+        { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
         { name: 'color-scheme', content: 'dark light' },
       ],
       link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],

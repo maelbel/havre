@@ -30,11 +30,15 @@ First version, not released yet (0.1.0).
 
 ### Changed
 
+- **On a phone**, Havre is laid out for the thumb: a bottom dock (Today, your first apps, *More*), search at the top
+  of each screen and full screen, Mail's folders in a sheet with a *Write* button, a shorter message toolbar, and
+  Settings as a menu. Wider screens are unchanged.
 - The web UI is built on [Nuxt UI](https://ui.nuxt.com) (buttons, fields, menus, dialogs, toasts, the Ctrl+K
   palette, resizable panes), themed with Havre's colours; icons and fonts are still bundled, nothing is fetched.
 
 ### Fixed
 
+- Settings › Accounts is shown as the current section when `/settings` is opened directly.
 - Opening `/login` while signed in, or with a `next` address pointing to another site, now goes to a Havre page.
 
 ### Security

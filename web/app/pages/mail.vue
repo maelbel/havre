@@ -76,6 +76,29 @@ const folders = useFolders(folderAccount)
 const currentFolder = computed(() => folders.data.value.find((f) => f.path === folder.value))
 const { state: organize, refresh: refreshOrganize } = useOrganize()
 const labelById = computed(() => new Map(organize.value.labels.map((l) => [l.id, l])))
+// ---- Phones: the Folders sheet ------------------------------------------------
+// The sidebar (inboxes, folders, labels, Unsent) is the same component tree
+// on every screen. On a phone it's teleported into `foldersHost`, an element
+// made once here; when the sheet opens, that element is put inside it. So
+// nothing is drawn twice and nothing is reloaded when the sheet opens.
+const phone = useIsPhone()
+const foldersOpen = ref(false)
+const foldersHost = import.meta.client ? document.createElement('div') : 'body'
+const foldersSlot = ref<HTMLElement | null>(null)
+watch(foldersSlot, (el) => {
+  if (el && typeof foldersHost !== 'string') el.appendChild(foldersHost)
+})
+// Picking a folder (or anything that changes the page) closes the sheet.
+watch(
+  () => [route.query.box, route.query.account, route.query.folder, route.query.label],
+  () => (foldersOpen.value = false),
+)
+// So does opening a draft from Unsent (the compose window takes the screen).
+watch(
+  () => useComposer().value?.id,
+  (id) => id && (foldersOpen.value = false),
+)
+
 const folderTitle = computed(() => {
   if (box.value === 'starred') return 'Starred'
   if (box.value === 'snoozed') return 'Snoozed'
@@ -908,6 +931,9 @@ const splitPanes: SplitPaneSpec[] = [
     <!-- Mailboxes -->
     <SplitView id="mail" :panes="splitPanes">
     <template #folders>
+    <!-- On a phone the same sidebar is shown in the Folders sheet: Teleport
+         moves these elements there (they stay one copy, with their state). -->
+    <Teleport :to="foldersHost" :disabled="!phone">
     <aside class="boxes" aria-label="Mailboxes">
       <div class="boxes-head">
         <h1 class="serif">Mail</h1>
@@ -1021,11 +1047,17 @@ const splitPanes: SplitPaneSpec[] = [
       <SyncStatus :status="syncStatus" />
       <LabelManager v-if="labelsOpen" @close="labelsOpen = false; loadFirstPage({ keep: true })" />
     </aside>
+    </Teleport>
     </template>
 
     <!-- Message list -->
     <template #list>
     <section class="list" aria-label="Conversations">
+      <PhoneHeader :title="search ? `“${search}”` : folderTitle" :search="false">
+        <template #actions>
+          <UButton color="neutral" variant="ghost" size="lg" square icon="i-havre-folder" aria-label="Folders and accounts" @click="foldersOpen = true" />
+        </template>
+      </PhoneHeader>
       <div class="list-top">
         <UInput
           ref="searchInput"
@@ -1039,7 +1071,7 @@ const splitPanes: SplitPaneSpec[] = [
           @keydown.enter="query.trim() && (search = query.trim())"
           @keydown.esc="clearSearch"
         >
-          <template v-if="!query" #trailing>
+          <template v-if="!query && !phone" #trailing>
             <UButton
               color="neutral"
               variant="link"
@@ -1327,6 +1359,8 @@ const splitPanes: SplitPaneSpec[] = [
           </UButton>
         </div>
       </div>
+      <!-- Phones: writing is one tap away (there's no "C" key). -->
+      <UButton v-if="phone" icon="i-havre-pen" size="xl" class="write-fab" aria-label="New message" @click="write()">Write</UButton>
     </section>
     </template>
 
@@ -1365,6 +1399,12 @@ const splitPanes: SplitPaneSpec[] = [
     />
     </template>
     </SplitView>
+
+    <UDrawer v-if="phone" v-model:open="foldersOpen" title="Folders and accounts">
+      <template #body>
+        <div ref="foldersSlot" class="folders-sheet" />
+      </template>
+    </UDrawer>
 
     <!-- Who wrote it: what Havre knows about them (wide screens). -->
     <aside v-if="detail && person" class="about" :aria-label="`About ${personName(person)}`">
@@ -2098,7 +2138,37 @@ code {
   }
 }
 /* Phones: one pane at a time — the list, or the open message. */
+.write-fab {
+  position: fixed;
+  right: 16px;
+  /* Above the dock (and the home bar). */
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 5;
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+}
+.has-selection .write-fab {
+  display: none;
+}
+/* The sidebar, inside the Folders sheet. */
+.folders-sheet .boxes {
+  display: flex;
+  padding: 0;
+  border-right: 0;
+  background: transparent;
+}
+.folders-sheet .boxes-head,
+.folders-sheet .compose {
+  display: none;
+}
 @media (max-width: 760px) {
+  /* The folder's name is the big title in the phone header. */
+  .list-head h2 {
+    display: none;
+  }
+  .list-head {
+    padding-left: 12px;
+  }
   .list {
     flex: 1;
     min-width: 0;
