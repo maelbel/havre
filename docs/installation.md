@@ -3,7 +3,8 @@
 ## Requirements
 
 - A server, NAS or computer that stays on (Havre is one small Rust process and a SQLite file).
-- **Docker** with Compose — or, to build from source, **Rust** (stable), **Node.js 22+** and **pnpm**.
+- **Docker** with Compose — or a release download (Linux) — or, to build from source, **Rust** (stable),
+  **Node.js 22+** and **pnpm**.
 - Optional: [Ollama](https://ollama.com) for local AI, a reverse proxy (Caddy, Traefik…) for HTTPS.
 
 ## With Docker (recommended)
@@ -20,6 +21,32 @@ accounts**. Data lives in the `havre-data` volume; `TZ` in `docker-compose.yml` 
 morning brief.
 
 To update: `git pull && docker compose up -d --build`.
+
+### With the ready-made image
+
+Each release also publishes an image, for PCs and servers (amd64) and the Raspberry Pi 4/5 (arm64):
+`ghcr.io/maelbel/havre:<version>` (or `:latest`). No build on your machine: in `docker-compose.yml`, replace the
+`build:` lines with `image: ghcr.io/maelbel/havre:0.1.0`, then `docker compose up -d`. To update, change the
+version and run `docker compose pull && docker compose up -d`.
+
+To check that an image was built by Havre's release workflow:
+`gh attestation verify oci://ghcr.io/maelbel/havre:0.1.0 --repo maelbel/havre`.
+
+## From a release (Linux)
+
+On the [Releases](https://github.com/maelbel/havre/releases) page, download `havre-<version>-linux-x86_64.tar.gz`
+(a PC or server) or `…-linux-arm64.tar.gz` (Raspberry Pi 4/5 with a 64-bit OS), and `SHA256SUMS`. They run on
+Debian 12 / Raspberry Pi OS (bookworm), Ubuntu 22.04 and newer.
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing     # the file is the one published
+tar xzf havre-0.1.0-linux-arm64.tar.gz && cd havre-0.1.0-linux-arm64
+cp .env.example .env
+./havre                                      # http://127.0.0.1:8080
+```
+
+The web UI is in `web/.output/public` next to `havre`, where `HAVRE_WEB_DIR` looks by default. `gh attestation verify
+<file> --repo maelbel/havre` also proves a download was built by the release workflow from Havre's code.
 
 ## From source
 

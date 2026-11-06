@@ -27,6 +27,8 @@ First version, not released yet (0.1.0).
   following ones, or all.
 - **Ctrl+K** palette, **MCP** endpoint for AI apps (Claude Code and others), **Havre Desktop** (Windows, macOS,
   Linux), nightly **backups** with a recovery key, **Docker** image.
+- **Releases** from a signed tag: Linux downloads (x86_64, arm64 for the Raspberry Pi), the image on
+  `ghcr.io/maelbel/havre` (amd64, arm64) and the Desktop installers, with checksums and build attestations.
 
 ### Changed
 

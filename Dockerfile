@@ -1,5 +1,6 @@
 # Havre — one image, one process.
-# Build from the project root:  docker build -f docker/Dockerfile -t havre .
+# Build from the project root:  docker build -t havre .
+# Releases publish it ready-made: ghcr.io/maelbel/havre (amd64, arm64).
 
 # 1. Web UI → static files
 FROM node:22-bookworm-slim AS web

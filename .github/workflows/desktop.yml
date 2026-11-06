@@ -3,7 +3,8 @@
 # - On every push touching desktop/ (or by hand from the Actions tab): the
 #   installers are attached to the run as artifacts (Actions › the run ›
 #   Artifacts).
-# - On a tag like `desktop-v0.1.0`: also a draft GitHub release with them.
+# - On a release tag (`vX.Y.Z`): release.yml calls this workflow and puts the
+#   installers in the draft release, next to the server.
 #
 # The apps are not code-signed yet: Windows SmartScreen and macOS
 # Gatekeeper warn on first launch (see desktop/README.md).
@@ -12,8 +13,11 @@ name: Desktop
 on:
   push:
     paths: ["desktop/**", ".github/workflows/desktop.yml"]
-    tags: ["desktop-v*"]
   workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -67,17 +71,12 @@ jobs:
         with: { workspaces: desktop/src-tauri, key: "${{ matrix.args }}" }
       - run: pnpm install --frozen-lockfile
         working-directory: desktop
+      # Builds only: the release (if any) is made by release.yml.
       - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: desktop
           tauriScript: pnpm tauri
           args: ${{ matrix.args }}
-          # Only for tags: a draft release you publish yourself.
-          tagName: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && github.ref_name || '' }}
-          releaseName: "Havre Desktop ${{ github.ref_name }}"
-          releaseDraft: true
       - uses: actions/upload-artifact@v4
         with:
           name: havre-desktop-${{ runner.os }}${{ contains(matrix.args, 'x86_64') && '-intel' || '' }}

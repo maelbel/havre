@@ -1,0 +1,240 @@
+# Release: a signed tag `vX.Y.Z` pushed on main builds everything and
+# prepares a DRAFT GitHub release, which you check and publish yourself.
+#
+#   check    the tag matches the versions, the changelog has its notes, CI passes
+#   server   Linux binaries (x86_64, arm64) with the web UI, as .tar.gz
+#   image    the Docker image on ghcr.io (amd64 + arm64, one name)
+#   desktop  the Havre Desktop installers (desktop.yml)
+#   release  the draft release: notes, files, SHA256SUMS
+#
+# Tags with a dash (`v0.2.0-rc.1`) are pre-releases: same build, marked as
+# such, and the image doesn't move `latest`.
+#
+# The workflow never creates tags: the tag (signed, `git tag -s`) is yours.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Read-only by default; the jobs that publish ask for more, one by one.
+permissions:
+  contents: read
+
+# One release at a time for a tag; never cancel a release half-way.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  check:
+    name: Versions and notes
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: The tag matches the versions in the code
+        run: |
+          tag="${GITHUB_REF_NAME#v}"          # 0.1.0 or 0.1.0-rc.1
+          base="${tag%%-*}"                   # 0.1.0
+          if [ "$tag" != "$base" ]; then pre=true; else pre=false; fi
+          # [workspace.package] version in Cargo.toml
+          cargo=$(awk '/^\[workspace.package\]/{p=1;next} /^\[/{p=0} p && /^version *=/{gsub(/[" ]/,"",$0); sub("version=","",$0); print; exit}' Cargo.toml)
+          desktop=$(awk '/^version *=/{gsub(/[" ]/,"",$0); sub("version=","",$0); print; exit}' desktop/src-tauri/Cargo.toml)
+          tauri=$(jq -r .version desktop/src-tauri/tauri.conf.json)
+          echo "tag $tag · Cargo.toml $cargo · desktop $desktop · tauri.conf.json $tauri"
+          for v in "$cargo" "$desktop" "$tauri"; do
+            if [ "$v" != "$base" ]; then
+              echo "::error::The tag says $base but a version in the code says $v. Set it everywhere (see CONTRIBUTING.md › Releases) and tag again."
+              exit 1
+            fi
+          done
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
+      - name: Release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          PRERELEASE: ${{ steps.v.outputs.prerelease }}
+        run: |
+          base="${VERSION%%-*}"
+          # The lines between "## [X.Y.Z]" and the next "## [" heading (or the
+          # link list at the bottom: "[0.1.0]: https://…").
+          section() { awk -v h="## [$1]" 'index($0, h) == 1 {p=1; next} /^## \[/ || /^\[[^]]+\]: / {p=0} p' CHANGELOG.md; }
+          notes=$(section "$base")
+          # A pre-release may come before the changelog has its section.
+          if [ -z "$(echo "$notes" | tr -d '[:space:]')" ] && [ "$PRERELEASE" = true ]; then notes=$(section Unreleased); fi
+          if [ -z "$(echo "$notes" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG.md has no '## [$base]' section: move Unreleased to it first."
+            exit 1
+          fi
+          printf '%s\n' "$notes" > notes.md
+      - uses: actions/upload-artifact@v4
+        with: { name: notes, path: notes.md }
+
+  ci:
+    name: Checks
+    uses: ./.github/workflows/ci.yml
+
+  server:
+    name: Server (${{ matrix.arch }})
+    needs: [check, ci]
+    strategy:
+      matrix:
+        include:
+          # Ubuntu 22.04 (glibc 2.35): the binaries also run on Debian 12 /
+          # Raspberry Pi OS and newer. Each one is built on its own processor.
+          - { arch: x86_64, runner: ubuntu-22.04 }
+          - { arch: arm64, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write       # build attestations (who built this file, from what)
+      attestations: write
+    env:
+      NAME: havre-${{ needs.check.outputs.version }}-linux-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: web/package.json }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile && pnpm build
+        working-directory: web
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p havre-server
+      - name: Package
+        # The web UI keeps its usual path, so the default HAVRE_WEB_DIR works.
+        run: |
+          mkdir -p "$NAME/web/.output"
+          cp target/release/havre "$NAME/"
+          cp -r web/.output/public "$NAME/web/.output/public"
+          cp LICENSE README.md CHANGELOG.md .env.example "$NAME/"
+          tar czf "$NAME.tar.gz" "$NAME"
+      - uses: actions/attest-build-provenance@v2
+        with: { subject-path: "${{ env.NAME }}.tar.gz" }
+      - uses: actions/upload-artifact@v4
+        with: { name: "server-${{ matrix.arch }}", path: "${{ env.NAME }}.tar.gz", if-no-files-found: error }
+
+  # The image is built natively for each processor and pushed by digest
+  # (no name yet); `image` then joins both under the version's names.
+  image-build:
+    name: Image (${{ matrix.platform }})
+    needs: [check, ci]
+    strategy:
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-latest }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.check.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=MIT
+      - name: Keep the digest
+        env: { DIGEST: "${{ steps.build.outputs.digest }}" }
+        run: mkdir -p digests && touch "digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with: { name: "digest-${{ strategy.job-index }}", path: digests/*, if-no-files-found: error }
+
+  image:
+    name: Image
+    needs: [check, image-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: digests, pattern: digest-*, merge-multiple: true }
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # 0.1.0, 0.1 and latest; a pre-release only gets its own tag.
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.check.outputs.prerelease == 'false' }}
+            type=raw,value=latest,enable=${{ needs.check.outputs.prerelease == 'false' }}
+      - name: One name for both processors
+        working-directory: digests
+        env: { TAGS: "${{ steps.meta.outputs.tags }}" }
+        run: |
+          args=(); while read -r t; do [ -n "$t" ] && args+=(-t "$t"); done <<< "$TAGS"
+          docker buildx imagetools create "${args[@]}" $(printf "$IMAGE@sha256:%s " *)
+      - id: digest
+        env: { VERSION: "${{ steps.meta.outputs.version }}" }
+        run: echo "digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@v2
+        with: { subject-name: "${{ env.IMAGE }}", subject-digest: "${{ steps.digest.outputs.digest }}", push-to-registry: true }
+
+  desktop:
+    name: Desktop
+    needs: [check]
+    uses: ./.github/workflows/desktop.yml
+
+  release:
+    name: Draft release
+    needs: [check, server, image, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # only this job writes: it creates the release
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: files, merge-multiple: true, pattern: "server-*" }
+      - uses: actions/download-artifact@v4
+        with: { path: files, merge-multiple: true, pattern: "havre-desktop-*" }
+      - uses: actions/download-artifact@v4
+        with: { name: notes }
+      - name: Files and checksums
+        run: |
+          mkdir -p out
+          find files -type f -exec cp {} out/ \;
+          cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check.outputs.version }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
+        run: |
+          {
+            cat notes.md
+            echo
+            echo "### Install"
+            echo
+            echo "- **Docker**: \`ghcr.io/${GITHUB_REPOSITORY}:${VERSION}\` (amd64, arm64)."
+            echo "- **Linux**: \`havre-${VERSION}-linux-x86_64.tar.gz\` or \`…-arm64.tar.gz\` (Raspberry Pi 4/5, 64-bit)."
+            echo "- **Havre Desktop**: the installers below (not code-signed yet, see desktop/README.md)."
+            echo
+            echo "Check a download: \`sha256sum -c SHA256SUMS --ignore-missing\`, or"
+            echo "\`gh attestation verify <file> --repo ${GITHUB_REPOSITORY}\`."
+          } > body.md
+          flags=(--draft --verify-tag --title "Havre ${VERSION}" --notes-file body.md --repo "$GITHUB_REPOSITORY")
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" out/*
