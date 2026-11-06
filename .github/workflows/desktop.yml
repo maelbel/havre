@@ -72,7 +72,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: desktop
       # Builds only: the release (if any) is made by release.yml.
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         with:
           projectPath: desktop
           tauriScript: pnpm tauri
