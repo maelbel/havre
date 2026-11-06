@@ -132,12 +132,7 @@ impl Backups {
                 continue;
             }
             let Ok(meta) = entry.metadata() else { continue };
-            let created_at = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_secs() as i64);
-            files.push(BackupFile { name, size: meta.len(), created_at });
+            files.push(BackupFile { name, size: meta.len(), created_at: modified_at(&meta) });
         }
         files.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.name.cmp(&a.name)));
         Ok(files)
@@ -241,9 +236,12 @@ impl Backups {
         check(&partial).await?;
         crate::secrets::restrict_permissions(&partial);
         std::fs::rename(&partial, &path)?;
-        let size = std::fs::metadata(&path)?.len();
+        let meta = std::fs::metadata(&path)?;
+        let size = meta.len();
         tracing::info!(file = %path.display(), size, "backup made");
-        Ok(BackupFile { name, size, created_at: chrono::Utc::now().timestamp() })
+        // The file's own time, as `list()` reads it: "now" could already be a
+        // second later, and the two would disagree about the same backup.
+        Ok(BackupFile { name, size, created_at: modified_at(&meta) })
     }
 
     /// Runs forever: makes the nightly backup when it's time.
@@ -409,6 +407,14 @@ fn replace(data_dir: &Path, backup: &Path, key: Option<&str>) -> Result<()> {
         crate::secrets::restrict_permissions(&key_file);
     }
     Ok(())
+}
+
+/// When a file was last written, in unix seconds (0 if the system can't say).
+fn modified_at(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 #[cfg(test)]
