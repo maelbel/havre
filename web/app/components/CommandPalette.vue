@@ -29,8 +29,13 @@ interface Item {
   hint?: string
   icon: IconName
   keywords?: string
+  /** The hint is a keyboard shortcut (not shown on phones). */
+  keys?: boolean
   run: () => void | Promise<void>
 }
+
+// Phones: the palette is the full-screen search (Cancel to leave).
+const phone = useIsPhone()
 
 function close() {
   open.value = false
@@ -100,8 +105,8 @@ const commands = computed<Item[]>(() => [
       ]
     : []),
   { id: 'mcp-settings', group: 'Go to', label: 'Settings › Connections (MCP)', icon: 'command', keywords: 'mcp connect claude code ai', run: go('/settings/connections') },
-  { id: 'write', group: 'Actions', label: 'New message', hint: 'C in Mail', icon: 'pen', keywords: 'write compose email', run: newMessage },
-  { id: 'event', group: 'Actions', label: 'New event', hint: 'N in Agenda', icon: 'plus', keywords: 'meeting create', run: go('/agenda?new=1') },
+  { id: 'write', group: 'Actions', label: 'New message', hint: 'C in Mail', keys: true, icon: 'pen', keywords: 'write compose email', run: newMessage },
+  { id: 'event', group: 'Actions', label: 'New event', hint: 'N in Agenda', keys: true, icon: 'plus', keywords: 'meeting create', run: go('/agenda?new=1') },
   {
     id: 'theme',
     group: 'Actions',
@@ -327,7 +332,7 @@ const groups = computed(() => {
     g.items.push({
       id: item.id,
       label: item.label,
-      suffix: item.hint,
+      suffix: phone.value && item.keys ? undefined : item.hint,
       icon: havreIcon(item.icon),
       class: item.id === 'ask' ? 'ask' : undefined,
       onSelect: (e: Event) => {
@@ -505,11 +510,15 @@ function onPlanKey(e: KeyboardEvent) {
   <UModal
     :open="open"
     title="Command palette"
+    :fullscreen="phone"
     :ui="{
       header: 'sr-only',
       body: 'p-0 sm:p-0 flex flex-1 flex-col min-h-0 overflow-hidden',
       // `sm:` too: Nuxt UI's own height limit is an `sm:` class, which would win otherwise.
-      content: `max-w-[680px] sm:top-[12vh] sm:translate-y-0 ${mode === 'chat' ? 'h-[70vh] sm:h-[70vh]' : 'max-h-[72vh] sm:max-h-[72vh]'}`,
+      // On a phone: the whole screen (clear of the notch and the home bar).
+      content: phone
+        ? 'pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]'
+        : `max-w-[680px] sm:top-[12vh] sm:translate-y-0 ${mode === 'chat' ? 'h-[70vh] sm:h-[70vh]' : 'max-h-[72vh] sm:max-h-[72vh]'}`,
     }"
     @update:open="onOpenChange"
   >
@@ -526,8 +535,17 @@ function onPlanKey(e: KeyboardEvent) {
           @keydown="onSearchKey"
         >
           <template #empty>Nothing matches.</template>
+          <template v-if="phone" #close>
+            <UButton color="neutral" variant="link" label="Cancel" @click="close" />
+          </template>
         </UCommandPalette>
-        <footer class="foot">
+        <!-- Phones: no keys to hint at; the usual "new" buttons instead. -->
+        <footer v-if="phone" class="phone-actions">
+          <UButton color="neutral" variant="outline" size="lg" icon="i-havre-pen" label="Mail" aria-label="New message" @click="newMessage" />
+          <UButton color="neutral" variant="outline" size="lg" icon="i-havre-calendar" label="Event" aria-label="New event" @click="go('/agenda?new=1')()" />
+          <UButton v-if="tasksOn" color="neutral" variant="outline" size="lg" icon="i-havre-task" label="Task" aria-label="New task" @click="q = 'task '; focusSearch()" />
+        </footer>
+        <footer v-else class="foot">
           <span><UKbd value="↑" /><UKbd value="↓" /> move</span>
           <span><UKbd value="Enter" /> open</span>
           <span v-if="ai.enabled"><UKbd value="Tab" /> ask AI</span>
@@ -867,10 +885,14 @@ function onPlanKey(e: KeyboardEvent) {
   font-size: 11.5px;
   color: var(--faint);
 }
-@media (max-width: 720px) {
-  /* Key hints are for keyboards. */
-  .foot {
-    display: none;
-  }
+.phone-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+.phone-actions > * {
+  flex: 1;
+  justify-content: center;
 }
 </style>

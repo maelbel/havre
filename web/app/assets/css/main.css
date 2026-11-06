@@ -110,6 +110,13 @@
   #__nuxt {
     height: 100%;
   }
+  /* Phones: the browser's bars come and go; `dvh` is the height that's
+     really visible, so the bottom dock never hides under them. */
+  @supports (height: 100dvh) {
+    #__nuxt {
+      height: 100dvh;
+    }
+  }
 
   body {
     margin: 0;
