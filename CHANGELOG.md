@@ -6,7 +6,9 @@ All notable changes to Havre are listed here. The format follows
 
 ## [Unreleased]
 
-First version, not released yet (0.1.0).
+## [0.1.0] - 2026-11-07
+
+The first release.
 
 ### Added
 
@@ -44,6 +46,8 @@ First version, not released yet (0.1.0).
 
 ### Fixed
 
+- A bad `HAVRE_BIND` (a name like `localhost`, quotes, a Windows line ending) stopped Havre with "invalid socket
+  address syntax"; spaces and line endings are now ignored, and anything else is explained.
 - Settings › Accounts is shown as the current section when `/settings` is opened directly.
 - Opening `/login` while signed in, or with a `next` address pointing to another site, now goes to a Havre page.
 
@@ -53,4 +57,5 @@ First version, not released yet (0.1.0).
 - Email HTML sanitised and sandboxed; the assistant only proposes changes, confirmed by the user.
 - The web UI loads nothing from other servers.
 
-[Unreleased]: https://github.com/maelbel/havre/commits/main
+[Unreleased]: https://github.com/maelbel/havre/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/maelbel/havre/releases/tag/v0.1.0
