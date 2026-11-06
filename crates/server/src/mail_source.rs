@@ -108,6 +108,21 @@ impl MailSource {
         self.manager()?.send_draft(id).await
     }
 
+    /// A draft from the server's Drafts folder, to finish in Havre.
+    pub async fn draft_from_message(&self, account: i64, folder: &str, uid: u32) -> Result<Draft> {
+        self.manager()?.draft_from_message(account, folder, uid).await
+    }
+
+    /// Saves a draft on the server now (its window closed).
+    pub async fn save_draft_to_server(&self, id: i64) -> Result<Draft> {
+        self.manager()?.save_draft_to_server(id).await
+    }
+
+    /// Discards a draft, in Havre and on the server.
+    pub async fn discard_draft(&self, id: i64) -> Result<()> {
+        self.manager()?.discard_draft(id).await
+    }
+
     pub async fn contacts(&self, query: &str) -> Result<Vec<Contact>> {
         match self {
             Self::Demo(_) => Ok(Vec::new()),

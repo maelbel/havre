@@ -33,7 +33,7 @@ Each step teaches something and leaves the app working.
 - Later: several users, passkeys.
 - ✅ Compose, reply, reply all, forward with SMTP (`lettre`): password or OAuth2 (`XOAUTH2`), copy filed in Sent, `\Answered` flag.
 - ✅ Drafts saved as you type, attachments, recipient suggestions; SMTP settings and sender name per account.
-- Later: rich text editor, signatures, drafts synced to the server's Drafts folder, undo send, send later.
+- Later: rich text editor, signatures, undo send, send later. (Drafts on the server: step 17.)
 
 ## 4 · Agenda ✅
 - ✅ Day, week and month views; create, edit, move between calendars, delete; guests.
@@ -255,3 +255,16 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - *Learned:* recurrence rules (`RRULE`, `RECURRENCE-ID`, `EXDATE`, `UNTIL` in UTC), wall-clock time versus UTC
   across daylight saving (`chrono-tz`), three APIs' ways to describe the same series, Rust's `let`-chains.
 
+## 17 · Drafts on the mail server ✅
+- ✅ Every draft also has a copy in its account's Drafts folder (`APPEND` with `\Draft`), written 15 s after the last
+  change and when the window closes, so other mail apps see it. One copy per draft: each version replaces the
+  previous one, found by the draft's own `Message-ID` (`UID EXPUNGE`, never a folder-wide `EXPUNGE`).
+- ✅ Sending or discarding removes the copy; moving the draft to another account moves it.
+- ✅ A draft started elsewhere opens in the compose window (*Edit draft*): recipients, `Bcc`, subject, text,
+  attachments; saving replaces that copy.
+- ✅ The compose window says where the draft is saved; *Unsent* lists the drafts not on the server (with why).
+  Failures are kept and retried every 2 minutes: Havre's copy stays the reference.
+- Later: changes made elsewhere appearing live in an open compose window, rich text drafts, creating a Drafts folder
+  when a server has none.
+- *Learned:* IMAP `APPEND`, `UIDPLUS` and `UID EXPUNGE`, searching by header, a background loop with a `Weak`
+  pointer, a version counter instead of a "dirty" flag (no change lost while a save is in flight).

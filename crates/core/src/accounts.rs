@@ -35,6 +35,9 @@ pub struct AccountManager {
     events: broadcast::Sender<AccountEvent>,
     /// OAuth2 sign-ins in progress, by flow id.
     sign_ins: Mutex<HashMap<String, SignIn>>,
+    /// One draft saved to a server at a time (the background loop and
+    /// "close" could otherwise write the same draft twice at once).
+    pub(crate) drafts_lock: Mutex<()>,
 }
 
 /// An OAuth2 sign-in in progress.
@@ -147,6 +150,7 @@ impl AccountManager {
             engines: RwLock::new(HashMap::new()),
             events: broadcast::channel(256).0,
             sign_ins: Mutex::new(HashMap::new()),
+            drafts_lock: Mutex::new(()),
         });
         for account in manager.db.accounts().await? {
             if let Err(err) = manager.start_engine(account.id).await {
@@ -156,6 +160,8 @@ impl AccountManager {
         // Wakes snoozed messages up when their time comes. A `Weak` pointer:
         // the loop must not keep the manager alive on its own.
         tokio::spawn(snooze_loop(Arc::downgrade(&manager)));
+        // Saves drafts to their account's Drafts folder as they change.
+        tokio::spawn(crate::compose::drafts_loop(Arc::downgrade(&manager)));
         Ok(manager)
     }
 

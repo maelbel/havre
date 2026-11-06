@@ -18,6 +18,8 @@ const props = defineProps<{
   /** "3 of 40": where the open message is in the list (0: not in it). */
   position?: number
   total?: number
+  /** In the Drafts folder: it can be finished in the compose window. */
+  isDraft?: boolean
 }>()
 const emit = defineEmits<{
   back: []
@@ -33,6 +35,7 @@ const emit = defineEmits<{
   star: []
   label: [label: number, on: boolean]
   snooze: [until: number | null]
+  editDraft: []
 }>()
 
 // Deleting from the Trash is permanent: the first click arms the button,
@@ -206,6 +209,18 @@ function kind(mime: string, filename: string) {
           @click="openNote"
         />
         <span class="sep" aria-hidden="true" />
+        <UButton
+          v-if="isDraft"
+          icon="i-havre-pen"
+          size="sm"
+          type="button"
+          class="edit-draft"
+          aria-label="Edit draft"
+          title="Finish this draft"
+          @click="emit('editDraft')"
+        >
+          <span class="edit-label">Edit draft</span>
+        </UButton>
         <UButton
           icon="i-havre-reply"
           color="neutral"
@@ -615,6 +630,16 @@ function kind(mime: string, filename: string) {
   }
   .subject {
     font-size: 24px;
+  }
+}
+.edit-draft {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* Phones: the pen alone (the toolbar is full). */
+@media (max-width: 560px) {
+  .edit-label {
+    display: none;
   }
 }
 </style>

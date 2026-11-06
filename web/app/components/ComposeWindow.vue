@@ -56,9 +56,10 @@ async function flush() {
   const snapshot = { ...form }
   status.value = 'saving'
   saving = saveDraft(id, diff)
-    .then(() => {
+    .then((d) => {
       saved = snapshot
       status.value = 'saved'
+      server.value = serverState(d)
     })
     .catch((err) => {
       status.value = 'idle'
@@ -66,6 +67,39 @@ async function flush() {
     })
   await saving
 }
+
+// ---- On the server --------------------------------------------------------------
+// The server keeps a copy in its Drafts folder (saved a few seconds after
+// you stop typing): the line under the text says where the draft is.
+
+type Server = Pick<Draft, 'server_saved_at' | 'server_pending' | 'server_error'>
+const server = ref<Server | null>(null)
+const serverState = (d: Draft): Server => ({
+  server_saved_at: d.server_saved_at,
+  server_pending: d.server_pending,
+  server_error: d.server_error,
+})
+const where = computed(() => {
+  const s = server.value
+  // Nothing written yet: nothing to keep anywhere.
+  const empty = !form.to.trim() && !form.cc.trim() && !form.bcc.trim() && !form.subject.trim() && !form.body.trim()
+  if (!s || (empty && !draft.value?.attachments.length)) return null
+  if (s.server_error) return { text: s.server_error, warn: true, icon: 'alert' as const }
+  if (s.server_pending) return { text: 'Saved in Havre · saving to the server…', warn: false, icon: 'loading' as const }
+  return { text: 'Saved · in Drafts on the server', warn: false, icon: 'check' as const }
+})
+// While it's behind, look again now and then (the server saves it in the background).
+const watcher = setInterval(async () => {
+  const id = draft.value?.id
+  if (!id || !server.value?.server_pending || server.value.server_error) return
+  try {
+    const d = await fetchDraft(id)
+    if (draft.value?.id === id) server.value = serverState(d)
+  } catch {
+    /* closed or gone */
+  }
+}, 8000)
+onBeforeUnmount(() => clearInterval(watcher))
 
 // ---- Loading ------------------------------------------------------------------
 
@@ -82,6 +116,7 @@ watch(
     try {
       const d = await fetchDraft(id)
       draft.value = d
+      server.value = serverState(d)
       Object.assign(form, { account: d.account, to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, body: d.body })
       showCc.value = !!d.cc
       showBcc.value = !!d.bcc
@@ -213,7 +248,13 @@ async function close() {
   await flush()
   const empty = !form.to.trim() && !form.subject.trim() && !form.body.trim() && !draft.value?.attachments.length
   if (draft.value && empty) await discardDraft(draft.value.id).catch(() => {})
-  else if (draft.value) toast.show('Saved in Drafts')
+  else if (draft.value) {
+    toast.show('Saved in Drafts')
+    // To the server now; the list updates when it's there.
+    closeDraft(draft.value.id)
+      .catch(() => {})
+      .finally(() => refreshNuxtData('drafts'))
+  }
   finish()
   refreshNuxtData('drafts')
 }
@@ -449,6 +490,10 @@ const fromItems = computed(() =>
 
         <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" class="error" />
 
+        <p v-if="where" class="where" :class="{ warn: where.warn }" role="status">
+          <HIcon :name="where.icon" :size="13" :class="{ spin: where.icon === 'loading' }" />
+          <span>{{ where.text }}</span>
+        </p>
         <footer>
           <UButton icon="i-havre-send" type="submit" :loading="sending" :disabled="sending || (account && !account.can_send)">
             {{ sending ? 'Sending…' : 'Send' }}
@@ -538,6 +583,35 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.where {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 6px 16px 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+.where.warn {
+  color: var(--danger);
+}
+.where span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.where :deep(svg) {
+  flex: 0 0 auto;
+}
+.spin {
+  animation: spin 1.2s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .status {
   font-size: 12px;

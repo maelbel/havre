@@ -9,6 +9,12 @@
 //!   token (`XOAUTH2`).
 //! - Then a copy goes into the "Sent" folder (`APPEND`) — except for Gmail
 //!   and Microsoft 365, whose servers file sent mail themselves.
+//! - **On the server** (step 17): each draft also has a copy in its account's
+//!   Drafts folder, so other mail apps see it. A background loop writes it
+//!   15 s after the last change (closing the window writes it at once); each
+//!   version replaces the previous one, found by the draft's own
+//!   `Message-ID`. Havre's copy stays the reference: if the server fails,
+//!   nothing is lost and Havre tries again later.
 
 use std::{str::FromStr, time::Duration};
 
@@ -208,12 +214,39 @@ pub struct Draft {
     pub body: String,
     pub attachments: Vec<DraftAttachment>,
     pub updated_at: i64,
+    /// When its copy was last saved in the server's Drafts folder.
+    pub server_saved_at: Option<i64>,
+    /// Changed since then: the server copy is behind.
+    pub server_pending: bool,
+    /// Why the last save to the server failed.
+    pub server_error: Option<String>,
     #[serde(skip)]
     in_reply_to: Option<String>,
     #[serde(skip)]
     references: Option<String>,
     #[serde(skip)]
     source: Option<(String, u32)>,
+    #[serde(skip)]
+    server: ServerCopy,
+}
+
+impl Draft {
+    /// Nothing written yet.
+    fn is_empty(&self) -> bool {
+        [&self.to, &self.cc, &self.bcc, &self.subject, &self.body].iter().all(|f| f.trim().is_empty())
+            && self.attachments.is_empty()
+    }
+}
+
+/// Where a draft's copy on the mail server is, and which version it holds.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct ServerCopy {
+    message_id: Option<String>,
+    version: i64,
+    saved_version: Option<i64>,
+    account: Option<i64>,
+    folder: Option<String>,
+    uid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -237,6 +270,11 @@ pub struct DraftUpdate {
 
 /// The largest attachment total accepted (most servers refuse ~25 MB).
 pub const MAX_ATTACHMENTS: usize = 25 * 1024 * 1024;
+
+/// A draft is saved on the server once it hasn't changed for this long…
+pub(crate) const SERVER_QUIET: i64 = 15;
+/// …and after a failure, tried again this much later.
+pub(crate) const SERVER_RETRY: i64 = 120;
 
 /// Drafts in the database.
 #[derive(Clone)]
@@ -311,7 +349,10 @@ impl Drafts {
     }
 
     pub async fn update(&self, id: i64, update: &DraftUpdate) -> Result<Draft> {
-        let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new("UPDATE drafts SET updated_at = ");
+        // Each change counts (`version`): the server copy is behind until
+        // it holds the newest one.
+        let mut sql =
+            sqlx::QueryBuilder::<sqlx::Sqlite>::new("UPDATE drafts SET version = version + 1, updated_at = ");
         sql.push_bind(now());
         let fields = [
             ("to_addrs", &update.to),
@@ -373,17 +414,97 @@ impl Drafts {
         .bind(&file.bytes)
         .fetch_one(&self.pool)
         .await?;
-        sqlx::query("UPDATE drafts SET updated_at = ? WHERE id = ?")
-            .bind(now())
-            .bind(draft)
-            .execute(&self.pool)
-            .await?;
+        self.touch(draft).await?;
         Ok(DraftAttachment { id, filename, mime: file.mime.clone(), size: file.bytes.len() as i64 })
     }
 
     pub async fn remove_attachment(&self, draft: i64, attachment: i64) -> Result<()> {
         sqlx::query("DELETE FROM draft_attachments WHERE id = ? AND draft_id = ?")
             .bind(attachment)
+            .bind(draft)
+            .execute(&self.pool)
+            .await?;
+        self.touch(draft).await
+    }
+
+    /// A change that isn't a field (an attachment added or removed).
+    async fn touch(&self, draft: i64) -> Result<()> {
+        sqlx::query("UPDATE drafts SET version = version + 1, updated_at = ? WHERE id = ?")
+            .bind(now())
+            .bind(draft)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // ---- The copy on the server ----------------------------------------------------------
+
+    /// Drafts whose server copy is behind, quiet for `SERVER_QUIET` seconds
+    /// and not tried in the last `SERVER_RETRY` (oldest first). An empty one
+    /// (a window just opened) isn't worth a copy.
+    pub(crate) async fn due_on_server(&self, now: i64) -> Result<Vec<i64>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM drafts
+             WHERE (server_version IS NULL OR server_version <> version OR server_account <> account_id)
+               AND updated_at <= ? AND (server_tried_at IS NULL OR server_tried_at <= ?)
+               AND (to_addrs <> '' OR cc_addrs <> '' OR bcc_addrs <> '' OR trim(subject) <> '' OR trim(body) <> ''
+                    OR EXISTS (SELECT 1 FROM draft_attachments a WHERE a.draft_id = drafts.id))
+             ORDER BY updated_at LIMIT 20",
+        )
+        .bind(now - SERVER_QUIET)
+        .bind(now - SERVER_RETRY)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// The draft (from a server copy) with this `Message-ID`, in this account.
+    async fn with_message_id(&self, account: i64, message_id: &str) -> Result<Option<i64>> {
+        Ok(sqlx::query_scalar("SELECT id FROM drafts WHERE account_id = ? AND message_id = ? LIMIT 1")
+            .bind(account)
+            .bind(message_id)
+            .fetch_optional(&self.pool)
+            .await?)
+    }
+
+    async fn set_message_id(&self, draft: i64, message_id: &str) -> Result<()> {
+        sqlx::query("UPDATE drafts SET message_id = ? WHERE id = ?")
+            .bind(message_id)
+            .bind(draft)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// `version` is now on the server, in `folder` (as `uid`).
+    async fn saved_on_server(
+        &self,
+        draft: i64,
+        version: i64,
+        account: i64,
+        folder: &str,
+        uid: Option<u32>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE drafts SET server_version = ?, server_account = ?, server_folder = ?, server_uid = ?,
+                               server_saved_at = ?, server_tried_at = ?, server_error = NULL
+             WHERE id = ?",
+        )
+        .bind(version)
+        .bind(account)
+        .bind(folder)
+        .bind(uid.map(i64::from))
+        .bind(now())
+        .bind(now())
+        .bind(draft)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn server_failed(&self, draft: i64, error: &str) -> Result<()> {
+        sqlx::query("UPDATE drafts SET server_error = ?, server_tried_at = ? WHERE id = ?")
+            .bind(error)
+            .bind(now())
             .bind(draft)
             .execute(&self.pool)
             .await?;
@@ -406,9 +527,18 @@ fn draft_from_row(r: &SqliteRow) -> Draft {
         (Some(folder), Some(uid)) => Some((folder, uid as u32)),
         _ => None,
     };
+    let server = ServerCopy {
+        message_id: r.get("message_id"),
+        version: r.get("version"),
+        saved_version: r.get("server_version"),
+        account: r.get("server_account"),
+        folder: r.get("server_folder"),
+        uid: r.get::<Option<i64>, _>("server_uid").map(|uid| uid as u32),
+    };
+    let account: i64 = r.get("account_id");
     Draft {
         id: r.get("id"),
-        account: r.get("account_id"),
+        account,
         kind: DraftKind::parse(r.get("kind")),
         to: r.get("to_addrs"),
         cc: r.get("cc_addrs"),
@@ -417,9 +547,13 @@ fn draft_from_row(r: &SqliteRow) -> Draft {
         body: r.get("body"),
         attachments: Vec::new(),
         updated_at: r.get("updated_at"),
+        server_saved_at: r.get("server_saved_at"),
+        server_pending: server.saved_version != Some(server.version) || server.account != Some(account),
+        server_error: r.get("server_error"),
         in_reply_to: r.get("in_reply_to"),
         references: r.get("refs"),
         source,
+        server,
     }
 }
 
@@ -556,31 +690,77 @@ fn recipients(field: &str, label: &str) -> Result<Mailboxes> {
         .map_err(|_| Error::Config(format!("Check the addresses in “{label}”: {field}")))
 }
 
-/// The MIME message for a draft.
+/// The addresses typed so far that are valid (a draft may hold `anna@` while
+/// you type: the server copy leaves that one out, Havre's keeps it).
+fn valid_recipients(field: &str) -> Mailboxes {
+    field
+        .replace(';', ",")
+        .split(',')
+        .filter_map(|one| Mailbox::from_str(one.trim()).ok())
+        .fold(Mailboxes::new(), |list, mailbox| list.with(mailbox))
+}
+
+/// The MIME message for a draft, to send.
 pub fn build_message(
     from_name: &str,
     from_email: &str,
     draft: &Draft,
     attachments: Vec<AttachmentData>,
 ) -> Result<Message> {
-    let from = Mailbox::new(
-        Some(from_name.to_owned()).filter(|n| !n.trim().is_empty()),
-        from_email
-            .parse()
-            .map_err(|_| Error::Config(format!("“{from_email}” isn't a valid sender address")))?,
-    );
-    let (to, cc, bcc) =
-        (recipients(&draft.to, "To")?, recipients(&draft.cc, "Cc")?, recipients(&draft.bcc, "Bcc")?);
-    if to.iter().chain(cc.iter()).chain(bcc.iter()).next().is_none() {
+    build(from_name, from_email, draft, attachments, None)
+}
+
+/// The copy of a draft kept in the Drafts folder: the same message, with the
+/// draft's own `Message-ID` (to find it again), the `Bcc` kept (as every mail
+/// app does for drafts) and only the recipients typed so far.
+pub fn build_draft_message(
+    from_name: &str,
+    from_email: &str,
+    draft: &Draft,
+    message_id: &str,
+    attachments: Vec<AttachmentData>,
+) -> Result<Message> {
+    build(from_name, from_email, draft, attachments, Some(message_id))
+}
+
+/// `draft_id`: building the Drafts copy (`Some`, with its `Message-ID`) or
+/// the message to send (`None`).
+fn build(
+    from_name: &str,
+    from_email: &str,
+    draft: &Draft,
+    attachments: Vec<AttachmentData>,
+    draft_id: Option<&str>,
+) -> Result<Message> {
+    let address: lettre::Address = from_email
+        .parse()
+        .map_err(|_| Error::Config(format!("“{from_email}” isn't a valid sender address")))?;
+    let from = Mailbox::new(Some(from_name.to_owned()).filter(|n| !n.trim().is_empty()), address.clone());
+    let (to, cc, bcc) = match draft_id {
+        Some(_) => (valid_recipients(&draft.to), valid_recipients(&draft.cc), valid_recipients(&draft.bcc)),
+        None => (recipients(&draft.to, "To")?, recipients(&draft.cc, "Cc")?, recipients(&draft.bcc, "Bcc")?),
+    };
+    if draft_id.is_none() && to.iter().chain(cc.iter()).chain(bcc.iter()).next().is_none() {
         return Err(Error::Config("Add at least one recipient.".into()));
     }
     let domain = from_email.rsplit_once('@').map_or("havre.local", |(_, d)| d);
+    let message_id = match draft_id {
+        Some(id) => id.to_owned(),
+        None => format!("<{}@{domain}>", random_hex()),
+    };
     let mut builder = Message::builder()
         .from(from)
         .subject(draft.subject.trim())
         .date_now()
-        .message_id(Some(format!("<{}@{domain}>", random_hex())))
+        .message_id(Some(message_id))
         .user_agent(concat!("Havre/", env!("CARGO_PKG_VERSION")).to_owned());
+    if draft_id.is_some() {
+        // Never sent: no real envelope (a draft may have no recipient yet).
+        builder = builder.keep_bcc().envelope(
+            lettre::address::Envelope::new(Some(address.clone()), vec![address])
+                .map_err(|e| Error::Config(e.to_string()))?,
+        );
+    }
     for mailbox in to {
         builder = builder.to(mailbox);
     }
@@ -782,8 +962,175 @@ impl AccountManager {
         drafts.get(id).await
     }
 
+    // ---- Drafts on the server ---------------------------------------------------------
+
+    /// Saves a draft's newest version in its account's Drafts folder, if the
+    /// copy there is behind. A failure is recorded on the draft (shown in the
+    /// compose window, tried again later), not returned: Havre's copy is safe.
+    pub async fn save_draft_to_server(&self, id: i64) -> Result<Draft> {
+        let _one_at_a_time = self.drafts_lock.lock().await;
+        let drafts = self.drafts();
+        let draft = drafts.get(id).await?;
+        if !draft.server_pending || draft.is_empty() {
+            return Ok(draft);
+        }
+        match self.write_server_copy(&draft).await {
+            Ok((folder, uid)) => {
+                drafts.saved_on_server(id, draft.server.version, draft.account, &folder, uid).await?;
+            }
+            Err(err) => {
+                tracing::warn!(draft = id, "couldn't save the draft on the server: {err}");
+                drafts.server_failed(id, &server_error(&err)).await?;
+            }
+        }
+        drafts.get(id).await
+    }
+
+    /// Writes the copy; returns where it went.
+    async fn write_server_copy(&self, draft: &Draft) -> Result<(String, Option<u32>)> {
+        let account = self.database().account(draft.account).await?;
+        let engine = self.engine(account.id).await?;
+        let folder = engine
+            .store()
+            .folders()
+            .await?
+            .into_iter()
+            .find(|f| f.folder.role == FolderRole::Drafts)
+            .map(|f| f.folder.path)
+            .ok_or_else(|| Error::Config(NO_DRAFTS_FOLDER.into()))?;
+        let drafts = self.drafts();
+        let message_id = match &draft.server.message_id {
+            Some(id) => id.clone(),
+            None => {
+                let domain = account.email.rsplit_once('@').map_or("havre.local", |(_, d)| d);
+                let id = format!("<draft-{}@{domain}>", random_hex());
+                drafts.set_message_id(draft.id, &id).await?;
+                id
+            }
+        };
+        let attachments = drafts.attachment_data(draft.id).await?;
+        let raw = build_draft_message(&account.sender_name, &account.email, draft, &message_id, attachments)?
+            .formatted();
+        let imap = self.database().imap_config(account.id).await?;
+        // The UID Havre had for its copy, when it's in this same folder.
+        let same_place =
+            draft.server.account == Some(account.id) && draft.server.folder.as_deref() == Some(&folder);
+        let old_uid = if same_place { draft.server.uid } else { None };
+        let uid = mail::save_draft(&imap, &folder, &raw, &message_id, old_uid).await?;
+        // Moved to another account (or its Drafts folder changed): the old copy goes.
+        if let (Some(old_account), Some(old_folder), false) =
+            (draft.server.account, &draft.server.folder, same_place)
+        {
+            self.remove_copy(old_account, old_folder, &message_id, draft.server.uid).await;
+        }
+        engine.request_sync(Some(folder.clone()));
+        Ok((folder, uid))
+    }
+
+    /// Removes a draft's copy from a server (best effort: logged if it fails).
+    async fn remove_copy(&self, account: i64, folder: &str, message_id: &str, uid: Option<u32>) -> bool {
+        let removed = match self.database().imap_config(account).await {
+            Ok(imap) => mail::remove_draft(&imap, folder, message_id, uid).await,
+            Err(err) => Err(err),
+        };
+        match removed {
+            Ok(()) => {
+                if let Ok(engine) = self.engine(account).await {
+                    engine.request_sync(Some(folder.to_owned()));
+                }
+                true
+            }
+            Err(err) => {
+                tracing::warn!(account, "couldn't remove a draft from the server: {err}");
+                false
+            }
+        }
+    }
+
+    /// The draft's copy on the server, if it has one.
+    async fn remove_server_copy(&self, draft: &Draft) -> bool {
+        match (draft.server.account, &draft.server.folder, &draft.server.message_id) {
+            (Some(account), Some(folder), Some(message_id)) => {
+                self.remove_copy(account, folder, message_id, draft.server.uid).await
+            }
+            _ => true,
+        }
+    }
+
+    /// Discards a draft: in Havre and on the server.
+    pub async fn discard_draft(&self, id: i64) -> Result<()> {
+        let _one_at_a_time = self.drafts_lock.lock().await;
+        let draft = self.drafts().get(id).await?;
+        self.remove_server_copy(&draft).await;
+        self.drafts().delete(id).await
+    }
+
+    /// A draft from the server's Drafts folder (started in another app),
+    /// opened to finish it in Havre: recipients, subject, text and
+    /// attachments, linked to that copy so saving replaces it. Opening the
+    /// same one again gives the same Havre draft.
+    pub async fn draft_from_message(&self, account: i64, folder: &str, uid: u32) -> Result<Draft> {
+        let _one_at_a_time = self.drafts_lock.lock().await;
+        let drafts = self.drafts();
+        let raw = self.engine(account).await?.raw(folder, uid).await?;
+        let message = MessageParser::default()
+            .parse(&raw)
+            .ok_or_else(|| Error::Config("This draft can't be read.".into()))?;
+        let message_id = message.message_id().map(|id| format!("<{id}>"));
+        if let Some(id) = &message_id
+            && let Some(existing) = drafts.with_message_id(account, id).await?
+        {
+            return drafts.get(existing).await;
+        }
+        // Mail is untrusted: only its text is taken (HTML turned into text by
+        // the parser), addresses re-joined, attachments within the limit.
+        let addresses = |a: Option<&Address<'_>>| a.map(people).map(|p| join(&p)).unwrap_or_default();
+        let references: Vec<String> = message
+            .references()
+            .as_text_list()
+            .map(|list| list.iter().map(|r| format!("<{r}>")).collect())
+            .or_else(|| message.references().as_text().map(|r| vec![format!("<{r}>")]))
+            .unwrap_or_default();
+        let prefill = Prefill {
+            to: addresses(message.to()),
+            cc: addresses(message.cc()),
+            subject: message.subject().unwrap_or_default().trim().to_owned(),
+            body: message.body_text(0).map(|t| t.trim_end().to_owned()).unwrap_or_default(),
+            in_reply_to: message.in_reply_to().as_text().map(|id| format!("<{id}>")),
+            references: (!references.is_empty()).then(|| references.join(" ")),
+        };
+        let bcc = addresses(message.bcc());
+        let id = drafts.insert(account, DraftKind::New, &prefill, None).await?;
+        if !bcc.is_empty() {
+            drafts.update(id, &DraftUpdate { bcc: Some(bcc), ..DraftUpdate::default() }).await?;
+        }
+        let detail = MessageDetail::parse(
+            uid,
+            folder,
+            false,
+            &raw,
+            &RenderOptions { allow_remote_images: false, attachment_url: &|_| String::new() },
+        );
+        for attachment in detail.attachments.iter().filter(|a| !a.inline) {
+            if let Some(data) = mail::extract_attachment(&raw, attachment.index)
+                && let Err(err) = drafts.add_attachment(id, &data).await
+            {
+                tracing::warn!("a draft's attachment was left out: {err}");
+            }
+        }
+        // Linked to that copy: it's on the server as it is now.
+        let message_id = match message_id {
+            Some(id) => id,
+            None => format!("<draft-{}@havre.local>", random_hex()),
+        };
+        drafts.set_message_id(id, &message_id).await?;
+        let version = drafts.get(id).await?.server.version;
+        drafts.saved_on_server(id, version, account, folder, Some(uid)).await?;
+        drafts.get(id).await
+    }
+
     /// Sends a draft, files a copy in Sent, marks the original as answered,
-    /// and deletes the draft.
+    /// and deletes the draft (and its copy in the Drafts folder).
     pub async fn send_draft(&self, id: i64) -> Result<SendOutcome> {
         let drafts = self.drafts();
         let draft = drafts.get(id).await?;
@@ -832,11 +1179,54 @@ impl AccountManager {
                 tracing::warn!("couldn't mark as answered: {err}");
             }
         }
-        drafts.delete(id).await?;
+        {
+            let _one_at_a_time = self.drafts_lock.lock().await;
+            let draft = drafts.get(id).await?;
+            if !self.remove_server_copy(&draft).await && outcome.warning.is_none() {
+                outcome.warning = Some("Sent. Its draft is still in the Drafts folder on the server.".into());
+            }
+            drafts.delete(id).await?;
+        }
         if let Some(engine) = engine {
             engine.request_sync(sent_folder);
         }
         Ok(outcome)
+    }
+}
+
+const NO_DRAFTS_FOLDER: &str = "This account has no Drafts folder on the server: the draft stays in Havre.";
+
+/// A server failure, as the compose window shows it.
+fn server_error(err: &Error) -> String {
+    match err {
+        Error::Config(message) if message == NO_DRAFTS_FOLDER => message.clone(),
+        Error::Config(message) | Error::SignIn(message) => {
+            format!("Not saved on the server: {message} Havre tries again in a few minutes.")
+        }
+        // The details are in the log; here, what it means for you.
+        _ => "The mail server didn't answer: saved in Havre, tried again in a few minutes.".into(),
+    }
+}
+
+/// Every 10 s: saves the drafts whose server copy is behind (see
+/// `Drafts::due_on_server`). A `Weak` pointer, like the snooze loop: it
+/// mustn't keep the manager alive.
+pub(crate) async fn drafts_loop(manager: std::sync::Weak<AccountManager>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        let Some(manager) = manager.upgrade() else { return };
+        let due = match manager.drafts().due_on_server(now()).await {
+            Ok(due) => due,
+            Err(err) => {
+                tracing::warn!(%err, "reading drafts to save");
+                continue;
+            }
+        };
+        for id in due {
+            if let Err(err) = manager.save_draft_to_server(id).await {
+                tracing::warn!(draft = id, "{err}");
+            }
+        }
     }
 }
 
@@ -895,9 +1285,13 @@ Are you free?\r\n> earlier\r\n";
             body: "Yes!\n\n> Are you free?".into(),
             attachments: vec![],
             updated_at: 0,
+            server_saved_at: None,
+            server_pending: true,
+            server_error: None,
             in_reply_to: Some("<abc@example.com>".into()),
             references: Some("<abc@example.com>".into()),
             source: None,
+            server: ServerCopy::default(),
         };
         let file = AttachmentData {
             filename: "menu.txt".into(),
@@ -917,9 +1311,22 @@ Are you free?\r\n> earlier\r\n";
         empty.to.clear();
         empty.bcc.clear();
         assert!(build_message("", "mael@example.org", &empty, vec![]).is_err());
-        let mut wrong = draft;
+        let mut wrong = draft.clone();
         wrong.to = "not an address".into();
         assert!(build_message("", "mael@example.org", &wrong, vec![]).is_err());
+
+        // The Drafts copy: its own Message-ID, the Bcc kept, whatever is
+        // typed so far (an unfinished address is left out, not an error).
+        let mut unfinished = draft.clone();
+        unfinished.to = "Anna <anna@example.com>, bob@".into();
+        let copy =
+            build_draft_message("Maël", "mael@example.org", &unfinished, "<draft-1@example.org>", vec![])
+                .unwrap();
+        let raw = String::from_utf8(copy.formatted()).unwrap();
+        assert!(raw.contains("Message-ID: <draft-1@example.org>"), "{raw}");
+        assert!(raw.contains("Bcc: secret@example.com"));
+        assert!(raw.contains("To: Anna <anna@example.com>\r\n"));
+        assert!(build_draft_message("", "mael@example.org", &empty, "<draft-2@example.org>", vec![]).is_ok());
     }
 
     #[test]

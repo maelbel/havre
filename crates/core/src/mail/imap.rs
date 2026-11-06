@@ -290,6 +290,78 @@ pub async fn append_message(config: &ImapConfig, folder: &str, raw: &[u8]) -> Re
     Ok(())
 }
 
+/// Saves a draft in the Drafts folder (`APPEND`, flagged `\Draft` and
+/// `\Seen`) and keeps only that copy: earlier versions — the same
+/// `Message-ID`, or the UID Havre had for it — are removed. Returns the new
+/// copy's UID (`None` if the server can't find it again, which some can't
+/// search by header).
+pub async fn save_draft(
+    config: &ImapConfig,
+    folder: &str,
+    raw: &[u8],
+    message_id: &str,
+    old_uid: Option<u32>,
+) -> Result<Option<u32>> {
+    let mut session = connect(config).await?;
+    session.append(folder, Some("(\\Draft \\Seen)"), None, raw).await?;
+    session.select(folder).await?;
+    let found = uids_with_message_id(&mut session, message_id).await?;
+    // UIDs only grow: the newest copy is the one just written.
+    let newest = found.iter().max().copied();
+    let mut older: Vec<u32> = found.into_iter().filter(|uid| Some(*uid) != newest).collect();
+    if let Some(old) = old_uid.filter(|old| Some(*old) != newest) {
+        older.push(old);
+    }
+    remove_exactly(&mut session, &older).await?;
+    session.logout().await?;
+    Ok(newest)
+}
+
+/// Removes a draft's copies from the Drafts folder (after sending it, or
+/// when it's discarded).
+pub async fn remove_draft(
+    config: &ImapConfig,
+    folder: &str,
+    message_id: &str,
+    uid: Option<u32>,
+) -> Result<()> {
+    let mut session = connect(config).await?;
+    session.select(folder).await?;
+    let mut uids = uids_with_message_id(&mut session, message_id).await?;
+    uids.extend(uid);
+    remove_exactly(&mut session, &uids).await?;
+    session.logout().await?;
+    Ok(())
+}
+
+/// The messages of the selected folder with this `Message-ID`.
+async fn uids_with_message_id(session: &mut Session, message_id: &str) -> Result<Vec<u32>> {
+    let id = message_id.trim().trim_start_matches('<').trim_end_matches('>');
+    // Quotes, backslashes and line breaks would break the IMAP string.
+    if id.is_empty() || id.contains(['"', '\\', '\r', '\n']) {
+        return Ok(Vec::new());
+    }
+    let mut uids: Vec<u32> =
+        session.uid_search(format!("HEADER Message-ID \"{id}\"")).await?.into_iter().collect();
+    uids.sort_unstable();
+    Ok(uids)
+}
+
+/// Deletes exactly these messages: with `UIDPLUS`, `UID EXPUNGE` removes
+/// only them. Without it, they're only flagged `\Deleted` (most apps hide
+/// those): a plain `EXPUNGE` would also remove anything else flagged so.
+async fn remove_exactly(session: &mut Session, uids: &[u32]) -> Result<()> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let set = uid_set(uids);
+    let _: Vec<Fetch> = session.uid_store(&set, "+FLAGS.SILENT (\\Deleted)").await?.try_collect().await?;
+    if session.capabilities().await?.has_str("UIDPLUS") {
+        let _: Vec<u32> = session.uid_expunge(&set).await?.try_collect().await?;
+    }
+    Ok(())
+}
+
 /// The decoded content of one attachment.
 pub async fn fetch_attachment(
     config: &ImapConfig,
