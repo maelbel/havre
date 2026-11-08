@@ -100,8 +100,9 @@ impl Secrets {
     /// passwords, yet there's still only one key to keep safe.
     pub(crate) fn derive(&self, label: &str) -> [u8; 32] {
         use hmac::{Hmac, Mac};
-        // `Mac::` because `KeyInit` (in scope for the cipher) has a method of the same name.
-        let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(self.key.as_slice())
+        // Written in full (`<… as hmac::KeyInit>`) because the cipher's own `KeyInit`, from an
+        // older version of the same crate family, is also in scope with a method of the same name.
+        let mut mac = <Hmac<sha2::Sha256> as hmac::KeyInit>::new_from_slice(self.key.as_slice())
             .expect("HMAC takes any key size");
         mac.update(label.as_bytes());
         mac.finalize().into_bytes().into()
