@@ -33,7 +33,7 @@ unicode-normalization = "0.1"   # "Réunion" and "reunion" match the same search
 
 # HTTP client for "Sign in with Microsoft" (OAuth). rustls + ring, like IMAP.
 sha2 = "0.10"
-argon2 = "0.5"
+argon2 = "0.6"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 icalendar = { version = "0.17", features = ["parser", "recurrence"] }
 chrono-tz = "0.10"       # time zones by name ("Europe/Paris"); already built in by icalendar
