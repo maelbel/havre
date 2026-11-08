@@ -123,6 +123,17 @@ async function openNote() {
 }
 defineExpose({ toggleSummary, openTask, openNote })
 
+// Once the email is scrolled, the pinned header gets smaller.
+const scrolled = ref(false)
+function onScroll(e: Event) {
+  scrolled.value = (e.target as HTMLElement).scrollTop > 24
+}
+// Each message starts at the top, with the full header.
+watch(
+  () => props.message?.uid,
+  () => (scrolled.value = false),
+)
+
 // Phones: the toolbar keeps Back, Archive, Delete and the menus (move,
 // label, snooze, task); the rest goes in "More" (built here, as data, for
 // Nuxt UI's dropdown).
@@ -165,7 +176,7 @@ function kind(mime: string, filename: string) {
 </script>
 
 <template>
-  <article class="reader" :aria-label="message?.subject || 'Message'" :aria-busy="loading">
+  <article class="reader" :class="{ scrolled }" :aria-label="message?.subject || 'Message'" :aria-busy="loading" @scroll.passive="onScroll">
     <div class="toolbar">
       <UButton
         icon="i-havre-back"
@@ -344,6 +355,9 @@ function kind(mime: string, filename: string) {
     </div>
 
     <div v-else-if="message" class="body" :class="{ dim: loading }">
+      <!-- Pinned under the toolbar while the email scrolls (smaller once
+           scrolled, so the email keeps the room). -->
+      <header class="mhead">
       <h2 class="serif subject">{{ message.subject || '(no subject)' }}</h2>
 
       <div class="meta">
@@ -362,6 +376,7 @@ function kind(mime: string, filename: string) {
           </div>
         </div>
       </div>
+      </header>
 
       <AiSummary
         v-if="summarizing"
@@ -537,11 +552,46 @@ function kind(mime: string, filename: string) {
 .body.dim {
   opacity: 0.6;
 }
+/* The subject and sender: pinned under the toolbar (56 px). */
+.mhead {
+  position: sticky;
+  top: 56px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: -32px -40px 0;
+  padding: 32px 40px 0;
+  background: var(--panel);
+}
+.scrolled .mhead {
+  gap: 6px;
+  padding: 12px 40px;
+  border-bottom: 1px solid var(--line);
+}
 .subject {
   margin: 0;
   font-size: 32px;
   line-height: 1.15;
   letter-spacing: -0.015em;
+  transition: font-size 0.15s;
+}
+.scrolled .subject {
+  font-size: 18px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scrolled .meta .avatar {
+  flex-basis: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .subject {
+    transition: none;
+  }
 }
 .meta {
   display: flex;
@@ -674,6 +724,13 @@ function kind(mime: string, filename: string) {
   }
   .body {
     padding: 20px 16px 40px;
+  }
+  .mhead {
+    margin: -20px -16px 0;
+    padding: 20px 16px 0;
+  }
+  .scrolled .mhead {
+    padding: 10px 16px;
   }
   .replybar {
     padding: 8px 16px 16px;

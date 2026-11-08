@@ -66,8 +66,11 @@ default); the oldest are dropped first.
 
 With two accounts or more, Mail opens on **All inboxes**: every inbox in
 one list, newest first, grouped by day (Today, Yesterday, the weekday, then
-months). The sidebar also has each account's inbox (with its unread count)
-and the folders of the account you're in.
+months). Under **Accounts**, the sidebar has one section per account (its
+unread count, or **!** when it can't sync): open it to see its Inbox, then
+its folders. The account you're in opens by itself, and the sections you
+open or close stay that way in this browser. With one account, its Inbox
+and folders are listed directly.
 
 - Each row shows the first words of the message, a paperclip when it has
   attachments and, for a meeting invitation, a chip with its date. The
