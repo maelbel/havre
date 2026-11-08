@@ -74,7 +74,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$notes" > notes.md
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: notes, path: notes.md }
 
   ci:
@@ -118,7 +118,7 @@ jobs:
           tar czf "$NAME.tar.gz" "$NAME"
       - uses: actions/attest-build-provenance@v2
         with: { subject-path: "${{ env.NAME }}.tar.gz" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: "server-${{ matrix.arch }}", path: "${{ env.NAME }}.tar.gz", if-no-files-found: error }
 
   # The image is built natively for each processor and pushed by digest
@@ -154,7 +154,7 @@ jobs:
       - name: Keep the digest
         env: { DIGEST: "${{ steps.build.outputs.digest }}" }
         run: mkdir -p digests && touch "digests/${DIGEST#sha256:}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: "digest-${{ strategy.job-index }}", path: digests/*, if-no-files-found: error }
 
   image:
