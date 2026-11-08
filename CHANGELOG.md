@@ -6,6 +6,14 @@ All notable changes to Havre are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Off-site copies of the backups** (Settings › Backups › Off-site copy): after each backup, Havre seals it with
+  the recovery key (XChaCha20-Poly1305, chunked and authenticated) and sends it to a WebDAV folder (Nextcloud, a
+  NAS) or an S3-compatible bucket (Backblaze B2, MinIO, Scaleway, AWS), keeping the last ones there. *Test the
+  connection*, *Copy off-site* on each backup, retries, an orange status after a day of failures.
+  `havre restore <file>.havre --key …` restores one on a new machine.
+
 ### Changed
 
 - Mail's sidebar: one section per account (an accordion), its Inbox first and then its folders, instead of the

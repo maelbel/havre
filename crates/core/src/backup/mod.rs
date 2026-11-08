@@ -15,9 +15,17 @@
 //! How: `VACUUM INTO` writes a consistent copy while Havre keeps running
 //! (SQLite reads a snapshot), then the copy is trimmed and checked.
 //!
+//! **Off-site copies** (step 18): each backup can also be sealed (encrypted,
+//! `sealed.rs`) and sent to a WebDAV folder or an S3 bucket (`remote.rs`),
+//! the last few kept there. A copy that fails is tried again later.
+//!
 //! What it teaches: SQLite's online copy, files and permissions, a
 //! scheduler loop, and restoring safely (keep the old file until the new
 //! one is known good).
+
+pub mod remote;
+pub mod sealed;
+mod sigv4;
 
 use std::path::{Path, PathBuf};
 
@@ -29,6 +37,7 @@ use sqlx::{
 };
 
 use crate::{Error, Result, secrets::Secrets, store::Database};
+use remote::{Kind, Remote, RemoteFile};
 
 /// Settings › Backups.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -63,6 +72,54 @@ pub struct BackupStatus {
     pub next_at: Option<i64>,
     /// Which encryption key restoring needs (a fingerprint, not the key).
     pub key_fingerprint: String,
+    /// Off-site copies.
+    pub remote: RemoteStatus,
+}
+
+/// Settings › Backups › Off-site copy. The secret goes one way only: the page
+/// may send a new one (`secret`), but only learns whether one is saved.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemoteSettings {
+    pub enabled: bool,
+    pub kind: Kind,
+    pub url: String,
+    #[serde(default)]
+    pub bucket: String,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default = "yes")]
+    pub path_style: bool,
+    #[serde(default)]
+    pub username: String,
+    /// A new password / secret key; `None` or empty keeps the saved one.
+    #[serde(default, skip_serializing)]
+    pub secret: Option<String>,
+    #[serde(default)]
+    pub has_secret: bool,
+    pub keep: u32,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// What the page shows about off-site copies.
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteStatus {
+    pub settings: RemoteSettings,
+    pub last_at: Option<i64>,
+    pub last_name: Option<String>,
+    pub last_size: Option<i64>,
+    pub last_error: Option<String>,
+    /// Copies have been failing since then (unix seconds).
+    pub failing_since: Option<i64>,
+    /// A local backup waiting to be sent, and when Havre tries next.
+    pub pending: Option<String>,
+    pub next_try_at: Option<i64>,
+    /// On, and failing for 24 hours or more (the status card turns orange).
+    pub failing_for_a_day: bool,
 }
 
 /// Backups of one Havre: the database, the folder to write to, the key.
@@ -71,6 +128,13 @@ pub struct Backups {
     db: Database,
     dir: PathBuf,
     secrets: Secrets,
+    /// One off-site copy at a time (the scheduler and "Copy off-site").
+    sending: std::sync::Arc<tokio::sync::Mutex<()>>,
+}
+
+/// The name of a backup's off-site copy: `havre-….db` → `havre-….havre`.
+pub fn copy_name(backup: &str) -> String {
+    format!("{}.{}", backup.trim_end_matches(".db"), sealed::EXTENSION)
 }
 
 /// File names Havre writes, and the only ones it serves or deletes.
@@ -84,7 +148,7 @@ pub fn is_backup_name(name: &str) -> bool {
 
 impl Backups {
     pub fn new(db: Database, dir: PathBuf, secrets: Secrets) -> Self {
-        Self { db, dir, secrets }
+        Self { db, dir, secrets, sending: Default::default() }
     }
 
     pub fn dir(&self) -> &Path {
@@ -170,6 +234,7 @@ impl Backups {
             last_error: row.get("last_error"),
             next_at,
             key_fingerprint: self.secrets.fingerprint(),
+            remote: self.remote_status().await?,
             settings,
         })
     }
@@ -186,15 +251,272 @@ impl Backups {
             .bind(error)
             .execute(&self.db.pool())
             .await?;
-        if result.is_ok() {
+        if let Ok(file) = &result {
+            // Off-site: the scheduler sends it within a minute (a newer backup
+            // replaces one still waiting).
+            sqlx::query("UPDATE backup_remote SET pending = ?, next_try_at = ? WHERE id = 1 AND enabled = 1")
+                .bind(&file.name)
+                .bind(chrono::Utc::now().timestamp())
+                .execute(&self.db.pool())
+                .await?;
             let keep = self.settings().await?.keep as usize;
+            let pending = self.remote_status().await?.pending;
             for old in self.list()?.into_iter().skip(keep) {
+                // Not the one still waiting to be sent off-site.
+                if pending.as_deref() == Some(&old.name) {
+                    continue;
+                }
                 if let Err(err) = std::fs::remove_file(self.dir.join(&old.name)) {
                     tracing::warn!(%err, file = old.name, "removing an old backup");
                 }
             }
         }
         result
+    }
+
+    // ---- Off-site copies ---------------------------------------------------------------
+
+    pub async fn remote_settings(&self) -> Result<RemoteSettings> {
+        let row = sqlx::query(
+            "SELECT enabled, kind, url, bucket, region, prefix, path_style, username, secret IS NOT NULL AS has_secret, keep \
+             FROM backup_remote WHERE id = 1",
+        )
+        .fetch_one(&self.db.pool())
+        .await?;
+        Ok(RemoteSettings {
+            enabled: row.get("enabled"),
+            kind: Kind::parse(row.get("kind")),
+            url: row.get("url"),
+            bucket: row.get("bucket"),
+            region: row.get("region"),
+            prefix: row.get("prefix"),
+            path_style: row.get("path_style"),
+            username: row.get("username"),
+            secret: None,
+            has_secret: row.get("has_secret"),
+            keep: row.get::<i64, _>("keep").clamp(1, 365) as u32,
+        })
+    }
+
+    pub async fn remote_status(&self) -> Result<RemoteStatus> {
+        let row = sqlx::query(
+            "SELECT last_at, last_name, last_size, last_error, failing_since, pending, next_try_at FROM backup_remote WHERE id = 1",
+        )
+        .fetch_one(&self.db.pool())
+        .await?;
+        let settings = self.remote_settings().await?;
+        let failing_since: Option<i64> = row.get("failing_since");
+        let failing_for_a_day =
+            settings.enabled && failing_since.is_some_and(|t| chrono::Utc::now().timestamp() - t >= 86_400);
+        Ok(RemoteStatus {
+            failing_for_a_day,
+            settings,
+            last_at: row.get("last_at"),
+            last_name: row.get("last_name"),
+            last_size: row.get("last_size"),
+            last_error: row.get("last_error"),
+            failing_since: row.get("failing_since"),
+            pending: row.get("pending"),
+            next_try_at: row.get("next_try_at"),
+        })
+    }
+
+    /// The destination these settings describe, with the secret to use: the
+    /// one typed (if any), else the saved one.
+    async fn remote_from(&self, s: &RemoteSettings) -> Result<Remote> {
+        let url = remote::check_url(&s.url)?;
+        if s.kind == Kind::S3 && s.bucket.trim().is_empty() {
+            return Err(Error::Config("Give the bucket's name.".into()));
+        }
+        if s.username.trim().is_empty() {
+            return Err(Error::Config(match s.kind {
+                Kind::Webdav => "Give the user name.".into(),
+                Kind::S3 => "Give the access key (its ID).".into(),
+            }));
+        }
+        let secret = match s.secret.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            Some(typed) => typed.to_string(),
+            None => {
+                let saved: Option<Vec<u8>> =
+                    sqlx::query_scalar("SELECT secret FROM backup_remote WHERE id = 1")
+                        .fetch_one(&self.db.pool())
+                        .await?;
+                match saved {
+                    Some(bytes) => self.secrets.decrypt(&bytes)?,
+                    None => {
+                        return Err(Error::Config(match s.kind {
+                            Kind::Webdav => "Give the password (for Nextcloud, an app password).".into(),
+                            Kind::S3 => "Give the secret key.".into(),
+                        }));
+                    }
+                }
+            }
+        };
+        Ok(Remote {
+            kind: s.kind,
+            url,
+            bucket: s.bucket.trim().to_string(),
+            region: s.region.trim().to_string(),
+            prefix: s.prefix.trim().to_string(),
+            path_style: s.path_style,
+            username: s.username.trim().to_string(),
+            secret,
+        })
+    }
+
+    /// Saves the off-site settings (checked first when turned on).
+    pub async fn save_remote(&self, s: &RemoteSettings) -> Result<RemoteStatus> {
+        if !(1..=365).contains(&s.keep) {
+            return Err(Error::Config("Keep between 1 and 365 copies.".into()));
+        }
+        if s.enabled {
+            self.remote_from(s).await?;
+        } else if !s.url.trim().is_empty() {
+            remote::check_url(&s.url)?;
+        }
+        let secret = match s.secret.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            Some(typed) => Some(self.secrets.encrypt(typed)?),
+            None => None,
+        };
+        sqlx::query(
+            "UPDATE backup_remote SET enabled = ?, kind = ?, url = ?, bucket = ?, region = ?, prefix = ?, path_style = ?, \
+             username = ?, keep = ?, secret = COALESCE(?, secret) WHERE id = 1",
+        )
+        .bind(s.enabled)
+        .bind(s.kind.as_str())
+        .bind(s.url.trim())
+        .bind(s.bucket.trim())
+        .bind(s.region.trim())
+        .bind(s.prefix.trim())
+        .bind(s.path_style)
+        .bind(s.username.trim())
+        .bind(s.keep as i64)
+        .bind(secret)
+        .execute(&self.db.pool())
+        .await?;
+        if !s.enabled {
+            sqlx::query("UPDATE backup_remote SET pending = NULL, next_try_at = NULL WHERE id = 1")
+                .execute(&self.db.pool())
+                .await?;
+        }
+        self.remote_status().await
+    }
+
+    /// Turns off-site copies off and forgets the destination and its secret
+    /// (the copies already sent stay where they are).
+    pub async fn forget_remote(&self) -> Result<RemoteStatus> {
+        sqlx::query("DELETE FROM backup_remote").execute(&self.db.pool()).await?;
+        sqlx::query("INSERT INTO backup_remote (id) VALUES (1)").execute(&self.db.pool()).await?;
+        self.remote_status().await
+    }
+
+    /// Tries a destination (the typed settings, else the saved secret).
+    pub async fn test_remote(&self, s: &RemoteSettings) -> Result<String> {
+        let remote = self.remote_from(s).await?;
+        remote.test(&remote::client()?).await
+    }
+
+    /// Seals one local backup and sends it now; then trims old copies there.
+    pub async fn send_offsite(&self, name: &str) -> Result<RemoteFile> {
+        let _one_at_a_time = self.sending.lock().await;
+        let result = self.send_locked(name).await;
+        let now = chrono::Utc::now().timestamp();
+        match &result {
+            Ok(file) => {
+                sqlx::query(
+                    "UPDATE backup_remote SET last_at = ?, last_name = ?, last_size = ?, last_error = NULL, \
+                     failing_since = NULL, pending = CASE WHEN pending = ? THEN NULL ELSE pending END, \
+                     next_try_at = CASE WHEN pending = ? THEN NULL ELSE next_try_at END WHERE id = 1",
+                )
+                .bind(now)
+                .bind(&file.name)
+                .bind(file.size as i64)
+                .bind(name)
+                .bind(name)
+                .execute(&self.db.pool())
+                .await?;
+                tracing::info!(copy = file.name, size = file.size, "off-site copy sent");
+            }
+            Err(err) => {
+                // Every 15 minutes during the first hour of failures, then hourly.
+                let since: Option<i64> =
+                    sqlx::query_scalar("SELECT failing_since FROM backup_remote WHERE id = 1")
+                        .fetch_one(&self.db.pool())
+                        .await?;
+                let wait = if now - since.unwrap_or(now) < 3600 { 15 * 60 } else { 3600 };
+                sqlx::query(
+                    "UPDATE backup_remote SET last_error = ?, failing_since = COALESCE(failing_since, ?), \
+                     next_try_at = CASE WHEN pending IS NOT NULL THEN ? ELSE NULL END WHERE id = 1",
+                )
+                // The sentence itself, without "configuration error:" in front.
+                .bind(match err {
+                    Error::Config(message) => message.clone(),
+                    other => other.to_string(),
+                })
+                .bind(now)
+                .bind(now + wait)
+                .execute(&self.db.pool())
+                .await?;
+                tracing::warn!(%err, backup = name, "off-site copy failed");
+            }
+        }
+        result
+    }
+
+    async fn send_locked(&self, name: &str) -> Result<RemoteFile> {
+        let settings = self.remote_settings().await?;
+        let remote = self.remote_from(&settings).await?;
+        let local = self.path_of(name)?;
+        let copy = copy_name(name);
+        // Sealed next to the backups, under a hidden name, removed afterwards.
+        let sealed_path = self.dir.join(format!(".offsite-{copy}"));
+        let created_at = std::fs::metadata(&local).map(|m| modified_at(&m)).unwrap_or_default();
+        let secrets = self.secrets.clone();
+        let (src, dst) = (local.clone(), sealed_path.clone());
+        tokio::task::spawn_blocking(move || sealed::seal(&src, &dst, &secrets, created_at))
+            .await
+            .map_err(|e| Error::Config(format!("Sealing the backup stopped: {e}")))??;
+        let result = async {
+            let bytes = tokio::fs::read(&sealed_path).await?;
+            let size = bytes.len() as u64;
+            let http = remote::client()?;
+            remote.send(&http, &copy, bytes).await?;
+            // Keep the newest `keep` copies there (names sort by date).
+            let copies = remote.list(&http).await?;
+            let extra = copies.len().saturating_sub(settings.keep as usize);
+            for old in copies.iter().take(extra) {
+                if let Err(err) = remote.delete(&http, &old.name).await {
+                    tracing::warn!(%err, copy = old.name, "removing an old off-site copy");
+                }
+            }
+            Ok(RemoteFile { name: copy.clone(), size })
+        }
+        .await;
+        let _ = std::fs::remove_file(&sealed_path);
+        result
+    }
+
+    /// The scheduler's part: sends the waiting backup when it's time.
+    async fn send_pending(&self) -> Result<()> {
+        let row = sqlx::query("SELECT enabled, pending, next_try_at FROM backup_remote WHERE id = 1")
+            .fetch_one(&self.db.pool())
+            .await?;
+        let (enabled, pending, next): (bool, Option<String>, Option<i64>) =
+            (row.get("enabled"), row.get("pending"), row.get("next_try_at"));
+        let now = chrono::Utc::now().timestamp();
+        if let (true, Some(name)) = (enabled, pending)
+            && next.is_none_or(|at| at <= now)
+        {
+            if self.path_of(&name).map(|p| p.exists()).unwrap_or(false) {
+                let _ = self.send_offsite(&name).await;
+            } else {
+                // The backup was deleted meanwhile: nothing left to send.
+                sqlx::query("UPDATE backup_remote SET pending = NULL, next_try_at = NULL WHERE id = 1")
+                    .execute(&self.db.pool())
+                    .await?;
+            }
+        }
+        Ok(())
     }
 
     async fn make(&self) -> Result<BackupFile> {
@@ -268,6 +590,9 @@ impl Backups {
                 }
                 Ok(false) => {}
                 Err(err) => tracing::warn!(%err, "checking the backup schedule"),
+            }
+            if let Err(err) = self.send_pending().await {
+                tracing::warn!(%err, "checking off-site copies");
             }
         }
     }
@@ -353,18 +678,47 @@ pub async fn check(path: &Path) -> Result<BackupInfo> {
 /// The current database is kept as `havre.db.before-restore-<time>`; the
 /// key too if a new one is given. Without `key`, the existing `secret.key`
 /// (or `HAVRE_SECRET_KEY`) must be the one the backup was made with.
+///
+/// A sealed off-site copy (`.havre`) is decrypted first, with the same key.
 pub async fn restore(data_dir: &Path, backup: &Path, key: Option<&str>) -> Result<BackupInfo> {
-    let info = check(backup).await?;
-    let secrets = match key {
-        Some(hex) => Secrets::from_hex(hex.trim())?,
+    if sealed::is_sealed(backup) {
+        let secrets = key_for(data_dir, key).map_err(|_| {
+            Error::Config(
+                "An off-site copy (.havre) is encrypted: give its recovery key with --key (it's the one Settings › \
+                 Backups shows; restoring without it isn't possible)."
+                    .into(),
+            )
+        })?;
+        std::fs::create_dir_all(data_dir)?;
+        let plain = data_dir.join(format!(".restore-{}.db", Local::now().format("%Y%m%d%H%M%S")));
+        let (src, dst) = (backup.to_path_buf(), plain.clone());
+        tokio::task::spawn_blocking(move || sealed::unseal(&src, &dst, &secrets))
+            .await
+            .map_err(|e| Error::Config(format!("Decrypting the copy stopped: {e}")))??;
+        let result = restore_plain(data_dir, &plain, key).await;
+        let _ = std::fs::remove_file(&plain);
+        return result;
+    }
+    restore_plain(data_dir, backup, key).await
+}
+
+/// The recovery key given with `--key`, else the one already in `data_dir`.
+fn key_for(data_dir: &Path, key: Option<&str>) -> Result<Secrets> {
+    match key {
+        Some(hex) => Secrets::from_hex(hex.trim()),
         None => Secrets::load_existing(data_dir)?.ok_or_else(|| {
             Error::Config(format!(
                 "There's no encryption key in {}: give the recovery key with --key (Settings › Backups says \
                  how to find it), or restore with --key-mismatch-ok and enter your mail passwords again.",
                 data_dir.display()
             ))
-        })?,
-    };
+        }),
+    }
+}
+
+async fn restore_plain(data_dir: &Path, backup: &Path, key: Option<&str>) -> Result<BackupInfo> {
+    let info = check(backup).await?;
+    let secrets = key_for(data_dir, key)?;
     if secrets.fingerprint() != info.key_fingerprint {
         return Err(Error::Config(format!(
             "This backup was made with another encryption key (fingerprint {}, this server's is {}). \
@@ -380,6 +734,11 @@ pub async fn restore(data_dir: &Path, backup: &Path, key: Option<&str>) -> Resul
 
 /// Restores even though the key doesn't match (passwords to re-enter).
 pub async fn restore_without_key(data_dir: &Path, backup: &Path) -> Result<BackupInfo> {
+    if sealed::is_sealed(backup) {
+        return Err(Error::Config(
+            "An off-site copy (.havre) is encrypted: it opens only with its recovery key. Give it with --key.".into(),
+        ));
+    }
     let info = check(backup).await?;
     replace(data_dir, backup, None)?;
     Ok(info)
@@ -507,6 +866,37 @@ mod tests {
             crate::config::ImapAuth::Password(p) if p == "s3cret"
         ));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn restores_a_sealed_copy_with_the_recovery_key() {
+        let source = temp_dir("sealed-source");
+        let secrets = Secrets::random();
+        let db = Database::open(&source.join("havre.db"), secrets.clone()).await.unwrap();
+        let backups = Backups::new(db, source.join("backups"), secrets.clone());
+        let made = backups.run().await.unwrap();
+        let sealed_copy = source.join(copy_name(&made.name));
+        sealed::seal(&source.join("backups").join(&made.name), &sealed_copy, &secrets, 0).unwrap();
+
+        // A new server, nothing but the copy and the key.
+        let target = temp_dir("sealed-target");
+        assert!(restore_without_key(&target, &sealed_copy).await.is_err());
+        assert!(restore(&target, &sealed_copy, Some(&Secrets::random().export_hex())).await.is_err());
+        let info = restore(&target, &sealed_copy, Some(&secrets.export_hex())).await.unwrap();
+        assert_eq!(info.key_fingerprint, secrets.fingerprint());
+        assert!(target.join("havre.db").exists());
+        let leftovers: Vec<_> = std::fs::read_dir(&target)
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|n| n.starts_with(".restore-"))
+            .collect();
+        assert!(leftovers.is_empty(), "the decrypted temporary file is removed: {leftovers:?}");
+    }
+
+    #[test]
+    fn names_the_off_site_copy() {
+        assert_eq!(copy_name("havre-2026-11-08-030000.db"), "havre-2026-11-08-030000.havre");
+        assert!(remote::is_copy_name(&copy_name("havre-2026-11-08-030000.db")));
     }
 
     #[tokio::test]

@@ -1007,6 +1007,7 @@ dependencies = [
  "futures",
  "hex",
  "hickory-resolver",
+ "hmac",
  "icalendar",
  "lettre",
  "mail-parser",

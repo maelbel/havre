@@ -227,7 +227,16 @@ export function fileKind(name: string) {
 
 export interface SystemInfo {
   /** The status card's "Backup" line (null in demo mode). */
-  backup: { enabled: boolean; last_at: number | null; last_error: string | null; next_at: number | null; size: number | null } | null
+  backup: {
+    enabled: boolean
+    last_at: number | null
+    last_error: string | null
+    next_at: number | null
+    size: number | null
+    /** Off-site copies failing for a day or more. */
+    offsite_failing?: boolean
+    offsite_error?: string | null
+  } | null
   version: string
   memory: number | null
   data: number | null
@@ -282,6 +291,51 @@ export interface BackupStatus {
   last_error: string | null
   next_at: number | null
   key_fingerprint: string
+  remote: RemoteStatus
+}
+
+/** Settings › Backups › Off-site copy. The secret is only ever sent, never read back (`has_secret`). */
+export type RemoteKind = 'webdav' | 's3'
+export interface RemoteSettings {
+  enabled: boolean
+  kind: RemoteKind
+  url: string
+  bucket: string
+  region: string
+  prefix: string
+  path_style: boolean
+  username: string
+  keep: number
+  has_secret: boolean
+  /** A new password or secret key; empty keeps the saved one. */
+  secret?: string | null
+}
+export interface RemoteStatus {
+  settings: RemoteSettings
+  last_at: number | null
+  last_name: string | null
+  last_size: number | null
+  last_error: string | null
+  failing_since: number | null
+  pending: string | null
+  next_try_at: number | null
+  failing_for_a_day: boolean
+}
+
+export function saveRemote(settings: RemoteSettings) {
+  return $fetch<RemoteStatus>('/api/backups/remote', { method: 'PUT', body: settings })
+}
+
+export function testRemote(settings: RemoteSettings) {
+  return $fetch<{ message: string }>('/api/backups/remote/test', { method: 'POST', body: settings })
+}
+
+export function forgetRemote() {
+  return $fetch<RemoteStatus>('/api/backups/remote', { method: 'DELETE' })
+}
+
+export function sendOffsite(name: string) {
+  return $fetch<{ name: string; size: number }>(`/api/backups/${encodeURIComponent(name)}/offsite`, { method: 'POST' })
 }
 
 export function fetchBackups() {

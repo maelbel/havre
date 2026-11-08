@@ -212,6 +212,9 @@ async fn system(State(state): State<AppState>) -> Result<Json<serde_json::Value>
                 "last_error": s.last_error,
                 "next_at": s.next_at,
                 "size": s.backups.first().map(|f| f.size),
+                // Off-site copies failing for a day turn the line orange.
+                "offsite_failing": s.remote.failing_for_a_day,
+                "offsite_error": s.remote.last_error,
             })
         }
         None => serde_json::Value::Null,

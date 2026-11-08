@@ -112,7 +112,7 @@ Building from source, configuration, HTTPS and backups are covered in the [insta
 
 ## Roadmap
 
-Mail, Agenda, People, Today, Tasks, Notes, Files, AI and Havre Desktop are built. Next up: off-site backups. See the
+Mail, Agenda, People, Today, Tasks, Notes, Files, AI, Havre Desktop and off-site backups are built. See the
 full [roadmap](docs/ROADMAP.md) for the rest.
 
 ## Contributing

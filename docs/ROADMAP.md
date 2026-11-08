@@ -125,8 +125,7 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - ✅ `havre backup` / `havre restore <file> [--key …] [--key-mismatch-ok]`; the old database is kept.
 - ✅ Health: a Backup line in the Apps status card (orange when the last one failed or is old).
 - ✅ Exports: each calendar as `.ics`.
-- Later: copying backups off-site (S3, WebDAV) from Havre, encrypted backup files, restoring from the page,
-  exporting People as vCard.
+- Later: restoring from the page, exporting People as vCard. (Off-site copies: step 18.)
 - *Learned:* SQLite online copies (`VACUUM INTO`), atomic writes (temp file + rename), Unix permissions
   from Rust, a small CLI with plain `std::env::args`, scheduling in local time with `chrono`.
 
@@ -268,3 +267,19 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
   when a server has none.
 - *Learned:* IMAP `APPEND`, `UIDPLUS` and `UID EXPUNGE`, searching by header, a background loop with a `Weak`
   pointer, a version counter instead of a "dirty" flag (no change lost while a save is in flight).
+
+## 18 · Off-site backups ✅
+- ✅ After each backup, a sealed copy sent to a WebDAV folder (Nextcloud, a NAS) or an S3-compatible bucket
+  (Backblaze B2, MinIO, Scaleway, AWS); the last N kept there, other files never touched.
+- ✅ Sealed: XChaCha20-Poly1305 in STREAM mode (64 KiB chunks, counter and last-chunk flag, authenticated
+  header), with a key derived from the recovery key (HMAC-SHA256): one key to keep, unreadable off-site,
+  a changed or cut copy refused.
+- ✅ Settings › Backups › Off-site copy: WebDAV or S3, *Test the connection*, on/off, copies to keep, last copy
+  or the error; *Copy off-site* on each backup. HTTPS only (plain HTTP to the same machine); the secret is
+  encrypted and write-only.
+- ✅ Retries (every 15 minutes, then hourly), kept across restarts; the status card turns orange after a day.
+- ✅ `havre restore <file>.havre --key …` on a new machine, no off-site credentials needed.
+- Later: restoring from an off-site copy in the page, several destinations, SFTP, encrypting local backups,
+  checking old copies now and then.
+- *Learned:* authenticated encryption on a stream, deriving keys, AWS Signature V4 (canonical requests,
+  HMAC chains), WebDAV verbs (`PROPFIND`, `MKCOL`, `MOVE`), parsing XML answers, a retry queue in SQLite.
