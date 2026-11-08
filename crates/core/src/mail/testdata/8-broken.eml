@@ -1,0 +1,5 @@
+Subject: no date, no sender
+X-Weird: =?broken?Q?
+
+just some text without a content type
+and a line with invalid UTF-8: ÿþ café

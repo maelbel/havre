@@ -6,6 +6,9 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 
+# Sample emails: kept byte for byte (CRLF, as mail servers send them).
+*.eml -text
+
 # Binary files: never touched.
 *.png binary
 *.jpg binary

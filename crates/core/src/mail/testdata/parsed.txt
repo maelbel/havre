@@ -1,0 +1,1591 @@
+===== 1-plain-reply.eml
+--- reader (remote images allowed: false)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Anaïs Leroy",
+            ),
+            address: Some(
+                "anais@example.org",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: Some(
+                "Mael",
+            ),
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+        Person {
+            name: Some(
+                "Dupont, Jean",
+            ),
+            address: Some(
+                "jean@example.com",
+            ),
+        },
+    ],
+    cc: [
+        Person {
+            name: None,
+            address: Some(
+                "claire@example.org",
+            ),
+        },
+    ],
+    subject: "Re: Déjeuner jeudi ?",
+    date: Some(
+        "2026-10-14T09:42:00+02:00",
+    ),
+    text: Some(
+        "Jeudi me va très bien, à midi ?\r\n\r\nAnaïs\r\n\r\nOn Tue, 13 Oct 2026 at 18:00, Mael <mael@example.net> wrote:\r\n> On déjeune ensemble jeudi ?\r\n",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [],
+    unread: true,
+}
+--- reader (remote images allowed: true)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Anaïs Leroy",
+            ),
+            address: Some(
+                "anais@example.org",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: Some(
+                "Mael",
+            ),
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+        Person {
+            name: Some(
+                "Dupont, Jean",
+            ),
+            address: Some(
+                "jean@example.com",
+            ),
+        },
+    ],
+    cc: [
+        Person {
+            name: None,
+            address: Some(
+                "claire@example.org",
+            ),
+        },
+    ],
+    subject: "Re: Déjeuner jeudi ?",
+    date: Some(
+        "2026-10-14T09:42:00+02:00",
+    ),
+    text: Some(
+        "Jeudi me va très bien, à midi ?\r\n\r\nAnaïs\r\n\r\nOn Tue, 13 Oct 2026 at 18:00, Mael <mael@example.net> wrote:\r\n> On déjeune ensemble jeudi ?\r\n",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [],
+    unread: true,
+}
+--- downloads
+[]
+--- list row
+MessageSummary {
+    uid: 7,
+    from: Some(
+        Person {
+            name: Some(
+                "Anaïs Leroy",
+            ),
+            address: Some(
+                "anais@example.org",
+            ),
+        },
+    ),
+    subject: "Re: Déjeuner jeudi ?",
+    date: Some(
+        "2026-10-14T09:42:00+02:00",
+    ),
+    unread: true,
+    flagged: false,
+    message_id: Some(
+        "reply-2@example.org",
+    ),
+    labels: [],
+    snoozed_until: None,
+    preview: None,
+    attachments: false,
+    invite: false,
+    invite_at: None,
+    account: None,
+    folder: None,
+}
+--- preview
+Digest {
+    preview: "Jeudi me va très bien, à midi ? Anaïs",
+    files: [],
+    invite: false,
+    invite_at: None,
+}
+--- prefill Reply
+Prefill {
+    to: "Liste Projet <projet@lists.example.org>",
+    cc: "",
+    subject: "Re: Déjeuner jeudi ?",
+    body: "\n\nOn Wed, 14 Oct 2026 09:42:00 +0200, Anaïs Leroy wrote:\n> Jeudi me va très bien, à midi ?\n> \n> Anaïs\n> \n> On Tue, 13 Oct 2026 at 18:00, Mael <mael@example.net> wrote:\n>> On déjeune ensemble jeudi ?\n",
+    in_reply_to: Some(
+        "<reply-2@example.org>",
+    ),
+    references: Some(
+        "<root-0@example.net> <first-1@example.net> <reply-2@example.org>",
+    ),
+}
+--- prefill ReplyAll
+Prefill {
+    to: "Liste Projet <projet@lists.example.org>",
+    cc: "\"Dupont, Jean\" <jean@example.com>, claire@example.org",
+    subject: "Re: Déjeuner jeudi ?",
+    body: "\n\nOn Wed, 14 Oct 2026 09:42:00 +0200, Anaïs Leroy wrote:\n> Jeudi me va très bien, à midi ?\n> \n> Anaïs\n> \n> On Tue, 13 Oct 2026 at 18:00, Mael <mael@example.net> wrote:\n>> On déjeune ensemble jeudi ?\n",
+    in_reply_to: Some(
+        "<reply-2@example.org>",
+    ),
+    references: Some(
+        "<root-0@example.net> <first-1@example.net> <reply-2@example.org>",
+    ),
+}
+--- prefill Forward
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Fwd: Re: Déjeuner jeudi ?",
+    body: "\n\n---------- Forwarded message ----------\nFrom: Anaïs Leroy <anais@example.org>\nDate: Wed, 14 Oct 2026 09:42:00 +0200\nSubject: Re: Déjeuner jeudi ?\nTo: Mael <mael@example.net>, \"Dupont, Jean\" <jean@example.com>\nCc: claire@example.org\n\nJeudi me va très bien, à midi ?\r\n\r\nAnaïs\r\n\r\nOn Tue, 13 Oct 2026 at 18:00, Mael <mael@example.net> wrote:\r\n> On déjeune ensemble jeudi ?",
+    in_reply_to: None,
+    references: None,
+}
+--- search text
+Jeudi me va très bien, à midi ? Anaïs
+--- assistant text
+From: Anaïs Leroy <anais@example.org>
+To: Mael <mael@example.net>, Dupont, Jean <jean@example.com>
+Date: 2026-10-14T09:42:00+02:00
+Subject: Re: Déjeuner jeudi ?
+
+Jeudi me va très bien, à midi ?\r
+\r
+Anaïs\r
+\r
+On Tue, 13 Oct 2026 at 18:00, Mael <mael@example.net> wrote:\r
+> On déjeune ensemble jeudi ?
+
+===== 2-alternative.eml
+--- reader (remote images allowed: false)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Forgejo",
+            ),
+            address: Some(
+                "noreply@forge.example",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "[havre] CI passed on main",
+    date: Some(
+        "2026-10-13T07:05:00Z",
+    ),
+    text: Some(
+        "All checks passed ✓ on commit 49fcbf4.\r\nSee https://forge.example/havre/actions/12\r\n",
+    ),
+    html: Some(
+        "<p style=\"color:green\">All checks passed ✓</p>\n<img height=\"1\" width=\"1\">\n<a href=\"https://forge.example/havre/actions/12\" rel=\"noopener noreferrer\">See the run</a>\n",
+    ),
+    remote_images_blocked: true,
+    attachments: [],
+    unread: true,
+}
+--- reader (remote images allowed: true)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Forgejo",
+            ),
+            address: Some(
+                "noreply@forge.example",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "[havre] CI passed on main",
+    date: Some(
+        "2026-10-13T07:05:00Z",
+    ),
+    text: Some(
+        "All checks passed ✓ on commit 49fcbf4.\r\nSee https://forge.example/havre/actions/12\r\n",
+    ),
+    html: Some(
+        "<p style=\"color:green\">All checks passed ✓</p>\n<img src=\"https://tracker.example/pixel.gif\" width=\"1\" height=\"1\">\n<a href=\"https://forge.example/havre/actions/12\" rel=\"noopener noreferrer\">See the run</a>\n",
+    ),
+    remote_images_blocked: false,
+    attachments: [],
+    unread: true,
+}
+--- downloads
+[]
+--- list row
+MessageSummary {
+    uid: 7,
+    from: Some(
+        Person {
+            name: Some(
+                "Forgejo",
+            ),
+            address: Some(
+                "noreply@forge.example",
+            ),
+        },
+    ),
+    subject: "[havre] CI passed on main",
+    date: Some(
+        "2026-10-13T07:05:00Z",
+    ),
+    unread: true,
+    flagged: false,
+    message_id: Some(
+        "ci-77@forge.example",
+    ),
+    labels: [],
+    snoozed_until: None,
+    preview: None,
+    attachments: false,
+    invite: false,
+    invite_at: None,
+    account: None,
+    folder: None,
+}
+--- preview
+Digest {
+    preview: "All checks passed ✓ on commit 49fcbf4. See https://forge.example/havre/actions/12",
+    files: [],
+    invite: false,
+    invite_at: None,
+}
+--- prefill Reply
+Prefill {
+    to: "Forgejo <noreply@forge.example>",
+    cc: "",
+    subject: "Re: [havre] CI passed on main",
+    body: "\n\nOn Tue, 13 Oct 2026 07:05:00 +0000, Forgejo wrote:\n> All checks passed ✓ on commit 49fcbf4.\n> See https://forge.example/havre/actions/12\n",
+    in_reply_to: Some(
+        "<ci-77@forge.example>",
+    ),
+    references: Some(
+        "<ci-77@forge.example>",
+    ),
+}
+--- prefill ReplyAll
+Prefill {
+    to: "Forgejo <noreply@forge.example>",
+    cc: "",
+    subject: "Re: [havre] CI passed on main",
+    body: "\n\nOn Tue, 13 Oct 2026 07:05:00 +0000, Forgejo wrote:\n> All checks passed ✓ on commit 49fcbf4.\n> See https://forge.example/havre/actions/12\n",
+    in_reply_to: Some(
+        "<ci-77@forge.example>",
+    ),
+    references: Some(
+        "<ci-77@forge.example>",
+    ),
+}
+--- prefill Forward
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Fwd: [havre] CI passed on main",
+    body: "\n\n---------- Forwarded message ----------\nFrom: Forgejo <noreply@forge.example>\nDate: Tue, 13 Oct 2026 07:05:00 +0000\nSubject: [havre] CI passed on main\nTo: mael@example.net\n\nAll checks passed ✓ on commit 49fcbf4.\r\nSee https://forge.example/havre/actions/12",
+    in_reply_to: None,
+    references: None,
+}
+--- search text
+All checks passed ✓ on commit 49fcbf4. See https://forge.example/havre/actions/12
+--- assistant text
+From: Forgejo <noreply@forge.example>
+To: mael@example.net
+Date: 2026-10-13T07:05:00Z
+Subject: [havre] CI passed on main
+
+All checks passed ✓ on commit 49fcbf4.\r
+See https://forge.example/havre/actions/12
+
+===== 3-html-only.eml
+--- reader (remote images allowed: false)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "OVHcloud",
+            ),
+            address: Some(
+                "facturation@ovh.example",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Votre facture d'octobre",
+    date: Some(
+        "2026-10-13T03:00:00+02:00",
+    ),
+    text: Some(
+        "Votre factureMontant\u{a0}: 12,99\u{a0}€\nMerci\u{a0}!\n",
+    ),
+    html: Some(
+        "<h1>Votre facture</h1><p>Montant&nbsp;: <b>12,99&nbsp;€</b></p><p>Merci&nbsp;!</p>",
+    ),
+    remote_images_blocked: false,
+    attachments: [],
+    unread: true,
+}
+--- reader (remote images allowed: true)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "OVHcloud",
+            ),
+            address: Some(
+                "facturation@ovh.example",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Votre facture d'octobre",
+    date: Some(
+        "2026-10-13T03:00:00+02:00",
+    ),
+    text: Some(
+        "Votre factureMontant\u{a0}: 12,99\u{a0}€\nMerci\u{a0}!\n",
+    ),
+    html: Some(
+        "<h1>Votre facture</h1><p>Montant&nbsp;: <b>12,99&nbsp;€</b></p><p>Merci&nbsp;!</p>",
+    ),
+    remote_images_blocked: false,
+    attachments: [],
+    unread: true,
+}
+--- downloads
+[]
+--- list row
+MessageSummary {
+    uid: 7,
+    from: Some(
+        Person {
+            name: Some(
+                "OVHcloud",
+            ),
+            address: Some(
+                "facturation@ovh.example",
+            ),
+        },
+    ),
+    subject: "Votre facture d'octobre",
+    date: Some(
+        "2026-10-13T03:00:00+02:00",
+    ),
+    unread: true,
+    flagged: false,
+    message_id: Some(
+        "inv-oct@ovh.example",
+    ),
+    labels: [],
+    snoozed_until: None,
+    preview: None,
+    attachments: false,
+    invite: false,
+    invite_at: None,
+    account: None,
+    folder: None,
+}
+--- preview
+Digest {
+    preview: "Votre factureMontant : 12,99 € Merci !",
+    files: [],
+    invite: false,
+    invite_at: None,
+}
+--- prefill Reply
+Prefill {
+    to: "OVHcloud <facturation@ovh.example>",
+    cc: "",
+    subject: "Re: Votre facture d'octobre",
+    body: "\n\nOn Tue, 13 Oct 2026 03:00:00 +0200, OVHcloud wrote:\n> Votre factureMontant\u{a0}: 12,99\u{a0}€\n> Merci\u{a0}!\n",
+    in_reply_to: Some(
+        "<inv-oct@ovh.example>",
+    ),
+    references: Some(
+        "<inv-oct@ovh.example>",
+    ),
+}
+--- prefill ReplyAll
+Prefill {
+    to: "OVHcloud <facturation@ovh.example>",
+    cc: "",
+    subject: "Re: Votre facture d'octobre",
+    body: "\n\nOn Tue, 13 Oct 2026 03:00:00 +0200, OVHcloud wrote:\n> Votre factureMontant\u{a0}: 12,99\u{a0}€\n> Merci\u{a0}!\n",
+    in_reply_to: Some(
+        "<inv-oct@ovh.example>",
+    ),
+    references: Some(
+        "<inv-oct@ovh.example>",
+    ),
+}
+--- prefill Forward
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Fwd: Votre facture d'octobre",
+    body: "\n\n---------- Forwarded message ----------\nFrom: OVHcloud <facturation@ovh.example>\nDate: Tue, 13 Oct 2026 03:00:00 +0200\nSubject: Votre facture d'octobre\nTo: mael@example.net\n\nVotre factureMontant\u{a0}: 12,99\u{a0}€\nMerci\u{a0}!",
+    in_reply_to: None,
+    references: None,
+}
+--- search text
+Votre factureMontant : 12,99 € Merci !
+--- assistant text
+From: OVHcloud <facturation@ovh.example>
+To: mael@example.net
+Date: 2026-10-13T03:00:00+02:00
+Subject: Votre facture d'octobre
+
+Votre factureMontant : 12,99 €
+Merci !
+
+===== 4-attachments.eml
+--- reader (remote images allowed: false)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Sophie Martin",
+            ),
+            address: Some(
+                "sophie@example.org",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Photos du week-end",
+    date: Some(
+        "2026-10-13T21:10:00+02:00",
+    ),
+    text: Some(
+        "Voici le devis et une photo.\r\n",
+    ),
+    html: Some(
+        "<p>Voici le devis et une photo&nbsp;:</p><img src=\"/attachment/0\" alt=\"photo\">",
+    ),
+    remote_images_blocked: false,
+    attachments: [
+        Attachment {
+            index: 0,
+            filename: "photo.png",
+            mime: "image/png",
+            size: 70,
+            inline: true,
+        },
+        Attachment {
+            index: 1,
+            filename: "devis révisé.pdf",
+            mime: "application/pdf",
+            size: 87,
+            inline: false,
+        },
+        Attachment {
+            index: 2,
+            filename: "attachment-3",
+            mime: "application/octet-stream",
+            size: 6,
+            inline: false,
+        },
+    ],
+    unread: true,
+}
+--- reader (remote images allowed: true)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Sophie Martin",
+            ),
+            address: Some(
+                "sophie@example.org",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Photos du week-end",
+    date: Some(
+        "2026-10-13T21:10:00+02:00",
+    ),
+    text: Some(
+        "Voici le devis et une photo.\r\n",
+    ),
+    html: Some(
+        "<p>Voici le devis et une photo&nbsp;:</p><img src=\"/attachment/0\" alt=\"photo\">",
+    ),
+    remote_images_blocked: false,
+    attachments: [
+        Attachment {
+            index: 0,
+            filename: "photo.png",
+            mime: "image/png",
+            size: 70,
+            inline: true,
+        },
+        Attachment {
+            index: 1,
+            filename: "devis révisé.pdf",
+            mime: "application/pdf",
+            size: 87,
+            inline: false,
+        },
+        Attachment {
+            index: 2,
+            filename: "attachment-3",
+            mime: "application/octet-stream",
+            size: 6,
+            inline: false,
+        },
+    ],
+    unread: true,
+}
+--- downloads
+[
+    "photo.png · image/png · 70 bytes · [89, 50, 4e, 47, 0d, 0a, 1a, 0a]",
+    "devis révisé.pdf · application/pdf · 87 bytes · [25, 50, 44, 46, 2d, 31, 2e, 34]",
+    "attachment-3 · application/octet-stream · 6 bytes · [00, 01, 02, 03, 04, 05]",
+]
+--- list row
+MessageSummary {
+    uid: 7,
+    from: Some(
+        Person {
+            name: Some(
+                "Sophie Martin",
+            ),
+            address: Some(
+                "sophie@example.org",
+            ),
+        },
+    ),
+    subject: "Photos du week-end",
+    date: Some(
+        "2026-10-13T21:10:00+02:00",
+    ),
+    unread: true,
+    flagged: false,
+    message_id: Some(
+        "photos@example.org",
+    ),
+    labels: [],
+    snoozed_until: None,
+    preview: None,
+    attachments: false,
+    invite: false,
+    invite_at: None,
+    account: None,
+    folder: None,
+}
+--- preview
+Digest {
+    preview: "Voici le devis et une photo.",
+    files: [
+        FileInfo {
+            index: 1,
+            name: "devis révisé.pdf",
+            mime: "application/pdf",
+            size: 87,
+        },
+        FileInfo {
+            index: 2,
+            name: "attachment",
+            mime: "application/octet-stream",
+            size: 6,
+        },
+    ],
+    invite: false,
+    invite_at: None,
+}
+--- prefill Reply
+Prefill {
+    to: "Sophie Martin <sophie@example.org>",
+    cc: "",
+    subject: "Re: Photos du week-end",
+    body: "\n\nOn Tue, 13 Oct 2026 21:10:00 +0200, Sophie Martin wrote:\n> Voici le devis et une photo.\n",
+    in_reply_to: Some(
+        "<photos@example.org>",
+    ),
+    references: Some(
+        "<photos@example.org>",
+    ),
+}
+--- prefill ReplyAll
+Prefill {
+    to: "Sophie Martin <sophie@example.org>",
+    cc: "",
+    subject: "Re: Photos du week-end",
+    body: "\n\nOn Tue, 13 Oct 2026 21:10:00 +0200, Sophie Martin wrote:\n> Voici le devis et une photo.\n",
+    in_reply_to: Some(
+        "<photos@example.org>",
+    ),
+    references: Some(
+        "<photos@example.org>",
+    ),
+}
+--- prefill Forward
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Fwd: Photos du week-end",
+    body: "\n\n---------- Forwarded message ----------\nFrom: Sophie Martin <sophie@example.org>\nDate: Tue, 13 Oct 2026 21:10:00 +0200\nSubject: Photos du week-end\nTo: mael@example.net\n\nVoici le devis et une photo.",
+    in_reply_to: None,
+    references: None,
+}
+--- search text
+Voici le devis et une photo.
+--- assistant text
+From: Sophie Martin <sophie@example.org>
+To: mael@example.net
+Date: 2026-10-13T21:10:00+02:00
+Subject: Photos du week-end
+
+Voici le devis et une photo.
+
+===== 5-invitation.eml
+--- reader (remote images allowed: false)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Claire Dubois",
+            ),
+            address: Some(
+                "claire@example.org",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Invitation: Kick-off atelier Lyon",
+    date: Some(
+        "2026-10-14T08:00:00+02:00",
+    ),
+    text: Some(
+        "Kick-off atelier Lyon, Tuesday 20 October 10:00.\r\n",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [
+        Attachment {
+            index: 0,
+            filename: "attachment-1",
+            mime: "text/calendar",
+            size: 323,
+            inline: false,
+        },
+        Attachment {
+            index: 1,
+            filename: "invite.ics",
+            mime: "application/ics",
+            size: 312,
+            inline: false,
+        },
+    ],
+    unread: true,
+}
+--- reader (remote images allowed: true)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Claire Dubois",
+            ),
+            address: Some(
+                "claire@example.org",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Invitation: Kick-off atelier Lyon",
+    date: Some(
+        "2026-10-14T08:00:00+02:00",
+    ),
+    text: Some(
+        "Kick-off atelier Lyon, Tuesday 20 October 10:00.\r\n",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [
+        Attachment {
+            index: 0,
+            filename: "attachment-1",
+            mime: "text/calendar",
+            size: 323,
+            inline: false,
+        },
+        Attachment {
+            index: 1,
+            filename: "invite.ics",
+            mime: "application/ics",
+            size: 312,
+            inline: false,
+        },
+    ],
+    unread: true,
+}
+--- downloads
+[
+    "attachment-1 · text/calendar · 323 bytes · [42, 45, 47, 49, 4e, 3a, 56, 43]",
+    "invite.ics · application/ics · 312 bytes · [42, 45, 47, 49, 4e, 3a, 56, 43]",
+]
+--- list row
+MessageSummary {
+    uid: 7,
+    from: Some(
+        Person {
+            name: Some(
+                "Claire Dubois",
+            ),
+            address: Some(
+                "claire@example.org",
+            ),
+        },
+    ),
+    subject: "Invitation: Kick-off atelier Lyon",
+    date: Some(
+        "2026-10-14T08:00:00+02:00",
+    ),
+    unread: true,
+    flagged: false,
+    message_id: Some(
+        "invite-1@example.org",
+    ),
+    labels: [],
+    snoozed_until: None,
+    preview: None,
+    attachments: false,
+    invite: false,
+    invite_at: None,
+    account: None,
+    folder: None,
+}
+--- preview
+Digest {
+    preview: "Kick-off atelier Lyon, Tuesday 20 October 10:00.",
+    files: [
+        FileInfo {
+            index: 0,
+            name: "invitation.ics",
+            mime: "text/calendar",
+            size: 323,
+        },
+        FileInfo {
+            index: 1,
+            name: "invite.ics",
+            mime: "application/ics",
+            size: 312,
+        },
+    ],
+    invite: true,
+    invite_at: Some(
+        1792483200,
+    ),
+}
+--- prefill Reply
+Prefill {
+    to: "Claire Dubois <claire@example.org>",
+    cc: "",
+    subject: "Re: Invitation: Kick-off atelier Lyon",
+    body: "\n\nOn Wed, 14 Oct 2026 08:00:00 +0200, Claire Dubois wrote:\n> Kick-off atelier Lyon, Tuesday 20 October 10:00.\n",
+    in_reply_to: Some(
+        "<invite-1@example.org>",
+    ),
+    references: Some(
+        "<invite-1@example.org>",
+    ),
+}
+--- prefill ReplyAll
+Prefill {
+    to: "Claire Dubois <claire@example.org>",
+    cc: "",
+    subject: "Re: Invitation: Kick-off atelier Lyon",
+    body: "\n\nOn Wed, 14 Oct 2026 08:00:00 +0200, Claire Dubois wrote:\n> Kick-off atelier Lyon, Tuesday 20 October 10:00.\n",
+    in_reply_to: Some(
+        "<invite-1@example.org>",
+    ),
+    references: Some(
+        "<invite-1@example.org>",
+    ),
+}
+--- prefill Forward
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Fwd: Invitation: Kick-off atelier Lyon",
+    body: "\n\n---------- Forwarded message ----------\nFrom: Claire Dubois <claire@example.org>\nDate: Wed, 14 Oct 2026 08:00:00 +0200\nSubject: Invitation: Kick-off atelier Lyon\nTo: mael@example.net\n\nKick-off atelier Lyon, Tuesday 20 October 10:00.",
+    in_reply_to: None,
+    references: None,
+}
+--- search text
+Kick-off atelier Lyon, Tuesday 20 October 10:00.
+--- assistant text
+From: Claire Dubois <claire@example.org>
+To: mael@example.net
+Date: 2026-10-14T08:00:00+02:00
+Subject: Invitation: Kick-off atelier Lyon
+
+Kick-off atelier Lyon, Tuesday 20 October 10:00.
+
+===== 6-invitation-reply.eml
+--- reader (remote images allowed: false)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Thomas Renard",
+            ),
+            address: Some(
+                "thomas@example.com",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "claire@example.org",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Accepted: Kick-off atelier Lyon",
+    date: Some(
+        "2026-10-14T10:00:00+02:00",
+    ),
+    text: None,
+    html: None,
+    remote_images_blocked: false,
+    attachments: [
+        Attachment {
+            index: 0,
+            filename: "attachment-1",
+            mime: "text/calendar",
+            size: 192,
+            inline: false,
+        },
+    ],
+    unread: true,
+}
+--- reader (remote images allowed: true)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Thomas Renard",
+            ),
+            address: Some(
+                "thomas@example.com",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "claire@example.org",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Accepted: Kick-off atelier Lyon",
+    date: Some(
+        "2026-10-14T10:00:00+02:00",
+    ),
+    text: None,
+    html: None,
+    remote_images_blocked: false,
+    attachments: [
+        Attachment {
+            index: 0,
+            filename: "attachment-1",
+            mime: "text/calendar",
+            size: 192,
+            inline: false,
+        },
+    ],
+    unread: true,
+}
+--- downloads
+[
+    "attachment-1 · text/calendar · 192 bytes · [42, 45, 47, 49, 4e, 3a, 56, 43]",
+]
+--- list row
+MessageSummary {
+    uid: 7,
+    from: Some(
+        Person {
+            name: Some(
+                "Thomas Renard",
+            ),
+            address: Some(
+                "thomas@example.com",
+            ),
+        },
+    ),
+    subject: "Accepted: Kick-off atelier Lyon",
+    date: Some(
+        "2026-10-14T10:00:00+02:00",
+    ),
+    unread: true,
+    flagged: false,
+    message_id: Some(
+        "accept-1@example.com",
+    ),
+    labels: [],
+    snoozed_until: None,
+    preview: None,
+    attachments: false,
+    invite: false,
+    invite_at: None,
+    account: None,
+    folder: None,
+}
+--- preview
+Digest {
+    preview: "",
+    files: [
+        FileInfo {
+            index: 0,
+            name: "invitation.ics",
+            mime: "text/calendar",
+            size: 192,
+        },
+    ],
+    invite: false,
+    invite_at: None,
+}
+--- prefill Reply
+Prefill {
+    to: "Thomas Renard <thomas@example.com>",
+    cc: "",
+    subject: "Re: Accepted: Kick-off atelier Lyon",
+    body: "\n\nOn Wed, 14 Oct 2026 10:00:00 +0200, Thomas Renard wrote:\n",
+    in_reply_to: Some(
+        "<accept-1@example.com>",
+    ),
+    references: Some(
+        "<accept-1@example.com>",
+    ),
+}
+--- prefill ReplyAll
+Prefill {
+    to: "Thomas Renard <thomas@example.com>",
+    cc: "claire@example.org",
+    subject: "Re: Accepted: Kick-off atelier Lyon",
+    body: "\n\nOn Wed, 14 Oct 2026 10:00:00 +0200, Thomas Renard wrote:\n",
+    in_reply_to: Some(
+        "<accept-1@example.com>",
+    ),
+    references: Some(
+        "<accept-1@example.com>",
+    ),
+}
+--- prefill Forward
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Fwd: Accepted: Kick-off atelier Lyon",
+    body: "\n\n---------- Forwarded message ----------\nFrom: Thomas Renard <thomas@example.com>\nDate: Wed, 14 Oct 2026 10:00:00 +0200\nSubject: Accepted: Kick-off atelier Lyon\nTo: claire@example.org\n\n",
+    in_reply_to: None,
+    references: None,
+}
+--- search text
+
+--- assistant text
+From: Thomas Renard <thomas@example.com>
+To: claire@example.org
+Date: 2026-10-14T10:00:00+02:00
+Subject: Accepted: Kick-off atelier Lyon
+
+
+
+===== 7-groups-latin1.eml
+--- reader (remote images allowed: false)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Renée François",
+            ),
+            address: Some(
+                "renee@example.fr",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "a@example.fr",
+            ),
+        },
+        Person {
+            name: Some(
+                "B. Bernard",
+            ),
+            address: Some(
+                "b@example.fr",
+            ),
+        },
+        Person {
+            name: None,
+            address: Some(
+                "solo@example.fr",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Réunion équipe",
+    date: Some(
+        "2026-10-12T16:30:00+02:00",
+    ),
+    text: Some(
+        "Réunion d'équipe lundi à 10h.\r\n-- \r\nRenée\r\n",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [],
+    unread: true,
+}
+--- reader (remote images allowed: true)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Renée François",
+            ),
+            address: Some(
+                "renee@example.fr",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "a@example.fr",
+            ),
+        },
+        Person {
+            name: Some(
+                "B. Bernard",
+            ),
+            address: Some(
+                "b@example.fr",
+            ),
+        },
+        Person {
+            name: None,
+            address: Some(
+                "solo@example.fr",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Réunion équipe",
+    date: Some(
+        "2026-10-12T16:30:00+02:00",
+    ),
+    text: Some(
+        "Réunion d'équipe lundi à 10h.\r\n-- \r\nRenée\r\n",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [],
+    unread: true,
+}
+--- downloads
+[]
+--- list row
+MessageSummary {
+    uid: 7,
+    from: Some(
+        Person {
+            name: Some(
+                "Renée François",
+            ),
+            address: Some(
+                "renee@example.fr",
+            ),
+        },
+    ),
+    subject: "Réunion équipe",
+    date: Some(
+        "2026-10-12T16:30:00+02:00",
+    ),
+    unread: true,
+    flagged: false,
+    message_id: Some(
+        "groups@example.fr",
+    ),
+    labels: [],
+    snoozed_until: None,
+    preview: None,
+    attachments: false,
+    invite: false,
+    invite_at: None,
+    account: None,
+    folder: None,
+}
+--- preview
+Digest {
+    preview: "Réunion d'équipe lundi à 10h.",
+    files: [],
+    invite: false,
+    invite_at: None,
+}
+--- prefill Reply
+Prefill {
+    to: "Renée François <renee@example.fr>",
+    cc: "",
+    subject: "Re: Réunion équipe",
+    body: "\n\nOn Mon, 12 Oct 2026 16:30:00 +0200, Renée François wrote:\n> Réunion d'équipe lundi à 10h.\n> -- \n> Renée\n",
+    in_reply_to: Some(
+        "<groups@example.fr>",
+    ),
+    references: Some(
+        "<only-one@example.fr> <groups@example.fr>",
+    ),
+}
+--- prefill ReplyAll
+Prefill {
+    to: "Renée François <renee@example.fr>",
+    cc: "a@example.fr, B. Bernard <b@example.fr>, solo@example.fr",
+    subject: "Re: Réunion équipe",
+    body: "\n\nOn Mon, 12 Oct 2026 16:30:00 +0200, Renée François wrote:\n> Réunion d'équipe lundi à 10h.\n> -- \n> Renée\n",
+    in_reply_to: Some(
+        "<groups@example.fr>",
+    ),
+    references: Some(
+        "<only-one@example.fr> <groups@example.fr>",
+    ),
+}
+--- prefill Forward
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Fwd: Réunion équipe",
+    body: "\n\n---------- Forwarded message ----------\nFrom: Renée François <renee@example.fr>\nDate: Mon, 12 Oct 2026 16:30:00 +0200\nSubject: Réunion équipe\nTo: a@example.fr, B. Bernard <b@example.fr>, solo@example.fr\n\nRéunion d'équipe lundi à 10h.\r\n-- \r\nRenée",
+    in_reply_to: None,
+    references: None,
+}
+--- search text
+Réunion d'équipe lundi à 10h. -- Renée
+--- assistant text
+From: Renée François <renee@example.fr>
+To: a@example.fr, B. Bernard <b@example.fr>, solo@example.fr
+Date: 2026-10-12T16:30:00+02:00
+Subject: Réunion équipe
+
+Réunion d'équipe lundi à 10h.\r
+-- \r
+Renée
+
+===== 8-broken.eml
+--- reader (remote images allowed: false)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: None,
+    to: [],
+    cc: [],
+    subject: "no date, no sender",
+    date: None,
+    text: Some(
+        "just some text without a content type\r\nand a line with invalid UTF-8: �� caf�",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [],
+    unread: true,
+}
+--- reader (remote images allowed: true)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: None,
+    to: [],
+    cc: [],
+    subject: "no date, no sender",
+    date: None,
+    text: Some(
+        "just some text without a content type\r\nand a line with invalid UTF-8: �� caf�",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [],
+    unread: true,
+}
+--- downloads
+[]
+--- list row
+MessageSummary {
+    uid: 7,
+    from: None,
+    subject: "no date, no sender",
+    date: None,
+    unread: true,
+    flagged: false,
+    message_id: Some(
+        "",
+    ),
+    labels: [],
+    snoozed_until: None,
+    preview: None,
+    attachments: false,
+    invite: false,
+    invite_at: None,
+    account: None,
+    folder: None,
+}
+--- preview
+Digest {
+    preview: "just some text without a content type and a line with invalid UTF-8: �� caf�",
+    files: [],
+    invite: false,
+    invite_at: None,
+}
+--- prefill Reply
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Re: no date, no sender",
+    body: "\n\n wrote:\n> just some text without a content type\n> and a line with invalid UTF-8: �� caf�\n",
+    in_reply_to: None,
+    references: None,
+}
+--- prefill ReplyAll
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Re: no date, no sender",
+    body: "\n\n wrote:\n> just some text without a content type\n> and a line with invalid UTF-8: �� caf�\n",
+    in_reply_to: None,
+    references: None,
+}
+--- prefill Forward
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Fwd: no date, no sender",
+    body: "\n\n---------- Forwarded message ----------\nFrom: \nDate: \nSubject: no date, no sender\nTo: \n\njust some text without a content type\r\nand a line with invalid UTF-8: �� caf�",
+    in_reply_to: None,
+    references: None,
+}
+--- search text
+just some text without a content type and a line with invalid UTF-8: �� caf�
+--- assistant text
+From: 
+To: 
+Date: 
+Subject: no date, no sender
+
+just some text without a content type\r
+and a line with invalid UTF-8: �� caf�
+
+===== 9-forwarded.eml
+--- reader (remote images allowed: false)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Julien Morel",
+            ),
+            address: Some(
+                "julien@example.com",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Fwd: Devis maintenance Q4",
+    date: Some(
+        "2026-10-13T11:00:00+02:00",
+    ),
+    text: Some(
+        "Pour info.\r\n\r\n---------- Forwarded message ----------\r\nFrom: Thomas <thomas@example.com>\r\n",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [
+        Attachment {
+            index: 0,
+            filename: "attachment-1",
+            mime: "message/rfc822",
+            size: 163,
+            inline: false,
+        },
+    ],
+    unread: true,
+}
+--- reader (remote images allowed: true)
+MessageDetail {
+    uid: 7,
+    folder: "INBOX",
+    from: Some(
+        Person {
+            name: Some(
+                "Julien Morel",
+            ),
+            address: Some(
+                "julien@example.com",
+            ),
+        },
+    ),
+    to: [
+        Person {
+            name: None,
+            address: Some(
+                "mael@example.net",
+            ),
+        },
+    ],
+    cc: [],
+    subject: "Fwd: Devis maintenance Q4",
+    date: Some(
+        "2026-10-13T11:00:00+02:00",
+    ),
+    text: Some(
+        "Pour info.\r\n\r\n---------- Forwarded message ----------\r\nFrom: Thomas <thomas@example.com>\r\n",
+    ),
+    html: None,
+    remote_images_blocked: false,
+    attachments: [
+        Attachment {
+            index: 0,
+            filename: "attachment-1",
+            mime: "message/rfc822",
+            size: 163,
+            inline: false,
+        },
+    ],
+    unread: true,
+}
+--- downloads
+[
+    "attachment-1 · message/rfc822 · 163 bytes · [46, 72, 6f, 6d, 3a, 20, 54, 68]",
+]
+--- list row
+MessageSummary {
+    uid: 7,
+    from: Some(
+        Person {
+            name: Some(
+                "Julien Morel",
+            ),
+            address: Some(
+                "julien@example.com",
+            ),
+        },
+    ),
+    subject: "Fwd: Devis maintenance Q4",
+    date: Some(
+        "2026-10-13T11:00:00+02:00",
+    ),
+    unread: true,
+    flagged: false,
+    message_id: Some(
+        "fwd-1@example.com",
+    ),
+    labels: [],
+    snoozed_until: None,
+    preview: None,
+    attachments: false,
+    invite: false,
+    invite_at: None,
+    account: None,
+    folder: None,
+}
+--- preview
+Digest {
+    preview: "Pour info.",
+    files: [
+        FileInfo {
+            index: 0,
+            name: "attachment",
+            mime: "message/rfc822",
+            size: 163,
+        },
+    ],
+    invite: false,
+    invite_at: None,
+}
+--- prefill Reply
+Prefill {
+    to: "Julien Morel <julien@example.com>",
+    cc: "",
+    subject: "Re: Fwd: Devis maintenance Q4",
+    body: "\n\nOn Tue, 13 Oct 2026 11:00:00 +0200, Julien Morel wrote:\n> Pour info.\n> \n> ---------- Forwarded message ----------\n> From: Thomas <thomas@example.com>\n",
+    in_reply_to: Some(
+        "<fwd-1@example.com>",
+    ),
+    references: Some(
+        "<fwd-1@example.com>",
+    ),
+}
+--- prefill ReplyAll
+Prefill {
+    to: "Julien Morel <julien@example.com>",
+    cc: "",
+    subject: "Re: Fwd: Devis maintenance Q4",
+    body: "\n\nOn Tue, 13 Oct 2026 11:00:00 +0200, Julien Morel wrote:\n> Pour info.\n> \n> ---------- Forwarded message ----------\n> From: Thomas <thomas@example.com>\n",
+    in_reply_to: Some(
+        "<fwd-1@example.com>",
+    ),
+    references: Some(
+        "<fwd-1@example.com>",
+    ),
+}
+--- prefill Forward
+Prefill {
+    to: "",
+    cc: "",
+    subject: "Fwd: Devis maintenance Q4",
+    body: "\n\n---------- Forwarded message ----------\nFrom: Julien Morel <julien@example.com>\nDate: Tue, 13 Oct 2026 11:00:00 +0200\nSubject: Fwd: Devis maintenance Q4\nTo: mael@example.net\n\nPour info.\r\n\r\n---------- Forwarded message ----------\r\nFrom: Thomas <thomas@example.com>",
+    in_reply_to: None,
+    references: None,
+}
+--- search text
+Pour info. ---------- Forwarded message ---------- From: Thomas <thomas@example.com>
+--- assistant text
+From: Julien Morel <julien@example.com>
+To: mael@example.net
+Date: 2026-10-13T11:00:00+02:00
+Subject: Fwd: Devis maintenance Q4
+
+Pour info.\r
+\r
+---------- Forwarded message ----------\r
+From: Thomas <thomas@example.com>
+

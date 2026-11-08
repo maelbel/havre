@@ -1,0 +1,17 @@
+From: Thomas Renard <thomas@example.com>
+To: claire@example.org
+Subject: Accepted: Kick-off atelier Lyon
+Date: Wed, 14 Oct 2026 10:00:00 +0200
+Message-ID: <accept-1@example.com>
+MIME-Version: 1.0
+Content-Type: text/calendar; charset=utf-8; method=REPLY
+
+BEGIN:VCALENDAR
+METHOD:REPLY
+VERSION:2.0
+BEGIN:VEVENT
+UID:kickoff-1@example.org
+DTSTART:20261020T080000Z
+ATTENDEE;PARTSTAT=ACCEPTED:mailto:thomas@example.com
+END:VEVENT
+END:VCALENDAR

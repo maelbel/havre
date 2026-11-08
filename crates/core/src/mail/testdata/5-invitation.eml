@@ -1,0 +1,46 @@
+From: Claire Dubois <claire@example.org>
+To: mael@example.net
+Subject: Invitation: Kick-off atelier Lyon
+Date: Wed, 14 Oct 2026 08:00:00 +0200
+Message-ID: <invite-1@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MIX"
+
+--MIX
+Content-Type: multipart/alternative; boundary="ALT"
+
+--ALT
+Content-Type: text/plain; charset=utf-8
+
+Kick-off atelier Lyon, Tuesday 20 October 10:00.
+
+--ALT
+Content-Type: text/calendar; charset=utf-8; method=REQUEST
+
+BEGIN:VCALENDAR
+METHOD:REQUEST
+PRODID:-//Test//EN
+VERSION:2.0
+BEGIN:VEVENT
+UID:kickoff-1@example.org
+DTSTART:20261020T080000Z
+DTEND:20261020T090000Z
+SUMMARY:Kick-off atelier Lyon
+ORGANIZER;CN=Claire Dubois:mailto:claire@example.org
+ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:mael@example.net
+END:VEVENT
+END:VCALENDAR
+--ALT--
+
+--MIX
+Content-Type: application/ics; name="invite.ics"
+Content-Disposition: attachment; filename="invite.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSCk1FVEhPRDpSRVFVRVNUClBST0RJRDotLy9UZXN0Ly9FTgpWRVJTSU9O
+OjIuMApCRUdJTjpWRVZFTlQKVUlEOmtpY2tvZmYtMUBleGFtcGxlLm9yZwpEVFNUQVJUOjIwMjYx
+MDIwVDA4MDAwMFoKRFRFTkQ6MjAyNjEwMjBUMDkwMDAwWgpTVU1NQVJZOktpY2stb2ZmIGF0ZWxp
+ZXIgTHlvbgpPUkdBTklaRVI7Q049Q2xhaXJlIER1Ym9pczptYWlsdG86Y2xhaXJlQGV4YW1wbGUu
+b3JnCkFUVEVOREVFO1BBUlRTVEFUPU5FRURTLUFDVElPTjptYWlsdG86bWFlbEBleGFtcGxlLm5l
+dApFTkQ6VkVWRU5UCkVORDpWQ0FMRU5EQVIK
+--MIX--

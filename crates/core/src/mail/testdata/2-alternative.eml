@@ -1,0 +1,24 @@
+From: Forgejo <noreply@forge.example>
+To: mael@example.net
+Subject: [havre] CI passed on main
+Date: Tue, 13 Oct 2026 07:05:00 +0000
+Message-ID: <ci-77@forge.example>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="ALT"
+
+--ALT
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+All checks passed =E2=9C=93 on commit 49fcbf4.
+See https://forge.example/havre/actions/12
+
+--ALT
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><p style=3D"color:green">All checks passed &#10003;</p>
+<img src=3D"https://tracker.example/pixel.gif" width=3D"1" height=3D"1">
+<a href=3D"https://forge.example/havre/actions/12">See the run</a>
+<script>alert(1)</script></body></html>
+--ALT--
