@@ -8,6 +8,10 @@
 //! | POST   | /backups | make one now |
 //! | GET    | /backups/{name} | download one |
 //! | DELETE | /backups/{name} | delete one |
+//! | POST   | /backups/{name}/offsite | seal it and send it off-site now |
+//! | PUT    | /backups/remote `{enabled, kind, url, bucket, region, prefix, path_style, username, secret?, keep}` | the off-site destination (the secret only when typed again) |
+//! | POST   | /backups/remote/test (same body) | try a destination: write, list, delete a test file |
+//! | DELETE | /backups/remote | turn off-site copies off, forget the destination |
 //! | GET    | /agenda/calendars/{id}/export.ics | a calendar as an .ics file |
 
 use std::path::Path;
@@ -22,7 +26,10 @@ use axum::{
 };
 use havre_core::{
     Error,
-    backup::{self, BackupFile, BackupSettings, BackupStatus, Backups},
+    backup::{
+        self, BackupFile, BackupSettings, BackupStatus, Backups, RemoteSettings, RemoteStatus,
+        remote::RemoteFile,
+    },
     secrets::Secrets,
 };
 
@@ -32,7 +39,11 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/backups", get(status).post(run))
         .route("/backups/settings", axum::routing::patch(save_settings))
+        // Before `/backups/{name}`: "remote" is not a backup's name.
+        .route("/backups/remote", axum::routing::put(save_remote).delete(forget_remote))
+        .route("/backups/remote/test", axum::routing::post(test_remote))
         .route("/backups/{name}", get(download).delete(remove))
+        .route("/backups/{name}/offsite", axum::routing::post(send_offsite))
         .route("/agenda/calendars/{id}/export.ics", get(export_calendar))
 }
 
@@ -49,6 +60,33 @@ async fn save_settings(
     Json(s): Json<BackupSettings>,
 ) -> Result<Json<BackupSettings>, ApiError> {
     Ok(Json(backups(&state)?.save_settings(&s).await?))
+}
+
+async fn save_remote(
+    State(state): State<AppState>,
+    Json(s): Json<RemoteSettings>,
+) -> Result<Json<RemoteStatus>, ApiError> {
+    Ok(Json(backups(&state)?.save_remote(&s).await?))
+}
+
+async fn forget_remote(State(state): State<AppState>) -> Result<Json<RemoteStatus>, ApiError> {
+    Ok(Json(backups(&state)?.forget_remote().await?))
+}
+
+/// Tries the destination; the answer is a sentence for the page.
+async fn test_remote(
+    State(state): State<AppState>,
+    Json(s): Json<RemoteSettings>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let message = backups(&state)?.test_remote(&s).await?;
+    Ok(Json(serde_json::json!({ "message": message })))
+}
+
+async fn send_offsite(
+    State(state): State<AppState>,
+    UrlPath(name): UrlPath<String>,
+) -> Result<Json<RemoteFile>, ApiError> {
+    Ok(Json(backups(&state)?.send_offsite(&name).await?))
 }
 
 async fn run(State(state): State<AppState>) -> Result<(StatusCode, Json<BackupFile>), ApiError> {
@@ -111,6 +149,7 @@ havre                      start the server
 havre backup               make a backup now (into HAVRE_BACKUP_DIR, default <data>/backups)
 havre restore <file>       put a backup in place of the database (stop Havre first)
       [--key <64 hex>]     the recovery key, when restoring on a new server
+                           (a .havre off-site copy always needs it)
       [--key-mismatch-ok]  restore without the right key: mail passwords to re-enter
 havre key                  print the recovery key (keep it in your password manager)";
 

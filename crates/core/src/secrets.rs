@@ -94,6 +94,19 @@ impl Secrets {
         fingerprint_of(self.key.as_slice())
     }
 
+    /// A 32-byte key for one purpose, made from this one: HMAC-SHA256 of
+    /// `label` keyed with the secret key. Different labels give unrelated
+    /// keys, so the off-site backup key never equals the one that encrypts
+    /// passwords, yet there's still only one key to keep safe.
+    pub(crate) fn derive(&self, label: &str) -> [u8; 32] {
+        use hmac::{Hmac, Mac};
+        // `Mac::` because `KeyInit` (in scope for the cipher) has a method of the same name.
+        let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(self.key.as_slice())
+            .expect("HMAC takes any key size");
+        mac.update(label.as_bytes());
+        mac.finalize().into_bytes().into()
+    }
+
     pub fn encrypt(&self, plaintext: &str) -> Result<Vec<u8>> {
         let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
         let ciphertext = self

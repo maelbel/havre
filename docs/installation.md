@@ -95,6 +95,26 @@ folder somewhere else too, or point it at a NAS or another disk (with Docker,
 mount that folder at `/srv/havre/data/backups`; it must be writable by the
 container's `havre` user). Each backup can also be downloaded from the page.
 
+**Off-site copy** (Settings › Backups › Off-site copy): after each backup,
+Havre encrypts it with the recovery key and sends it to a **WebDAV folder**
+(Nextcloud, a NAS) or an **S3 bucket** (Backblaze B2, MinIO, Scaleway, AWS),
+keeping the last 14 there (older copies Havre made are deleted; other files
+are never touched). A failed copy is tried again every 15 minutes, then every
+hour; the status card turns orange after a day of failures.
+
+- Nextcloud: the folder's address is
+  `https://<your cloud>/remote.php/dav/files/<user>/Havre` and the password an
+  *app password* (Settings › Security › Devices & sessions).
+- S3: the endpoint (e.g. `https://s3.eu-central-003.backblazeb2.com`), the
+  bucket, its region, and a key allowed only on that bucket. MinIO and B2 use
+  *path-style* addresses (the default).
+- Addresses must be `https://` (plain `http://` only to the same machine).
+  The password or secret key is stored encrypted and never sent back to the
+  browser.
+
+The copies are `havre-<date>.havre` files: unreadable without the recovery
+key — keep it somewhere other than the server.
+
 **The time** is the server's local time. With Docker, set `TZ` (docker-compose.yml
 defaults to `Europe/Paris`).
 
@@ -126,6 +146,17 @@ havre restore <file> --key <64 hex characters>
 # Key lost? Restore anyway and type the mail passwords again:
 havre restore <file> --key-mismatch-ok
 ```
+
+**Disaster recovery** (the server is gone): install Havre on the new machine,
+download the newest `.havre` file from your Nextcloud or bucket the usual
+way, then restore it with the recovery key — no off-site password needed:
+
+```sh
+havre restore havre-2026-11-08-030000.havre --key <64 hex characters>
+```
+
+Havre checks the key's fingerprint, decrypts the copy (a changed or
+incomplete copy is refused), checks the database and puts it in place.
 
 **Exports:** each calendar as an `.ics` file (Settings › Backups › Export),
 which any calendar app can import.

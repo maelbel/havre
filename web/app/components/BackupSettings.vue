@@ -59,6 +59,21 @@ async function remove(name: string) {
   }
 }
 
+// "Copy off-site" on one backup: seal it and send it now.
+const sending = ref<string | null>(null)
+async function copyOffsite(name: string) {
+  sending.value = name
+  try {
+    const copy = await sendOffsite(name)
+    toast.show(`Copied off-site (${bytes(copy.size)})`)
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  } finally {
+    sending.value = null
+    await load()
+  }
+}
+
 /** Old (more than 2 days) or failed: say so. */
 const health = computed(() => {
   const s = status.value
@@ -133,8 +148,8 @@ const restoreDocker = 'docker compose stop havre\ndocker compose run --rm havre 
         <div class="eyebrow">Kept here</div>
         <p class="path mono">{{ status.dir }}</p>
         <p class="note">
-          On the same disk as Havre: a dead disk takes them along. Copy this folder elsewhere too — a NAS, another
-          disk, your cloud — or set <code>HAVRE_BACKUP_DIR</code> to such a place (with Docker, mount it at
+          On the same disk as Havre: a dead disk takes them along. Turn on the <strong>off-site copy</strong> below, or
+          set <code>HAVRE_BACKUP_DIR</code> to another disk (with Docker, mount it at
           <code>/srv/havre/data/backups</code>).
         </p>
         <ol v-if="status.backups.length" class="files">
@@ -155,6 +170,18 @@ const restoreDocker = 'docker compose stop havre\ndocker compose run --rm havre 
               Download
             </UButton>
             <UButton
+              v-if="status.remote.settings.enabled"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              type="button"
+              :loading="sending === f.name"
+              :disabled="!!sending"
+              @click="copyOffsite(f.name)"
+            >
+              Copy off-site
+            </UButton>
+            <UButton
               :color="confirmDelete === f.name ? 'error' : 'neutral'"
               variant="outline"
               size="xs"
@@ -170,6 +197,8 @@ const restoreDocker = 'docker compose stop havre\ndocker compose run --rm havre 
           <UButton color="primary" variant="link" class="p-0" @click="runNow">make the first one</UButton>.
         </p>
       </section>
+
+      <OffsiteSettings :status="status.remote" @changed="load" />
 
       <section class="block">
         <div class="eyebrow">Recovery key</div>
@@ -199,7 +228,8 @@ const restoreDocker = 'docker compose stop havre\ndocker compose run --rm havre 
         <div class="eyebrow">Restore</div>
         <p class="note">
           Havre must be stopped. The current database is kept next to it (<code>havre.db.before-restore-…</code>).
-          On a new server, add <code>--key</code> and the recovery key.
+          On a new server, add <code>--key</code> and the recovery key (an off-site <code>.havre</code> copy always
+          needs it).
         </p>
         <div class="code">
           <pre>{{ restoreDocker }}</pre>

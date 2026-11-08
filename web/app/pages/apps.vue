@@ -64,6 +64,8 @@ const backupLine = computed(() => {
   if (b.last_error) return { text: 'Failed', bad: true }
   if (!b.last_at) return { text: b.enabled && b.next_at ? `Not yet · ${whenShort(b.next_at)}` : 'Never', bad: true }
   const old = Date.now() / 1000 - b.last_at > 2 * 86_400
+  // Off-site copies failing for a day are a worry too.
+  if (b.offsite_failing) return { text: `${whenShort(b.last_at)} · not copied off-site`, bad: true }
   return { text: whenShort(b.last_at), bad: old }
 })
 const detail = (app: HavreApp) => appDetail(app, system.value)
