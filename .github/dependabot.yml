@@ -19,6 +19,15 @@ updates:
     commit-message: { prefix: "build(deps)" }
     groups:
       minor-and-patch: { update-types: [minor, patch] }
+    ignore:
+      # TypeScript 7 (the native rewrite): vue-tsc, Nuxt's type checker, can't run on it yet.
+      # Remove this once vue-tsc supports it.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # vue-tsc 3.3.14 adds `.value` to some reactive values in templates (false type errors in
+      # CalendarSettings and OffsiteSettings); 3.3.13 is fine. Try the next release.
+      - dependency-name: vue-tsc
+        versions: ["3.3.14"]
   - package-ecosystem: npm
     directory: /desktop
     schedule: { interval: weekly }

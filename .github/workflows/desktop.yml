@@ -1,8 +1,9 @@
 # Havre Desktop: builds the installers for Windows, macOS and Linux.
 #
-# - On every push touching desktop/ (or by hand from the Actions tab): the
-#   installers are attached to the run as artifacts (Actions › the run ›
-#   Artifacts).
+# - On a pull request touching desktop/: only the checks (fmt, clippy, tests).
+# - On main, when desktop/ changed (or by hand from the Actions tab): also the
+#   installers, attached to the run as artifacts (Actions › the run ›
+#   Artifacts). Building them takes four machines, so not for every branch.
 # - On a release tag (`vX.Y.Z`): release.yml calls this workflow and puts the
 #   installers in the draft release, next to the server.
 #
@@ -12,9 +13,11 @@ name: Desktop
 
 on:
   push:
-    # Branches only: on a tag push GitHub ignores `paths`, and release.yml
+    # main only: on a tag push GitHub ignores `paths`, and release.yml
     # already builds the installers for `v*` tags.
-    branches: ["**"]
+    branches: [main]
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+  pull_request:
     paths: ["desktop/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
   workflow_call:
@@ -42,6 +45,8 @@ jobs:
           cargo test
 
   build:
+    # Installers: not for pull requests (the checks above are enough there).
+    if: github.event_name != 'pull_request'
     needs: test
     strategy:
       fail-fast: false
