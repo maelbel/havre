@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "havre-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1067,7 +1067,7 @@ dependencies = [
 
 [[package]]
 name = "havre-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ammonia",
  "argon2",
@@ -1100,7 +1100,7 @@ dependencies = [
 
 [[package]]
 name = "havre-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",

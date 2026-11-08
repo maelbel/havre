@@ -26,11 +26,11 @@ To update: `git pull && docker compose up -d --build`.
 
 Each release also publishes an image, for PCs and servers (amd64) and the Raspberry Pi 4/5 (arm64):
 `ghcr.io/maelbel/havre:<version>` (or `:latest`). No build on your machine: in `docker-compose.yml`, replace the
-`build:` lines with `image: ghcr.io/maelbel/havre:0.1.0`, then `docker compose up -d`. To update, change the
+`build:` lines with `image: ghcr.io/maelbel/havre:0.2.0`, then `docker compose up -d`. To update, change the
 version and run `docker compose pull && docker compose up -d`.
 
 To check that an image was built by Havre's release workflow:
-`gh attestation verify oci://ghcr.io/maelbel/havre:0.1.0 --repo maelbel/havre`.
+`gh attestation verify oci://ghcr.io/maelbel/havre:0.2.0 --repo maelbel/havre`.
 
 ## From a release (Linux)
 
@@ -40,7 +40,7 @@ Debian 12 / Raspberry Pi OS (bookworm), Ubuntu 22.04 and newer.
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing     # the file is the one published
-tar xzf havre-0.1.0-linux-arm64.tar.gz && cd havre-0.1.0-linux-arm64
+tar xzf havre-0.2.0-linux-arm64.tar.gz && cd havre-0.2.0-linux-arm64
 cp .env.example .env
 ./havre                                      # http://127.0.0.1:8080
 ```
