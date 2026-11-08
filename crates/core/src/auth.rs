@@ -14,7 +14,7 @@
 
 use argon2::{
     Argon2,
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
 };
 use chacha20poly1305::aead::{OsRng, rand_core::RngCore};
 use sha2::{Digest, Sha256};
@@ -213,9 +213,9 @@ fn check_strength(password: &str) -> Result<()> {
 async fn hash_password(password: &str) -> Result<String> {
     let password = password.to_owned();
     tokio::task::spawn_blocking(move || {
-        let salt = SaltString::generate(&mut OsRng);
+        // A fresh random salt is made for each hash (argon2 0.6 does it itself).
         Argon2::default()
-            .hash_password(password.as_bytes(), &salt)
+            .hash_password(password.as_bytes())
             .map(|hash| hash.to_string())
             .map_err(|err| Error::Config(format!("can't hash the password: {err}")))
     })
@@ -248,6 +248,21 @@ fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use crate::store::Database;
+
+    /// Passwords set before the move to argon2 0.6 still work: the hash is a
+    /// standard PHC string. The first was written by Havre 0.1.0 (argon2 0.5),
+    /// the second by another Argon2 library, with the same parameters.
+    #[tokio::test]
+    async fn hashes_from_before_still_verify() {
+        let havre_0_1 = "$argon2id$v=19$m=19456,t=2,p=1$2z8Igrew5Te42TCi9qs+Jw$2gO2S08eOeQLgSLBTCnPzw2es2QRuhykHrnuCzWB6kI";
+        assert!(super::verify_password("offsite-test-password-1", havre_0_1.into()).await.unwrap());
+        assert!(!super::verify_password("another password", havre_0_1.into()).await.unwrap());
+        let other_library = "$argon2id$v=19$m=19456,t=2,p=1$MXNN/ULbZ67M4S5WiPiRMg$shp2tAbjgIyAr2MyZXzX3JD5hpPbsKVtHPT5jWQGzh0";
+        assert!(super::verify_password("correct horse battery staple", other_library.into()).await.unwrap());
+        // And a new hash keeps the same shape (Argon2id, same cost).
+        let fresh = super::hash_password("correct horse").await.unwrap();
+        assert!(fresh.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"), "{fresh}");
+    }
 
     #[tokio::test]
     async fn first_run_then_sign_in_and_out() {
