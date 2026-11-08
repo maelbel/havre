@@ -60,7 +60,7 @@ impl NoteStore {
             query.q.as_deref().unwrap_or_default().split_whitespace().map(str::to_lowercase).collect();
         let first = words.first().map(|w| format!("%{w}%"));
         let person = query.person.as_ref().map(|p| p.trim().to_lowercase());
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "SELECT {COLUMNS} FROM notes n
              WHERE (? IS NULL OR n.title LIKE ? OR n.body LIKE ?)
                AND (? IS NULL OR EXISTS (SELECT 1 FROM note_people p WHERE p.note_id = n.id AND p.email = ?))
@@ -118,7 +118,7 @@ impl NoteStore {
     }
 
     pub async fn note(&self, id: i64) -> Result<Note> {
-        let row = sqlx::query(&format!("SELECT {COLUMNS} FROM notes WHERE id = ?"))
+        let row = sqlx::query(sql!("SELECT {COLUMNS} FROM notes WHERE id = ?"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?

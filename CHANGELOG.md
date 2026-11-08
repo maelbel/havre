@@ -21,6 +21,8 @@ All notable changes to Havre are listed here. The format follows
 - While you read an email, its subject and sender stay at the top (smaller once you scroll).
 - Everything clickable shows the pointer cursor.
 - Notifications (toasts) appear in the bottom right corner.
+- Updated dependencies: sqlx 0.9, argon2 0.6 (passwords saved before still work), Nuxt UI 4.12.
+- Havre Desktop installers are built on `main` and for releases only; pull requests just run its checks.
 
 ### Fixed
 

@@ -24,6 +24,22 @@
 //! - [`sync`]: keeps the store in sync with the server, in the background.
 //! - [`tasks`]: to-dos from Microsoft To Do, Google Tasks, CalDAV or Havre, linked to mail and people.
 
+/// SQL put together at runtime, as sqlx 0.9 asks to be marked: a query built
+/// with `format!` only compiles when the code says it was checked.
+///
+/// Every use in Havre pastes in **only text written in the code** — a list of
+/// columns (`ACCOUNT_COLUMNS`…), a table name from a fixed list, `?` marks —
+/// never something a user or a server sent: those always go through `.bind()`.
+/// Keep it that way when adding one.
+///
+/// `sql!("SELECT {COLUMNS} FROM notes WHERE id = ?")` is
+/// `sqlx::AssertSqlSafe(format!(…))`.
+macro_rules! sql {
+    ($($arg:tt)*) => {
+        sqlx::AssertSqlSafe(format!($($arg)*))
+    };
+}
+
 pub mod accounts;
 pub mod agenda;
 pub mod ai;

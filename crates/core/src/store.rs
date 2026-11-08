@@ -533,14 +533,14 @@ impl Database {
     // ---- Accounts -----------------------------------------------------------
 
     pub async fn accounts(&self) -> Result<Vec<Account>> {
-        let rows = sqlx::query(&format!("SELECT {ACCOUNT_COLUMNS} FROM accounts ORDER BY position, id"))
+        let rows = sqlx::query(sql!("SELECT {ACCOUNT_COLUMNS} FROM accounts ORDER BY position, id"))
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.iter().map(|r| self.account_from_row(r)).collect())
     }
 
     pub async fn account(&self, id: i64) -> Result<Account> {
-        let row = sqlx::query(&format!("SELECT {ACCOUNT_COLUMNS} FROM accounts WHERE id = ?"))
+        let row = sqlx::query(sql!("SELECT {ACCOUNT_COLUMNS} FROM accounts WHERE id = ?"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?

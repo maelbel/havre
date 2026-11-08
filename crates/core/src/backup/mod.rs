@@ -540,7 +540,7 @@ impl Backups {
         //    needs, and make the file compact.
         let copy = open_file(&partial, false).await?;
         for table in ["bodies", "mail_vectors", "ai_cache", "sessions"] {
-            sqlx::query(&format!("DELETE FROM {table}")).execute(&copy).await?;
+            sqlx::query(sql!("DELETE FROM {table}")).execute(&copy).await?;
         }
         sqlx::query("CREATE TABLE havre_backup (created_at INTEGER NOT NULL, version TEXT NOT NULL, key_fingerprint TEXT NOT NULL)")
             .execute(&copy)
