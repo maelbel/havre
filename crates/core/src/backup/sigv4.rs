@@ -17,7 +17,7 @@
 //!
 //! What it teaches: canonical forms, HMAC chains, percent-encoding rules.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::Url;
 use sha2::{Digest, Sha256};
 
@@ -35,7 +35,8 @@ pub fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn hmac(key: &[u8], data: &str) -> Vec<u8> {
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC takes any key size");
+    // `new_from_slice` comes from the `KeyInit` trait (keyed things: MACs, ciphers).
+    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key).expect("HMAC takes any key size");
     mac.update(data.as_bytes());
     mac.finalize().into_bytes().to_vec()
 }

@@ -559,20 +559,30 @@ pub async fn detect_provider(email: &str) -> Option<Provider> {
 }
 
 async fn provider_from_mx(domain: &str) -> Option<Provider> {
-    use hickory_resolver::TokioAsyncResolver;
-    let resolver = TokioAsyncResolver::tokio_from_system_conf().ok()?;
+    use hickory_resolver::{TokioResolver, proto::rr::RData};
+    // The system's DNS settings (/etc/resolv.conf, or the registry on Windows).
+    // `.ok()?` turns any error into "don't know": guessing the provider is only a convenience.
+    let resolver = TokioResolver::builder_tokio().ok()?.build().ok()?;
     let lookup = tokio::time::timeout(Duration::from_secs(4), resolver.mx_lookup(domain)).await.ok()?.ok()?;
-    lookup.iter().find_map(|mx| {
-        let host = mx.exchange().to_utf8().to_lowercase();
-        let host = host.trim_end_matches('.');
-        if host.ends_with("google.com") || host.ends_with("googlemail.com") {
-            Some(Provider::Google)
-        } else if host.ends_with("mail.protection.outlook.com") {
-            Some(Provider::Microsoft)
-        } else {
-            None
-        }
+    // The answers are DNS records of any kind; keep the MX ones (`let … else` skips the others).
+    lookup.answers().iter().find_map(|record| {
+        let RData::MX(mx) = &record.data else { return None };
+        provider_from_mail_server(&mx.exchange.to_utf8())
     })
+}
+
+/// Who runs a mail server, from its host name (`aspmx.l.google.com.` → Google).
+/// Kept apart from the DNS lookup so it can be tested without a network.
+fn provider_from_mail_server(host: &str) -> Option<Provider> {
+    let host = host.to_lowercase();
+    let host = host.trim_end_matches('.');
+    if host.ends_with("google.com") || host.ends_with("googlemail.com") {
+        Some(Provider::Google)
+    } else if host.ends_with("mail.protection.outlook.com") {
+        Some(Provider::Microsoft)
+    } else {
+        None
+    }
 }
 
 /// Asks Microsoft's public "user realm" endpoint (the one its own sign-in
@@ -694,6 +704,18 @@ impl OAuthSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knows_who_runs_a_mail_server() {
+        // As DNS writes them: lower or upper case, often with the final dot.
+        assert_eq!(provider_from_mail_server("aspmx.l.google.com."), Some(Provider::Google));
+        assert_eq!(provider_from_mail_server("ALT1.ASPMX.L.GOOGLE.COM"), Some(Provider::Google));
+        assert_eq!(
+            provider_from_mail_server("contoso-com.mail.protection.outlook.com."),
+            Some(Provider::Microsoft)
+        );
+        assert_eq!(provider_from_mail_server("mx1.laposte.net."), None);
+    }
 
     #[test]
     fn builds_xoauth2_and_answers_errors_with_empty_line() {
