@@ -6,6 +6,19 @@ All notable changes to Havre are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Mail's sidebar: one section per account (an accordion), its Inbox first and then its folders, instead of the
+  inboxes on one side and the current account's folders on the other.
+- While you read an email, its subject and sender stay at the top (smaller once you scroll).
+- Everything clickable shows the pointer cursor.
+- Notifications (toasts) appear in the bottom right corner.
+
+### Fixed
+
+- An HTML email had its own scrollbar inside the reader's (it was 2 px taller than its frame): it now scrolls with
+  the reader, even when the email fixes its own height.
+
 ## [0.1.0] - 2026-11-07
 
 The first release.

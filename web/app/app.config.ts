@@ -7,8 +7,12 @@ export default defineAppConfig({
       neutral: 'stone',
     },
     // A few components tuned to Havre's look (the rest is the theme).
+    // Everything clickable shows the pointer: Nuxt UI 4 leaves the arrow by
+    // default (`cursor-not-allowed` stays for disabled ones, it comes later).
+    link: { base: 'cursor-pointer' },
     // Buttons and fields: 36 px high (30 px small), 18 px icons, like before.
     button: {
+      slots: { base: 'cursor-pointer' },
       variants: {
         size: {
           sm: { base: 'px-2.75 py-1.5 text-[13px] gap-1.5', leadingIcon: 'size-4', trailingIcon: 'size-4' },
@@ -41,15 +45,19 @@ export default defineAppConfig({
     },
     // Lists that open from a field: a 1 px rule, no shadow.
     select: {
-      slots: { content: 'shadow-none ring-(--line2)' },
+      slots: { base: 'cursor-pointer', item: 'cursor-pointer', content: 'shadow-none ring-(--line2)' },
       variants: { size: { md: { base: 'px-2.5 py-2 text-sm gap-1.5' } } },
     },
     selectMenu: {
-      slots: { content: 'shadow-none ring-(--line2)' },
+      slots: { base: 'cursor-pointer', item: 'cursor-pointer', content: 'shadow-none ring-(--line2)' },
       variants: { size: { md: { base: 'px-2.5 py-2 text-sm gap-1.5' } } },
     },
-    inputMenu: { slots: { content: 'shadow-none ring-(--line2)' } },
-    contextMenu: { slots: { content: 'shadow-none ring-(--line2)' } },
+    inputMenu: { slots: { item: 'cursor-pointer', content: 'shadow-none ring-(--line2)' } },
+    contextMenu: { slots: { item: 'cursor-pointer', content: 'shadow-none ring-(--line2)' } },
+    checkbox: { slots: { base: 'cursor-pointer', label: 'cursor-pointer' } },
+    switch: { slots: { base: 'cursor-pointer', label: 'cursor-pointer' } },
+    radioGroup: { slots: { base: 'cursor-pointer', label: 'cursor-pointer', item: 'cursor-pointer' } },
+    accordion: { slots: { trigger: 'cursor-pointer' } },
     tooltip: { slots: { content: 'shadow-none ring-(--line2)' } },
     toast: { slots: { root: 'shadow-none ring-(--line2)' } },
     textarea: {
@@ -60,7 +68,7 @@ export default defineAppConfig({
       slots: { content: 'bg-(--raise) ring-(--line2) rounded-(--radius) shadow-none' },
     },
     dropdownMenu: {
-      slots: { content: 'bg-(--raise) ring-(--line2) rounded-(--radius) shadow-none min-w-56' },
+      slots: { item: 'cursor-pointer', content: 'bg-(--raise) ring-(--line2) rounded-(--radius) shadow-none min-w-56' },
     },
     modal: {
       slots: {
@@ -73,6 +81,7 @@ export default defineAppConfig({
     },
     // Segmented switches (Day / Week / Month, All / Unread…): Havre's pill.
     tabs: {
+      slots: { trigger: 'cursor-pointer' },
       variants: { variant: { pill: { list: 'p-0.5 bg-(--bg) ring ring-default rounded-(--radius-sm)', trigger: 'rounded-md', indicator: 'shadow-none' } } },
       compoundVariants: [
         {
@@ -84,12 +93,15 @@ export default defineAppConfig({
     },
     calendar: {
       variants: { color: { primary: { headCell: 'text-dimmed font-normal' } } },
-      slots: { cellTrigger: 'data-today:not-data-[selected]:text-primary' },
+      slots: { cellTrigger: 'cursor-pointer data-today:not-data-[selected]:text-primary' },
     },
     // The Settings menu: quiet rows, the open page on Havre's selection grey.
     // Group titles in the Ctrl+K palette: the small capital labels (Josefin Sans, brass).
     commandPalette: {
-      slots: { label: 'font-(family-name:--font-display) font-normal text-[11px] uppercase tracking-[0.2em] text-primary' },
+      slots: {
+        item: 'cursor-pointer',
+        label: 'font-(family-name:--font-display) font-normal text-[11px] uppercase tracking-[0.2em] text-primary',
+      },
     },
     // Key hints as Havre writes them: "Ctrl K", quiet, in the mono font.
     kbd: {
@@ -98,7 +110,7 @@ export default defineAppConfig({
       defaultVariants: { color: 'neutral', variant: 'outline' },
     },
     navigationMenu: {
-      slots: { link: 'font-normal text-sm py-2', linkLeadingIcon: 'size-4' },
+      slots: { link: 'cursor-pointer font-normal text-sm py-2', linkLeadingIcon: 'size-4' },
       compoundVariants: [
         { color: 'neutral', variant: 'pill', active: true, class: { link: 'text-default before:bg-accented' } },
         { color: 'neutral', variant: 'pill', active: false, class: { link: 'text-muted hover:before:bg-(--hover)' } },

@@ -71,7 +71,6 @@ function go(query: { box?: Box | false; label?: number; account?: number; folder
 // ---- Folders --------------------------------------------------------------
 // The Folders section shows the account you're in (all inboxes: the first one).
 const folderAccount = computed(() => accountId.value ?? accounts.data.value[0]?.id)
-const folderAccountName = computed(() => accounts.data.value.find((a) => a.id === folderAccount.value)?.name ?? '')
 const folders = useFolders(folderAccount)
 const currentFolder = computed(() => folders.data.value.find((f) => f.path === folder.value))
 const { state: organize, refresh: refreshOrganize } = useOrganize()
@@ -110,7 +109,53 @@ const folderTitle = computed(() => {
   return multi.value && name === 'Inbox' && account ? account.name : name
 })
 const isInbox = computed(() => (currentFolder.value ? currentFolder.value.role === 'inbox' : folder.value.toUpperCase() === 'INBOX'))
-const otherFolders = computed(() => folders.data.value.filter((f) => f.role !== 'inbox'))
+
+// ---- The sidebar's accounts (an accordion with several) -----------------------
+// Which sections are open: remembered in this browser, and the account you're
+// reading is always opened.
+const OPEN_KEY = 'havre-mail-open-accounts'
+function readOpen(): string[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(OPEN_KEY) ?? 'null')
+    return Array.isArray(saved) ? saved.filter((v) => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
+const openAccounts = ref<string[]>(import.meta.client ? readOpen() : [])
+watch(openAccounts, (open) => {
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify(open))
+  } catch {
+    // Private window or storage off: it just won't be remembered.
+  }
+})
+watch(
+  [accountId, () => accounts.data.value.length],
+  () => {
+    const id = accountId.value ?? (openAccounts.value.length ? undefined : accounts.data.value[0]?.id)
+    if (id !== undefined && !openAccounts.value.includes(String(id))) openAccounts.value = [...openAccounts.value, String(id)]
+  },
+  { immediate: true },
+)
+/** Nuxt UI's accordion takes a list of items; each carries its account. */
+const accountItems = computed(() =>
+  accounts.data.value.map((a) => ({ value: String(a.id), label: a.name, account: a })),
+)
+/** The accordion in Havre's sidebar look (its own parts aren't reached by this page's scoped CSS). */
+const accordionUi = {
+  item: 'border-0',
+  header: 'h-[34px]',
+  trigger:
+    'h-[34px] py-0 px-2 gap-2.5 rounded-(--radius-sm) text-sm font-normal text-(--muted) hover:bg-(--hover) hover:text-(--text) data-[state=open]:text-(--text)',
+  label: 'flex-1 min-w-0 text-start',
+  content: 'ps-2',
+  body: 'pt-0.5 pb-1.5',
+}
+/** The open folder, for the account it belongs to (none in the cross-account boxes). */
+const currentIn = (id: number) => (!allView.value && accountId.value === id ? folder.value : null)
+/** Bumped when an account's folders change, so its section reloads them. */
+const folderVersions = reactive<Record<number, number>>({})
 const totalUnread = computed(() => accounts.data.value.reduce((n, a) => n + a.unread, 0))
 const folderLabel = (path: string) => {
   const f = folders.data.value.find((x) => x.path === path)
@@ -290,6 +335,7 @@ useMailEvents((event) => {
   if (box.value && event.type === 'folder' && (box.value !== 'all' || /^inbox$/i.test(event.path))) reloadSoon()
   if (event.type === 'folder' || event.type === 'folders') organizeSoon()
   if (event.account === statusAccount.value && event.type === 'status') syncStatus.value = event.status
+  if (event.type === 'folders') folderVersions[event.account] = (folderVersions[event.account] ?? 0) + 1
   if (event.account !== folderAccount.value) return
   if (event.type === 'folders') folders.refresh()
   else if (event.type === 'folder' && !allView.value && event.path === folder.value && !searchRemote.value) reloadSoon()
@@ -945,39 +991,20 @@ const splitPanes: SplitPaneSpec[] = [
         <UKbd value="C" aria-hidden="true" class="ms-auto bg-transparent ring-(--on-accent)/35 text-(--on-accent)/80" />
       </button>
 
-      <nav class="nav" aria-label="Inboxes">
-        <div class="eyebrow sec">Inboxes</div>
+      <!-- Across accounts. -->
+      <nav class="nav" aria-label="Across accounts">
         <button
           v-if="multi"
           type="button"
           class="box"
-          :class="{ on: allView }"
-          :aria-current="allView ? 'page' : undefined"
+          :class="{ on: box === 'all' }"
+          :aria-current="box === 'all' ? 'page' : undefined"
           @click="go({ box: 'all', uid: null })"
         >
           <HIcon name="inbox" :size="16" />
           <span class="grow">All inboxes</span>
           <span v-if="totalUnread" class="mono n">{{ totalUnread }}</span>
         </button>
-        <button
-          v-for="a in accounts.data.value"
-          :key="a.id"
-          type="button"
-          class="box"
-          :class="{ on: !allView && accountId === a.id && isInbox }"
-          :aria-current="!allView && accountId === a.id && isInbox ? 'page' : undefined"
-          :title="a.email"
-          @click="go({ box: false, account: a.id, folder: 'INBOX', uid: null })"
-        >
-          <span class="dotbox" aria-hidden="true"><span class="adot" :style="{ background: `var(--c-${a.color})` }" /></span>
-          <span class="grow">{{ multi ? a.name : 'Inbox' }}</span>
-          <span v-if="a.status.state === 'error'" class="warn" :title="a.status.error ?? 'Sync problem'">!</span>
-          <span v-else-if="a.unread" class="mono n">{{ a.unread }}</span>
-        </button>
-      </nav>
-
-      <nav class="nav" aria-label="Across accounts">
-        <div class="eyebrow sec">Folders<span v-if="multi" class="sec-hint"> · {{ folderAccountName }}</span></div>
         <button type="button" class="box" :class="{ on: box === 'starred' }" :aria-current="box === 'starred' ? 'page' : undefined" @click="go({ box: 'starred', uid: null })">
           <HIcon name="star" :size="16" />
           <span class="grow">Starred</span>
@@ -990,11 +1017,38 @@ const splitPanes: SplitPaneSpec[] = [
         </button>
       </nav>
       <div class="tree">
-        <FolderList
-          :folders="otherFolders"
-          :current="allView || isInbox ? null : folder"
-          :loading="folders.status.value === 'pending'"
-          @select="(path) => go({ box: false, account: folderAccount, folder: path, uid: null })"
+        <!-- Each account: its Inbox, then its folders. Several accounts: one
+             section each, opened and closed like an accordion. -->
+        <template v-if="multi">
+          <div class="eyebrow sec">Accounts</div>
+          <UAccordion v-model="openAccounts" type="multiple" :items="accountItems" :ui="accordionUi">
+            <template #leading="{ item }">
+              <span class="dotbox" aria-hidden="true"><span class="adot" :style="{ background: `var(--c-${item.account.color})` }" /></span>
+            </template>
+            <template #default="{ item }">
+              <span class="acc-name" :title="item.account.email">{{ item.label }}</span>
+            </template>
+            <template #trailing="{ item, open }">
+              <span v-if="item.account.status.state === 'error'" class="warn" :title="item.account.status.error ?? 'Sync problem'">!</span>
+              <span v-else-if="item.account.unread && !open" class="mono n">{{ item.account.unread }}</span>
+              <HIcon name="chevron" :size="14" class="acc-chev" :class="{ open }" />
+            </template>
+            <template #content="{ item }">
+              <AccountFolders
+                :account="item.account.id"
+                :current="currentIn(item.account.id)"
+                :version="folderVersions[item.account.id] ?? 0"
+                @select="(path) => go({ box: false, account: item.account.id, folder: path, uid: null })"
+              />
+            </template>
+          </UAccordion>
+        </template>
+        <AccountFolders
+          v-else-if="accounts.data.value[0]"
+          :account="accounts.data.value[0].id"
+          :current="currentIn(accounts.data.value[0].id)"
+          :version="folderVersions[accounts.data.value[0].id] ?? 0"
+          @select="(path) => go({ box: false, account: accounts.data.value[0]!.id, folder: path, uid: null })"
         />
         <!-- Havre's labels: every account. -->
         <div class="eyebrow sec sec-row">
@@ -1560,6 +1614,27 @@ const splitPanes: SplitPaneSpec[] = [
 }
 .n {
   font-size: 12px;
+}
+.acc-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.acc-chev {
+  color: var(--faint);
+  transform: rotate(-90deg);
+  transition: transform 0.15s;
+}
+.acc-chev.open {
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .acc-chev {
+    transition: none;
+  }
 }
 .dotbox {
   width: 16px;
