@@ -3,7 +3,7 @@
 ## Requirements
 
 - A server, NAS or computer that stays on (Havre is one small Rust process and a SQLite file).
-- **Docker** with Compose — or a release download (Linux) — or, to build from source, **Rust** (stable),
+- **Docker** with Compose — or a release download (Linux) — or, to build from source, **Rust** (stable, 1.98 or newer),
   **Node.js 22+** and **pnpm**.
 - Optional: [Ollama](https://ollama.com) for local AI, a reverse proxy (Caddy, Traefik…) for HTTPS.
 

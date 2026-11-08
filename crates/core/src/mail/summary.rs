@@ -205,7 +205,6 @@ pub struct FileInfo {
 impl Digest {
     /// Reads a raw email.
     pub fn of(raw: &[u8]) -> Self {
-        use mail_parser::MimeHeaders;
         let Some(m) = MessageParser::default().parse(raw) else { return Self::default() };
         let text = m
             .body_text(0)
@@ -241,7 +240,7 @@ impl Digest {
             if mime == "text/calendar" || name.as_deref().is_some_and(|n| n.to_lowercase().ends_with(".ics"))
             {
                 // An answer (METHOD:REPLY, "Claire accepted") is not an invitation.
-                let text = String::from_utf8_lossy(part.contents());
+                let text = String::from_utf8_lossy(&part.decoded()).into_owned();
                 match crate::agenda::ics::read_invitation(&text) {
                     Ok(inv) if inv.method == "REPLY" || inv.method == "COUNTER" => {}
                     Ok(inv) => {
@@ -261,7 +260,7 @@ impl Digest {
                     if mime == "text/calendar" { "invitation.ics".into() } else { "attachment".into() }
                 }),
                 mime,
-                size: part.contents().len(),
+                size: part.decoded_len(),
             });
         }
         Self { preview, files, invite, invite_at }

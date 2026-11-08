@@ -3,6 +3,7 @@ name = "havre-server"
 description = "Havre's HTTP server: JSON API + serves the web UI."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [[bin]]

@@ -27,7 +27,7 @@ use lettre::{
         client::{Certificate, Tls, TlsParameters},
     },
 };
-use mail_parser::{Address, MessageParser};
+use mail_parser::{AddressList, MessageParser, TextList};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
@@ -570,12 +570,7 @@ pub fn prefill(kind: DraftKind, raw: &[u8], own: &[String]) -> Prefill {
     let date = message.date().map(|d| d.to_rfc822()).unwrap_or_default();
     let text = message.body_text(0).map(|t| t.into_owned()).unwrap_or_default();
     let message_id = message.message_id().map(|id| format!("<{id}>"));
-    let mut references: Vec<String> = message
-        .references()
-        .as_text_list()
-        .map(|list| list.iter().map(|r| format!("<{r}>")).collect())
-        .or_else(|| message.references().as_text().map(|r| vec![format!("<{r}>")]))
-        .unwrap_or_default();
+    let mut references = ids(message.references());
     if let Some(id) = &message_id {
         references.push(id.clone());
     }
@@ -653,9 +648,14 @@ fn prefixed(prefix: &str, subject: &str, already: &[&str]) -> String {
     }
 }
 
-fn people(address: &Address<'_>) -> Vec<(Option<String>, String)> {
+/// Message ids (`References:`, one or several) as `<id>` strings, ready to send back.
+fn ids(list: Option<TextList<'_>>) -> Vec<String> {
+    list.map(|list| list.iter().map(|id| format!("<{id}>")).collect()).unwrap_or_default()
+}
+
+fn people(address: AddressList<'_>) -> Vec<(Option<String>, String)> {
     address
-        .iter()
+        .mailboxes()
         .filter_map(|a| {
             let email = a.address()?.to_owned();
             Some((a.name().map(str::to_owned).filter(|n| !n.is_empty() && *n != email), email))
@@ -1084,19 +1084,14 @@ impl AccountManager {
         }
         // Mail is untrusted: only its text is taken (HTML turned into text by
         // the parser), addresses re-joined, attachments within the limit.
-        let addresses = |a: Option<&Address<'_>>| a.map(people).map(|p| join(&p)).unwrap_or_default();
-        let references: Vec<String> = message
-            .references()
-            .as_text_list()
-            .map(|list| list.iter().map(|r| format!("<{r}>")).collect())
-            .or_else(|| message.references().as_text().map(|r| vec![format!("<{r}>")]))
-            .unwrap_or_default();
+        let addresses = |a: Option<AddressList<'_>>| a.map(people).map(|p| join(&p)).unwrap_or_default();
+        let references = ids(message.references());
         let prefill = Prefill {
             to: addresses(message.to()),
             cc: addresses(message.cc()),
             subject: message.subject().unwrap_or_default().trim().to_owned(),
             body: message.body_text(0).map(|t| t.trim_end().to_owned()).unwrap_or_default(),
-            in_reply_to: message.in_reply_to().as_text().map(|id| format!("<{id}>")),
+            in_reply_to: message.in_reply_to().and_then(|list| list.first()).map(|id| format!("<{id}>")),
             references: (!references.is_empty()).then(|| references.join(" ")),
         };
         let bcc = addresses(message.bcc());

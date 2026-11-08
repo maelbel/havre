@@ -21,6 +21,8 @@ All notable changes to Havre are listed here. The format follows
 - While you read an email, its subject and sender stay at the top (smaller once you scroll).
 - Everything clickable shows the pointer cursor.
 - Notifications (toasts) appear in the bottom right corner.
+- Building from source needs Rust 1.98 or newer.
+- The mail parser is mail-parser 1.0: emails read exactly as before (checked on sample messages).
 - Updated dependencies: sqlx 0.9, argon2 0.6 (passwords saved before still work), Nuxt UI 4.12, hmac 0.13 and
   sha2 0.11, hickory-resolver 0.26.
 - Havre Desktop installers are built on `main` and for releases only; pull requests just run its checks.

@@ -5,7 +5,7 @@ How the code is organised and how to work on it. The rules for branches, commits
 
 ## Prerequisites
 
-- **Rust** (stable) — install with [rustup](https://rustup.rs).
+- **Rust** 1.98 or newer (stable) — install with [rustup](https://rustup.rs); `rustup update` gets the latest.
   On Windows, rustup asks for the *Visual Studio C++ Build Tools*: accept,
   and tick "Desktop development with C++".
 - **Node.js 22+** and **pnpm** — after installing Node, run `corepack enable`.
@@ -46,6 +46,14 @@ Before committing:
 ```sh
 cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
 cd web && pnpm typecheck && pnpm build
+```
+
+**Reading mail** has a snapshot test: the sample emails in `crates/core/src/mail/testdata/` go through every
+function that parses mail, and the result must match `testdata/parsed.txt`. When a change is wanted (a better
+preview, a new field), write the new snapshot and review its diff like code:
+
+```sh
+HAVRE_BLESS=1 cargo test -p havre-core parse_cases
 ```
 
 The command-line tool reads one account from `.env` — handy to check a connection from the terminal:
