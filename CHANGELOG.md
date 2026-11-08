@@ -6,6 +6,10 @@ All notable changes to Havre are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-08
+
+Off-site copies of the backups, a tidier Mail, and up-to-date dependencies.
+
 ### Added
 
 - **Off-site copies of the backups** (Settings › Backups › Off-site copy): after each backup, Havre seals it with
@@ -83,5 +87,6 @@ The first release.
 - Email HTML sanitised and sandboxed; the assistant only proposes changes, confirmed by the user.
 - The web UI loads nothing from other servers.
 
-[Unreleased]: https://github.com/maelbel/havre/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/maelbel/havre/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/maelbel/havre/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/maelbel/havre/releases/tag/v0.1.0
