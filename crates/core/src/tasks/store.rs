@@ -95,7 +95,7 @@ impl TaskStore {
     }
 
     pub(crate) async fn list_rows(&self) -> Result<Vec<ListRow>> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "SELECT {LIST_COLUMNS} FROM {LIST_FROM}
              ORDER BY l.source = 'local', l.caldav_id IS NOT NULL, l.account_id, l.caldav_id, l.is_default DESC,
                       l.name COLLATE NOCASE"
@@ -106,7 +106,7 @@ impl TaskStore {
     }
 
     pub(crate) async fn list_row(&self, id: i64) -> Result<ListRow> {
-        let row = sqlx::query(&format!("SELECT {LIST_COLUMNS} FROM {LIST_FROM} WHERE l.id = ?"))
+        let row = sqlx::query(sql!("SELECT {LIST_COLUMNS} FROM {LIST_FROM} WHERE l.id = ?"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -367,7 +367,7 @@ impl TaskStore {
         let words: Vec<String> =
             query.q.as_deref().unwrap_or_default().split_whitespace().map(str::to_lowercase).collect();
         let first = words.first().map(|w| format!("%{w}%"));
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "SELECT {TASK_COLUMNS} FROM tasks t JOIN task_lists l ON l.id = t.list_id
              WHERE (t.done_at IS NULL OR t.done_at >= ?)
                AND (? IS NULL OR t.list_id = ?)
@@ -412,7 +412,7 @@ impl TaskStore {
     }
 
     pub(crate) async fn task_row(&self, id: i64) -> Result<TaskRow> {
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sql!(
             "SELECT {TASK_COLUMNS} FROM tasks t JOIN task_lists l ON l.id = t.list_id WHERE t.id = ?"
         ))
         .bind(id)
@@ -465,7 +465,7 @@ impl TaskStore {
 
     /// Tasks whose reminder time has come and that weren't shown yet.
     pub(crate) async fn due_reminders(&self, now: i64) -> Result<Vec<Task>> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "SELECT {TASK_COLUMNS} FROM tasks t JOIN task_lists l ON l.id = t.list_id
              WHERE t.remind_at IS NOT NULL AND t.remind_at <= ? AND t.reminded = 0 AND t.done_at IS NULL"
         ))

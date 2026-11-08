@@ -114,7 +114,7 @@ impl People {
     /// the ones you deal with most first. A meeting counts like three mails.
     pub async fn search(&self, query: &str, limit: u32) -> Result<Vec<Person>> {
         let pattern = format!("%{}%", escape_like(&query.trim().to_lowercase()));
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "{PEOPLE}
              GROUP BY email
              HAVING email LIKE ?1 ESCAPE '\\' OR lower(name) LIKE ?1 ESCAPE '\\'
@@ -132,7 +132,7 @@ impl People {
     /// (the page is then empty).
     pub async fn person(&self, email: &str) -> Result<PersonDetail> {
         let email = email.trim().to_lowercase();
-        let person = sqlx::query(&format!("{PEOPLE} AND email = ?1 GROUP BY email"))
+        let person = sqlx::query(sql!("{PEOPLE} AND email = ?1 GROUP BY email"))
             .bind(&email)
             .fetch_optional(&self.pool)
             .await?
@@ -169,7 +169,8 @@ impl People {
              FROM messages WHERE lower(from_address) IN ({marks})
              ORDER BY datetime(date) DESC LIMIT ?"
         );
-        let mut q = sqlx::query(&sql);
+        // `sql` is built from `?` marks only (see `sql!`).
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
         for e in &emails {
             q = q.bind(e);
         }

@@ -77,7 +77,7 @@ impl AgendaStore {
     }
 
     pub(crate) async fn calendar_rows(&self) -> Result<Vec<CalendarRow>> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "SELECT {CALENDAR_COLUMNS} FROM calendars
              ORDER BY source = 'local' DESC, account_id, caldav_id, is_default DESC, name COLLATE NOCASE"
         ))
@@ -87,7 +87,7 @@ impl AgendaStore {
     }
 
     pub(crate) async fn calendar_row(&self, id: i64) -> Result<CalendarRow> {
-        let row = sqlx::query(&format!("SELECT {CALENDAR_COLUMNS} FROM calendars WHERE id = ?"))
+        let row = sqlx::query(sql!("SELECT {CALENDAR_COLUMNS} FROM calendars WHERE id = ?"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -225,7 +225,7 @@ impl AgendaStore {
 
     /// Events of the shown calendars overlapping `[from, to)`.
     pub async fn events(&self, from: i64, to: i64) -> Result<Vec<Event>> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id
              WHERE c.enabled = 1 AND e.start_ts < ? AND e.end_ts > ?
              ORDER BY e.all_day DESC, e.start_ts, e.end_ts DESC"
@@ -238,7 +238,7 @@ impl AgendaStore {
     }
 
     pub(crate) async fn event_row(&self, id: i64) -> Result<EventRow> {
-        let row = sqlx::query(&format!("{EVENT_SELECT} WHERE e.id = ?"))
+        let row = sqlx::query(sql!("{EVENT_SELECT} WHERE e.id = ?"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -390,7 +390,7 @@ impl AgendaStore {
     pub(crate) async fn delete_series(&self, calendar: i64, series: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         for table in ["events", "event_series"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE calendar_id = ? AND series = ?"))
+            sqlx::query(sql!("DELETE FROM {table} WHERE calendar_id = ? AND series = ?"))
                 .bind(calendar)
                 .bind(series)
                 .execute(&mut *tx)
@@ -407,7 +407,7 @@ impl AgendaStore {
         series: &str,
         near: i64,
     ) -> Result<Option<Event>> {
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sql!(
             "{EVENT_SELECT} WHERE e.calendar_id = ? AND e.series = ? ORDER BY abs(e.start_ts - ?) LIMIT 1"
         ))
         .bind(calendar)
@@ -421,7 +421,7 @@ impl AgendaStore {
     /// Events with this iCalendar UID (a meeting already in a calendar).
     pub async fn events_by_uid(&self, uid: &str) -> Result<Vec<Event>> {
         // The meeting itself, or your copy of it (see `remember_copy`).
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "{EVENT_SELECT} WHERE e.uid = ?1 OR EXISTS (
                  SELECT 1 FROM invitation_copies c
                  WHERE c.uid = ?1 AND c.calendar_id = e.calendar_id AND c.remote_id = e.remote_id)
@@ -435,7 +435,7 @@ impl AgendaStore {
 
     /// Upcoming meetings you haven't answered yet (shown calendars only).
     pub async fn pending_invitations(&self, from: i64) -> Result<Vec<Event>> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id
              WHERE c.enabled = 1 AND e.my_response = 'needs_action' AND e.end_ts > ?
              ORDER BY e.start_ts LIMIT 50"
@@ -504,7 +504,7 @@ impl AgendaStore {
             Some(_) => ("e.end_ts > ?2", "e.start_ts ASC"),
             None => ("e.end_ts <= ?2", "e.start_ts DESC"),
         };
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sql!(
             "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id
              WHERE c.enabled = 1 AND {filter}
                AND (EXISTS (SELECT 1 FROM json_each(e.attendees) a WHERE lower(json_extract(a.value, '$.email')) = ?1)
