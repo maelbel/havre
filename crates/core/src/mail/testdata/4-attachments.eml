@@ -1,0 +1,51 @@
+From: Sophie Martin <sophie@example.org>
+To: mael@example.net
+Subject: Photos du week-end
+Date: Tue, 13 Oct 2026 21:10:00 +0200
+Message-ID: <photos@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MIX"
+
+--MIX
+Content-Type: multipart/related; boundary="REL"
+
+--REL
+Content-Type: multipart/alternative; boundary="ALT"
+
+--ALT
+Content-Type: text/plain; charset=utf-8
+
+Voici le devis et une photo.
+
+--ALT
+Content-Type: text/html; charset=utf-8
+
+<p>Voici le devis et une photo&nbsp;:</p><img src="cid:photo1@example.org" alt="photo">
+--ALT--
+
+--REL
+Content-Type: image/png
+Content-ID: <photo1@example.org>
+Content-Disposition: inline; filename="photo.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4z8DwHwAFAAIB4iE7
+yQAAAABJRU5ErkJggg==
+--REL--
+
+--MIX
+Content-Type: application/pdf
+Content-Disposition: attachment; filename*=UTF-8''devis%20r%C3%A9vis%C3%A9.pdf
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJWZha2UgcGRmIGZvciB0ZXN0cwolUERGLTEuNAolZmFrZSBwZGYgZm9yIHRlc3Rz
+CiVQREYtMS40CiVmYWtlIHBkZiBmb3IgdGVzdHMK
+
+--MIX
+Content-Type: application/octet-stream
+Content-Disposition: attachment
+Content-Transfer-Encoding: base64
+
+AAECAwQF
+
+--MIX--

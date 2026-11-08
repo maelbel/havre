@@ -3,6 +3,7 @@ name = "havre-core"
 description = "Havre's domain logic: mail, agenda, people. No HTTP, no UI — usable from the server, the CLI and (later) Tauri."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

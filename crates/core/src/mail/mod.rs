@@ -4,6 +4,8 @@ pub mod demo;
 mod folder;
 pub(crate) mod imap;
 mod message;
+#[cfg(test)]
+mod parse_cases;
 mod query;
 mod sanitize;
 mod summary;

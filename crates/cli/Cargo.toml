@@ -3,6 +3,7 @@ name = "havre-cli"
 description = "Command-line tool to try Havre's core without the UI."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [[bin]]

@@ -664,9 +664,9 @@ impl Ai {
 /// Headers and text of a raw email, for the model.
 pub(crate) fn full_text(raw: &[u8], max: usize) -> String {
     let Some(m) = mail_parser::MessageParser::default().parse(raw) else { return String::new() };
-    let people = |list: Option<&mail_parser::Address>| {
+    let people = |list: Option<mail_parser::AddressList>| {
         list.map(|a| {
-            a.iter()
+            a.mailboxes()
                 .map(|p| match (p.name(), p.address()) {
                     (Some(n), Some(a)) => format!("{n} <{a}>"),
                     (n, a) => n.or(a).unwrap_or_default().to_owned(),

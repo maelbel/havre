@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use mail_parser::{Address, MessageParser, MimeHeaders, PartType};
+use mail_parser::{AddressList, MessageParser, PartKind};
 use serde::Serialize;
 
 use super::{Person, sanitize::sanitize_html};
@@ -95,19 +95,23 @@ impl MessageDetail {
                         .map(str::to_owned)
                         .unwrap_or_else(|| format!("attachment-{}", index + 1)),
                     mime,
-                    size: part.contents().len(),
+                    // Measured without decoding (base64 is 4 characters for 3 bytes).
+                    size: part.decoded_len(),
                     inline,
                 }
             })
             .collect();
 
-        // `html_part(0)` can be a text part converted to HTML by mail-parser;
-        // we only want real HTML here, the text is sent separately.
-        let real_html = message.html_part(0).and_then(|part| match &part.body {
-            PartType::Html(html) => Some(html.as_ref()),
-            _ => None,
-        });
-        let sanitized = real_html.map(|html| sanitize_html(html, inline_images, options.allow_remote_images));
+        // The HTML body can be a text part (mail-parser converts it when there's
+        // no HTML); we only want real HTML here, the text is sent separately.
+        // `text()` decodes the part (base64, charset…) into a `Cow<str>`.
+        let real_html = message
+            .html_body()
+            .next()
+            .filter(|part| matches!(part.kind(), PartKind::Html))
+            .and_then(|part| part.text());
+        let sanitized =
+            real_html.map(|html| sanitize_html(&html, inline_images, options.allow_remote_images));
 
         Self {
             uid,
@@ -149,14 +153,15 @@ pub fn extract_attachment(raw: &[u8], index: usize) -> Option<AttachmentData> {
                 None => ct.ctype().to_owned(),
             })
             .unwrap_or_else(|| "application/octet-stream".into()),
-        bytes: part.contents().to_vec(),
+        bytes: part.decoded().into_owned(),
     })
 }
 
 /// Turns a `From:`/`To:` header (a list, or groups of lists) into people.
-fn people(address: &Address<'_>) -> Vec<Person> {
+/// `AddressList` is a small view into the parsed message (`Copy`), so it's taken by value.
+fn people(address: AddressList<'_>) -> Vec<Person> {
     address
-        .iter()
+        .mailboxes() // every address, the ones inside groups too
         .map(|a| Person { name: a.name().map(str::to_owned), address: a.address().map(str::to_owned) })
         .collect()
 }
