@@ -5,8 +5,13 @@
 //! | GET    | /apps | every app (manifest + in the dock? + position) |
 //! | PATCH  | /apps/{id} `{enabled}` | put an app in the dock, or take it out |
 //! | PUT    | /apps/order `{ids}` | the dock's order |
-//! | GET    | /people?q=&limit= | people from Mail and the Agenda |
-//! | GET    | /people/{email} | one person: recent mail, meetings |
+//! | GET    | /people?q=&sort=&filter=&company=&limit= | people from Mail and the Agenda (sort: recent, frequent, name; filter: everyone, favorites, waiting, automated, all) |
+//! | GET    | /people/companies | the companies of the people you know, the biggest first |
+//! | GET    | /people/today?date= | birthdays this week, favourites to keep in touch with (`date`: the browser's day) |
+//! | GET    | /people/{email} | one person, by any of their addresses: details, keeping in touch, mail, meetings |
+//! | PATCH  | /people/{email} `{name?, company?, role?, phones?, birthday?, note?, favorite?, kind?}` | your details about them |
+//! | POST   | /people/{email}/merge `{email}` | the same person: one page for both addresses |
+//! | DELETE | /people/{email}/addresses/{other} | that address is someone else again |
 //! | GET    | /mail/unread?limit= | unread mail in every inbox (the Today page) |
 //! | GET    | /system | version, memory, data size, counts (the App library) |
 //! | GET    | /mail/all?limit=&offset=&q= | every inbox together, newest first ("All inboxes") |
@@ -15,13 +20,13 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{get, patch, put},
+    routing::{delete, get, patch, post, put},
 };
 use havre_core::{
     ai::index::Hit,
     apps::{self, App},
     mail::MessagePage,
-    people::{Person, PersonDetail},
+    people::{Company, ListQuery, PeopleToday, Person, PersonDetail, PersonUpdate},
     store::UnreadInbox,
 };
 use serde::Deserialize;
@@ -35,7 +40,11 @@ pub fn routes() -> Router<AppState> {
         .route("/apps/{id}", patch(update_app))
         .route("/system", get(system))
         .route("/people", get(people))
-        .route("/people/{email}", get(person))
+        .route("/people/companies", get(companies))
+        .route("/people/today", get(people_today))
+        .route("/people/{email}", get(person).patch(update_person))
+        .route("/people/{email}/merge", post(merge_person))
+        .route("/people/{email}/addresses/{other}", delete(remove_address))
         .route("/mail/unread", get(unread))
         .route("/mail/search", get(search_all))
         .route("/mail/all", get(all_inboxes))
@@ -92,13 +101,35 @@ struct Search {
 
 async fn people(
     State(state): State<AppState>,
-    Query(s): Query<Search>,
+    Query(mut q): Query<ListQuery>,
 ) -> Result<Json<Vec<Person>>, ApiError> {
+    q.limit = Some(q.limit.unwrap_or(200).min(500));
     Ok(Json(match &state.mail {
         MailSource::Demo(_) => Vec::new(),
-        MailSource::Accounts(m) => {
-            m.database().people().search(&s.q, s.limit.unwrap_or(200).min(500)).await?
-        }
+        MailSource::Accounts(m) => m.database().people().list(&q).await?,
+    }))
+}
+
+async fn companies(State(state): State<AppState>) -> Result<Json<Vec<Company>>, ApiError> {
+    Ok(Json(match &state.mail {
+        MailSource::Demo(_) => Vec::new(),
+        MailSource::Accounts(m) => m.database().people().companies().await?,
+    }))
+}
+
+#[derive(Deserialize)]
+struct Day {
+    /// The browser's date (`YYYY-MM-DD`): "today" where you are.
+    date: String,
+}
+
+async fn people_today(
+    State(state): State<AppState>,
+    Query(d): Query<Day>,
+) -> Result<Json<PeopleToday>, ApiError> {
+    Ok(Json(match &state.mail {
+        MailSource::Demo(_) => PeopleToday { birthdays: Vec::new(), keep_in_touch: Vec::new() },
+        MailSource::Accounts(m) => m.database().people().today_on(&d.date).await?,
     }))
 }
 
@@ -108,6 +139,37 @@ async fn person(
 ) -> Result<Json<PersonDetail>, ApiError> {
     let db = state.mail.manager()?.database();
     Ok(Json(db.people().person(&email).await?))
+}
+
+async fn update_person(
+    State(state): State<AppState>,
+    Path(email): Path<String>,
+    Json(update): Json<PersonUpdate>,
+) -> Result<Json<PersonDetail>, ApiError> {
+    let db = state.mail.manager()?.database();
+    Ok(Json(db.people().update(&email, &update).await?))
+}
+
+#[derive(Deserialize)]
+struct Other {
+    email: String,
+}
+
+async fn merge_person(
+    State(state): State<AppState>,
+    Path(email): Path<String>,
+    Json(other): Json<Other>,
+) -> Result<Json<PersonDetail>, ApiError> {
+    let db = state.mail.manager()?.database();
+    Ok(Json(db.people().merge(&email, &other.email).await?))
+}
+
+async fn remove_address(
+    State(state): State<AppState>,
+    Path((email, other)): Path<(String, String)>,
+) -> Result<Json<PersonDetail>, ApiError> {
+    let db = state.mail.manager()?.database();
+    Ok(Json(db.people().remove_address(&email, &other).await?))
 }
 
 #[derive(Deserialize)]

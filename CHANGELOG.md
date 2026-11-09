@@ -15,6 +15,11 @@ All notable changes to Havre are listed here. The format follows
 - **Move events by dragging** in the week and day views, or drag the bottom edge to change the end, with
   *Undo*. Repeating events ask which ones; meetings with guests ask before sending the new time. Press and hold
   on a phone; **Alt+arrows** from the keyboard.
+- **People**: your own details for someone (company, role, phones, birthday, a note), **favourites**, and
+  **merging** a person's addresses. The list sorts by *Recent*, *Frequent* or *A–Z*, filters by company,
+  *Favourites* and *Waiting for you*, and sets **newsletters & robots** apart. A person's page says where things
+  stand (last email each way, last and next meeting, *Waiting for your reply since …*), and **Today** shows
+  birthdays and favourites you haven't talked to in a month. People now include those you write to.
 
 ## [0.3.0] - 2026-11-09
 

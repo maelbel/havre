@@ -993,12 +993,14 @@ impl Store {
             let search = normalize(&[Some(m.subject.as_str()), name.as_deref(), address.as_deref()]);
             changed += sqlx::query(
                 "INSERT INTO messages (account_id, folder, uid, subject, from_name, from_address, date, unread, search,
-                                       flagged, message_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       flagged, message_id, recipients)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (account_id, folder, uid) DO UPDATE SET unread = excluded.unread,
-                     flagged = excluded.flagged, message_id = COALESCE(excluded.message_id, message_id)
+                     flagged = excluded.flagged, message_id = COALESCE(excluded.message_id, message_id),
+                     recipients = COALESCE(excluded.recipients, recipients)
                  WHERE unread != excluded.unread OR flagged != excluded.flagged
-                     OR message_id IS NOT excluded.message_id",
+                     OR message_id IS NOT excluded.message_id
+                     OR (excluded.recipients IS NOT NULL AND recipients IS NOT excluded.recipients)",
             )
             .bind(self.account)
             .bind(folder)
@@ -1011,6 +1013,8 @@ impl Store {
             .bind(search)
             .bind(m.flagged)
             .bind(m.message_id.as_deref().map(clean_message_id))
+            // A JSON list in a TEXT column: `json_each` reads it back in SQL.
+            .bind(m.recipients.as_ref().map(|r| serde_json::to_string(r).unwrap_or_default()))
             .execute(&mut *tx)
             .await?
             .rows_affected();
@@ -1219,11 +1223,13 @@ impl Store {
         Ok(found.map(|(folder, uid)| (folder, uid as u32)))
     }
 
-    /// Messages synced before Havre kept `Message-ID`s: up to `limit` UIDs
-    /// of this folder still without one (the sync reads them).
+    /// Messages synced before Havre kept `Message-ID`s (step 8) or
+    /// recipients (step 22): up to `limit` UIDs of this folder still missing
+    /// one (the sync reads their headers again).
     pub async fn missing_message_ids(&self, folder: &str, limit: i64) -> Result<Vec<u32>> {
         let uids: Vec<i64> = sqlx::query_scalar(
-            "SELECT uid FROM messages WHERE account_id = ? AND folder = ? AND message_id IS NULL
+            "SELECT uid FROM messages WHERE account_id = ? AND folder = ?
+               AND (message_id IS NULL OR recipients IS NULL)
              ORDER BY uid DESC LIMIT ?",
         )
         .bind(self.account)
@@ -1234,10 +1240,21 @@ impl Store {
         Ok(uids.into_iter().map(|u| u as u32).collect())
     }
 
-    pub async fn set_message_id(&self, folder: &str, uid: u32, id: &str) -> Result<()> {
-        sqlx::query("UPDATE messages SET message_id = ? WHERE account_id = ? AND folder = ? AND uid = ?")
-            .bind(clean_message_id(id))
-            .bind(self.account)
+    /// Saves what the headers say: the `Message-ID` and the recipients
+    /// (`[]` when there are none, or the message couldn't be read).
+    pub async fn set_message_id(
+        &self,
+        folder: &str,
+        uid: u32,
+        id: &str,
+        recipients: &[String],
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE messages SET message_id = ?, recipients = ? WHERE account_id = ? AND folder = ? AND uid = ?",
+        )
+        .bind(clean_message_id(id))
+        .bind(serde_json::to_string(recipients).unwrap_or_default())
+        .bind(self.account)
             .bind(folder)
             .bind(uid as i64)
             .execute(&self.pool)
@@ -1598,6 +1615,7 @@ pub(crate) fn summary_from_row(r: &SqliteRow) -> MessageSummary {
             .unwrap_or_default(),
         snoozed_until: r.try_get::<Option<i64>, _>("snoozed_until").ok().flatten(),
         message_id: None,
+        recipients: None,
         account: r.try_get("account_id").ok(),
         folder: r.try_get("folder").ok(),
     }

@@ -119,8 +119,10 @@ Read in this order — each file is short and commented:
    with `lettre`; drafts; `impl` blocks spread over modules.
    `crates/core/src/oauth.rs` — OAuth 2.0 with `reqwest` (HTTP + JSON), a
    trait implementation (`Authenticator`), caching a token behind a `Mutex`.
-9. `crates/core/src/people.rs` — SQL over JSON (`json_each`), one query
-   serving several apps. `crates/core/src/apps.rs` — `const` data
+9. `crates/core/src/people/` — SQL over JSON (`json_each`, a `UNION` of
+   sightings) then grouping in Rust (`HashMap`, `Entry`); one person with
+   several addresses (`contacts.rs`, a join table); `Option<Option<T>>` for
+   optional updates. `crates/core/src/apps.rs` — `const` data
    (manifests) plus stored choices. `crates/core/src/invitations.rs` — two
    modules (Mail, Agenda) working together. `crates/core/src/notes/markdown.rs`
    — a small hand-written reader: `&str` slicing by bytes, `strip_prefix`,

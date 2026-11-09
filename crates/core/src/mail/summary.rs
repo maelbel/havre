@@ -30,6 +30,10 @@ pub struct MessageSummary {
     /// Kept on the server side (labels, undo); the list doesn't need it.
     #[serde(skip)]
     pub message_id: Option<String>,
+    /// The To and Cc addresses, lowercase (People: who you write to).
+    /// `None`: not read; `Some([])`: read, and there are none.
+    #[serde(skip)]
+    pub recipients: Option<Vec<String>>,
     /// Havre labels on it (their ids).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<i64>,
@@ -73,6 +77,20 @@ impl MessageSummary {
             address: addr.address().map(str::to_owned),
         });
 
+        // To and Cc, each a list that may hold groups ("Team: a@x, b@y;"):
+        // `mailboxes()` gives every address, the ones inside groups too.
+        let mut recipients: Vec<String> = Vec::new();
+        for list in [message.to(), message.cc()].into_iter().flatten() {
+            for mailbox in list.mailboxes() {
+                if let Some(address) = mailbox.address() {
+                    let address = address.trim().to_lowercase();
+                    if !address.is_empty() && !recipients.contains(&address) {
+                        recipients.push(address);
+                    }
+                }
+            }
+        }
+
         Self {
             uid,
             from,
@@ -81,6 +99,7 @@ impl MessageSummary {
             unread,
             // `Some("")` = read, and there is none (so we don't look again).
             message_id: Some(message.message_id().unwrap_or_default().to_owned()),
+            recipients: Some(recipients),
             ..Default::default()
         }
     }
@@ -112,6 +131,20 @@ Date: Wed, 14 Oct 2026 09:42:00 +0200\r\n\r\n";
         let summary = MessageSummary::from_headers(1, false, b"X-Nothing: here\r\n\r\n");
         assert_eq!(summary.subject, "");
         assert!(summary.from.is_none());
+    }
+
+    #[test]
+    fn reads_the_recipients() {
+        let raw = b"To: =?UTF-8?Q?Ana=C3=AFs?= <Anais@Example.org>, Team: a@x.test, \"B\" <b@x.test>;\r\n\
+Cc: anais@example.org, claire@example.org\r\nSubject: Hi\r\n\r\n";
+        let summary = MessageSummary::from_headers(5, false, raw);
+        // Lowercase, groups opened, each once.
+        assert_eq!(
+            summary.recipients.unwrap(),
+            ["anais@example.org", "a@x.test", "b@x.test", "claire@example.org"]
+        );
+        let none = MessageSummary::from_headers(6, false, b"Subject: Hi\r\n\r\n");
+        assert_eq!(none.recipients, Some(vec![]), "read, and there are none");
     }
 
     #[test]

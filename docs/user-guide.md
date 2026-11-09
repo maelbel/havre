@@ -265,10 +265,45 @@ month, `n` new event, `Esc` close.
   emails the organizer the standard answer (an iCalendar `REPLY`, understood
   by Outlook, Gmail, Apple Calendar…) and, unless you decline, adds the
   meeting to your default calendar.
-- **People:** everyone who wrote to you and everyone you meet, without an
-  address book to fill in. A person's page shows your recent mail and your
-  meetings with them; *Write* starts a message. The same list suggests
-  recipients when writing and guests when creating an event.
+- **Today** also has a **People** box when there's something to say:
+  **birthdays** today and in the next 7 days, and **keep in touch** — up to
+  two favourites you haven't written to or met in 30 days (and no meeting
+  with them in the coming week).
+- **People:** everyone who wrote to you, everyone you write to and everyone
+  you meet, without an address book to fill in. The same list suggests
+  recipients when writing and guests when creating an event (with the names
+  you gave).
+
+### The People list
+
+- **Sort** by *Recent* (when you last talked, the default), *Frequent* or
+  *A–Z*; pick a **company** (the one you wrote down, else their email's
+  domain — never gmail.com and the like); search names, addresses and
+  companies.
+- **Everyone**, **Favourites**, **Waiting for you** (their latest email, less
+  than 30 days old, is newer than anything you sent them), and **Newsletters
+  & robots**: `no-reply`, `notifications`, `newsletter`… and anyone you marked
+  *Not a person*. They stay out of the main list.
+- Each row says how long since you last talked ("3 d") with marks for
+  *waiting for your reply*, *birthday this week* and ★.
+
+### A person's page
+
+- At the top: their name, **role · company**, every address, and the
+  buttons **Write**, **★** (favourite), **Edit** and **⋯**.
+- **Edit** (or *Add a phone, birthday, note…*): name, company, role, phone
+  numbers (tap one to call), a **birthday** (the year is optional) and a
+  short note. Everything is optional; the name you give wins everywhere.
+- **⋯ › Merge with another address…**: the same person writing from two
+  addresses becomes one — one page, one row, their mail and meetings
+  together, the details you'd written on either kept. *Separate …* undoes it
+  for one address. *Not a person* moves a sender to *Newsletters & robots*;
+  *This is a person* brings back one Havre took for a robot.
+- **Keeping in touch**: their last email, the last one you wrote them, your
+  last and next meeting; and **Waiting for your reply since …** with *Open
+  the email*.
+- Below: your recent mail and meetings with them, the files you shared, and
+  your tasks and notes about them when those apps are in the dock.
 
 ## Tasks
 

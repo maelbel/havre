@@ -124,10 +124,34 @@ export function appSettingsPath(app: Pick<HavreApp, 'id'>) {
 // ---- People -------------------------------------------------------------------
 
 export interface PersonEntry {
+  /** The main address. */
   email: string
+  /** Every address of this person, the main one first. */
+  emails: string[]
+  /** Your name for them, else the one they use. */
   name: string
+  /** Their details, when you added some. */
+  contact: number | null
+  company: string
+  role: string
+  favorite: boolean
+  /** No-reply, newsletters…: guessed, or as you said. */
+  automated: boolean
+  /** Mail from them / mail you sent them / meetings. */
   messages: number
+  sent: number
   meetings: number
+  /** Unix seconds: the last email either way, or the last meeting. */
+  last_contact: number | null
+  /** Their latest email waits for your reply (unix seconds). */
+  waiting_since: number | null
+  /** `YYYY-MM-DD`, or `--MM-DD` without the year. */
+  birthday: string | null
+}
+
+export interface Phone {
+  label: string
+  number: string
 }
 
 export interface MessageRef {
@@ -142,18 +166,111 @@ export interface MessageRef {
 }
 
 export interface PersonDetail extends PersonEntry {
+  phones: Phone[]
+  note: string
+  /** What you said (`null`: guessed from the address). */
+  kind: 'person' | 'automated' | null
+  last_from: number | null
+  last_to: number | null
+  last_meeting: number | null
+  next_meeting: number | null
   recent_messages: MessageRef[]
   upcoming: AgendaEvent[]
   past: AgendaEvent[]
   files: SharedFile[]
 }
 
+export type PeopleSort = 'recent' | 'frequent' | 'name'
+export type PeopleFilter = 'everyone' | 'favorites' | 'waiting' | 'automated' | 'all'
+
+/** The People list: searched, sorted, filtered, maybe one company's. */
+export function listPeople(q: { q?: string; sort?: PeopleSort; filter?: PeopleFilter; company?: string | null; limit?: number }) {
+  const query: Record<string, string | number> = { q: q.q ?? '', sort: q.sort ?? 'recent', filter: q.filter ?? 'everyone' }
+  if (q.company) query.company = q.company
+  if (q.limit) query.limit = q.limit
+  return $fetch<PersonEntry[]>('/api/people', { query })
+}
+
+/** Everyone matching, robots included, the most frequent first (suggestions, Ctrl+K). */
 export function searchPeople(q: string, limit = 200) {
-  return $fetch<PersonEntry[]>('/api/people', { query: { q, limit } })
+  return listPeople({ q, sort: 'frequent', filter: 'all', limit })
 }
 
 export function fetchPerson(email: string) {
   return $fetch<PersonDetail>(`/api/people/${encodeURIComponent(email)}`)
+}
+
+export function fetchCompanies() {
+  return $fetch<{ name: string; people: number }[]>('/api/people/companies')
+}
+
+/** Only the fields given change; `birthday: null` clears it, `kind: null` goes back to guessing. */
+export interface PersonUpdate {
+  name?: string
+  company?: string
+  role?: string
+  phones?: Phone[]
+  birthday?: string | null
+  note?: string
+  favorite?: boolean
+  kind?: 'person' | 'automated' | null
+}
+export function updatePerson(email: string, change: PersonUpdate) {
+  return $fetch<PersonDetail>(`/api/people/${encodeURIComponent(email)}`, { method: 'PATCH', body: change })
+}
+/** `other` is the same person as `email`. */
+export function mergePerson(email: string, other: string) {
+  return $fetch<PersonDetail>(`/api/people/${encodeURIComponent(email)}/merge`, { method: 'POST', body: { email: other } })
+}
+export function removePersonAddress(email: string, other: string) {
+  return $fetch<PersonDetail>(`/api/people/${encodeURIComponent(email)}/addresses/${encodeURIComponent(other)}`, {
+    method: 'DELETE',
+  })
+}
+
+export interface PeopleToday {
+  birthdays: { person: PersonEntry; date: string; days: number; turns: number | null }[]
+  keep_in_touch: PersonEntry[]
+}
+export function fetchPeopleToday() {
+  return $fetch<PeopleToday>('/api/people/today', { query: { date: isoDate(new Date()) } })
+}
+
+/** "now", "5 min", "3 h", "2 d", "3 wk", "4 mo", "2 y": how long ago (unix seconds). */
+export function ago(t: number | null | undefined, now = Date.now()): string {
+  if (!t) return ''
+  const s = Math.max(0, now / 1000 - t)
+  if (s < 60) return 'now'
+  if (s < 3600) return `${Math.floor(s / 60)} min`
+  if (s < 86_400) return `${Math.floor(s / 3600)} h`
+  if (s < 14 * 86_400) return `${Math.floor(s / 86_400)} d`
+  if (s < 60 * 86_400) return `${Math.floor(s / (7 * 86_400))} wk`
+  if (s < 365 * 86_400) return `${Math.floor(s / (30 * 86_400))} mo`
+  return `${Math.floor(s / (365 * 86_400))} y`
+}
+
+/** Days until the next birthday (0: today), or null. 29 February: the 28th in other years. */
+export function daysToBirthday(birthday: string | null | undefined, today = new Date()): number | null {
+  const m = birthday?.match(/^(?:\d{4}|-)-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const on = (y: number) => {
+    const d = new Date(y, Number(m[1]) - 1, Number(m[2]))
+    // `new Date(2027, 1, 29)` rolls over to 1 March: use the 28th then.
+    return d.getMonth() === Number(m[1]) - 1 ? d : new Date(y, 1, 28)
+  }
+  let next = on(start.getFullYear())
+  if (next < start) next = on(start.getFullYear() + 1)
+  return Math.round((next.getTime() - start.getTime()) / 86_400_000)
+}
+
+/** "14 March" or "14 March 1990". */
+export function birthdayLabel(birthday: string): string {
+  const m = birthday.match(/^(\d{4}|-)-(\d{2})-(\d{2})$/)
+  if (!m) return birthday
+  const d = new Date(2000, Number(m[2]) - 1, Number(m[3]))
+  const day = d.toLocaleDateString([], { day: 'numeric', month: 'long' })
+  return m[1] === '-' ? day : `${day} ${m[1]}`
 }
 
 export function personName(p: { name: string; email: string }) {
