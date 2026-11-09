@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Task } from '~/composables/useTasks'
-import type { AgendaEvent, Calendar, FoundInvitation } from '~/composables/useAgenda'
+import type { AgendaEvent, Calendar, FoundInvitation, Scope } from '~/composables/useAgenda'
 
 // The Agenda: day, week and month views over every calendar (Microsoft
 // 365, Google, CalDAV, and Havre's own). The view and date live in the URL
@@ -361,6 +361,94 @@ async function onSaved(e: AgendaEvent) {
   await load()
   toast.show('Event saved')
 }
+// ---- Moving by dragging (step 21) -----------------------------------------------------
+// The week view says where an event was dropped; here we ask what needs
+// asking (which occurrences, whether to tell the guests), save, and offer Undo.
+
+interface MoveChange {
+  event: AgendaEvent
+  start: number
+  end: number
+}
+const moveAsk = ref<{ change: MoveChange; step: 'scope' | 'guests'; scopes: Scope[]; scope: Scope } | null>(null)
+
+/** Microsoft and Google email the guests when an event moves. */
+function tellsGuests(e: AgendaEvent) {
+  const source = calendarMap.value.get(e.calendar)?.source
+  return (source === 'microsoft' || source === 'google') && e.attendees.length > 0
+}
+
+function onMove(change: MoveChange) {
+  const e = change.event
+  if (e.recurring) {
+    // Like the editor: "this and the following" isn't offered on the first one, nor for a rule set elsewhere.
+    const following: Scope[] = e.first_occurrence || !e.repeat ? [] : ['following']
+    moveAsk.value = { change, step: 'scope', scopes: ['this', ...following, 'all'], scope: 'this' }
+  } else if (tellsGuests(e)) {
+    moveAsk.value = { change, step: 'guests', scopes: [], scope: 'this' }
+  } else {
+    doMove(change, 'this')
+  }
+}
+
+function scopeChosen(scope: Scope) {
+  const ask = moveAsk.value
+  if (!ask) return
+  if (tellsGuests(ask.change.event)) moveAsk.value = { ...ask, step: 'guests', scope }
+  else {
+    moveAsk.value = null
+    doMove(ask.change, scope)
+  }
+}
+
+function guestsAgreed() {
+  const ask = moveAsk.value
+  moveAsk.value = null
+  if (ask) doMove(ask.change, ask.scope)
+}
+
+const whenLabel = (t: number) => {
+  const d = new Date(t * 1000)
+  return `${d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })} ${timeLabel(d)}`
+}
+
+async function doMove({ event, start, end }: MoveChange, scope: Scope) {
+  // Shown at its new place right away; put back if saving fails.
+  const before = events.value
+  events.value = events.value.map((x) => (x.id === event.id ? { ...x, start, end } : x))
+  try {
+    const moved = await updateEvent(event.id, movedInput(event, start, end, scope), scope)
+    await load()
+    if (selectedId.value === event.id) selectedId.value = moved.id
+    // Undo puts one event back; a series change is undone in the editor.
+    const undo =
+      scope === 'this'
+        ? {
+            label: 'Undo',
+            run: async () => {
+              try {
+                await updateEvent(moved.id, movedInput(moved, event.start, event.end, 'this'), 'this')
+                await load()
+                toast.show(`“${event.title}” is back at ${whenLabel(event.start)}`)
+              } catch (err) {
+                toast.show(apiErrorMessage(err), { tone: 'error' })
+              }
+            },
+          }
+        : undefined
+    const which = scope === 'all' ? ' (every event)' : scope === 'following' ? ' (and the following ones)' : ''
+    // Only the end changed (its bottom edge was dragged): say that.
+    const what =
+      start === event.start
+        ? `“${event.title}” now ends at ${timeLabel(new Date(end * 1000))}`
+        : `Moved “${event.title}” to ${whenLabel(start)}`
+    toast.show(`${what}${which}`, { action: undo, duration: 8000 })
+  } catch (err) {
+    events.value = before
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+
 async function onDeleted() {
   editor.value = null
   selectedId.value = null
@@ -645,6 +733,7 @@ const ago = (seconds: number) => {
           :tasks="dueTasks"
           @select="select"
           @create="create"
+          @move="onMove"
           @open-task="openTask"
           @toggle-task="toggleTask"
         />
@@ -671,10 +760,41 @@ const ago = (seconds: number) => {
       @deleted="onDeleted"
       @cancel="editor = null"
     />
+
+    <!-- Dragging a repeating event: which ones move. -->
+    <RepeatScope
+      v-if="moveAsk?.step === 'scope'"
+      :event="moveAsk.change.event"
+      mode="save"
+      :scopes="moveAsk.scopes"
+      @choose="scopeChosen"
+      @cancel="moveAsk = null"
+    />
+    <!-- Dragging a meeting: its guests get the new time by email. -->
+    <UModal
+      v-if="moveAsk?.step === 'guests'"
+      :open="true"
+      :title="`Send the new time to the ${moveAsk.change.event.attendees.length} guest${moveAsk.change.event.attendees.length > 1 ? 's' : ''}?`"
+      :description="`“${moveAsk.change.event.title}” moves to ${whenLabel(moveAsk.change.start)}. ${calendarMap.get(moveAsk.change.event.calendar)?.source === 'google' ? 'Google' : 'Microsoft'} emails them the change.`"
+      @update:open="(open) => !open && (moveAsk = null)"
+    >
+      <template #footer>
+        <div class="move-actions">
+          <UButton color="neutral" variant="outline" @click="moveAsk = null">Don't move</UButton>
+          <UButton autofocus @click="guestsAgreed">Move and send</UButton>
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>
 
 <style scoped>
+.move-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
 .agenda {
   flex: 1;
   min-width: 0;

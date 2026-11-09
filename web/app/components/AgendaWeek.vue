@@ -6,6 +6,8 @@ import type { Task } from '~/composables/useTasks'
 // - Events lasting a whole day (or more) sit in the band at the top.
 // - Overlapping events share their column's width.
 // - Click or drag on an empty slot to create an event there.
+// - Drag an event to move it, its bottom edge to change its end (press and
+//   hold first on a touch screen); Alt+arrows do the same from the keyboard.
 // - Tasks due on a day (when the Tasks app is in the dock) sit under the
 //   all-day band; those with a time also show in the day as an outline.
 const props = defineProps<{
@@ -19,6 +21,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [event: AgendaEvent]
   create: [range: { start: Date; end: Date; allDay: boolean }]
+  /** An event dragged (or moved with the keyboard) to a new time: unix seconds. */
+  move: [change: { event: AgendaEvent; start: number; end: number }]
   openTask: [task: Task]
   toggleTask: [task: Task]
 }>()
@@ -183,6 +187,170 @@ function onPointerUp() {
   setTimeout(() => (draft.value = null), 150)
 }
 
+// ---- Moving and resizing events (step 21) ---------------------------------------------
+// The same pointer events as creating: `setPointerCapture` keeps the moves
+// coming to us even when the pointer leaves the event. A mouse drag starts
+// after a few pixels (so a click still opens the event); a touch drag after
+// holding still for a moment (so a swipe still scrolls the day).
+
+const colEls = ref<HTMLElement[]>([])
+interface Moving {
+  event: AgendaEvent
+  mode: 'move' | 'resize'
+  pointerId: number
+  x: number
+  y: number
+  /** Which column and minute the pointer grabbed, and the event's own start minute there. */
+  col: number
+  grabMinute: number
+  started: boolean
+  timer?: ReturnType<typeof setTimeout>
+}
+let moving: Moving | null = null
+/** Where the event would go: shown as a ghost while dragging. */
+const preview = ref<{ id: number; col: number; from: number; to: number; title: string; color: string } | null>(null)
+/** A drag just ended: the click that follows mustn't open the event. */
+let justDragged = false
+
+const minuteOf = (d: Date) => d.getHours() * 60 + d.getMinutes()
+const snap = (m: number) => Math.round(m / SNAP) * SNAP
+const atMinute = (day: Date, m: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, m)
+
+/** The column under the pointer (the nearest one when it's outside the grid), and the minute there. */
+function placeOf(e: PointerEvent): { col: number; minute: number } {
+  const rects = colEls.value.map((el) => el.getBoundingClientRect())
+  let col = rects.findIndex((r) => e.clientX >= r.left && e.clientX < r.right)
+  if (col === -1) col = e.clientX < (rects[0]?.left ?? 0) ? 0 : rects.length - 1
+  const minute = ((e.clientY - (rects[col]?.top ?? 0)) / HOUR) * 60
+  return { col, minute }
+}
+
+/**
+ * Where a drag puts the event, from where the pointer is now: a move keeps
+ * the length and the grab point; a resize moves the end, never closer than
+ * 15 minutes to the start. Steps of 15 minutes.
+ */
+function dragged(m: Moving, at: { col: number; minute: number }): { start: Date; end: Date } {
+  const start = new Date(m.event.start * 1000)
+  const end = new Date(m.event.end * 1000)
+  const day = props.days[at.col]!
+  if (m.mode === 'resize') {
+    const newEnd = atMinute(day, snap(at.minute))
+    const min = new Date(start.getTime() + SNAP * 60_000)
+    return { start, end: newEnd < min ? min : newEnd }
+  }
+  const startMinute = Math.min(24 * 60 - SNAP, Math.max(0, snap(at.minute - m.grabMinute)))
+  const newStart = atMinute(day, startMinute)
+  return { start: newStart, end: new Date(newStart.getTime() + (end.getTime() - start.getTime())) }
+}
+
+function showPreview(m: Moving, e: PointerEvent) {
+  const at = placeOf(e)
+  const { start, end } = dragged(m, at)
+  const col = props.days.findIndex((d) => sameDay(d, start))
+  const from = minuteOf(start)
+  // Shown within the day it starts on (an event running past midnight is cut at the bottom).
+  const to = sameDay(start, end) ? minuteOf(end) : 24 * 60
+  preview.value = { id: m.event.id, col: col === -1 ? at.col : col, from, to: Math.max(to, from + SNAP), title: m.event.title, color: color(m.event) }
+}
+
+/** On a touch screen, holding still for a moment picks the event up; scrolling is blocked meanwhile. */
+function blockScroll(e: TouchEvent) {
+  if (moving?.started) e.preventDefault()
+}
+
+function onEventDown(e: PointerEvent, ev: AgendaEvent, mode: 'move' | 'resize') {
+  if (ev.read_only || (e.pointerType === 'mouse' && e.button !== 0)) return
+  e.stopPropagation() // not a "create" on the column
+  const el = e.currentTarget as HTMLElement
+  const at = placeOf(e)
+  const start = new Date(ev.start * 1000)
+  // The minute of its start in the grabbed column (its day; earlier days count as before midnight).
+  const dayStart = props.days[at.col]!.getTime()
+  const startMinute = (start.getTime() - dayStart) / 60_000
+  moving = { event: ev, mode, pointerId: e.pointerId, x: e.clientX, y: e.clientY, col: at.col, grabMinute: at.minute - startMinute, started: false }
+  if (e.pointerType === 'touch') {
+    window.addEventListener('touchmove', blockScroll, { passive: false })
+    const m = moving
+    m.timer = setTimeout(() => {
+      if (moving !== m) return
+      m.started = true
+      el.setPointerCapture(m.pointerId)
+      navigator.vibrate?.(10)
+      showPreview(m, e)
+    }, 380)
+  } else {
+    el.setPointerCapture(e.pointerId)
+  }
+}
+
+function onEventMove(e: PointerEvent) {
+  const m = moving
+  if (!m || e.pointerId !== m.pointerId) return
+  const far = Math.hypot(e.clientX - m.x, e.clientY - m.y)
+  if (!m.started) {
+    // Touch: moving before the hold is a scroll, not a drag.
+    if (e.pointerType === 'touch') {
+      if (far > 8) cancelMove()
+      return
+    }
+    if (far < 4) return
+    m.started = true
+  }
+  showPreview(m, e)
+  // Near the top or bottom of the hours: scroll along.
+  const box = scroller.value
+  if (box) {
+    const r = box.getBoundingClientRect()
+    if (e.clientY < r.top + 32) box.scrollTop -= 12
+    else if (e.clientY > r.bottom - 32) box.scrollTop += 12
+  }
+}
+
+function onEventUp(e: PointerEvent) {
+  const m = moving
+  if (!m || e.pointerId !== m.pointerId) return
+  if (m.started) {
+    justDragged = true
+    setTimeout(() => (justDragged = false), 0)
+    const { start, end } = dragged(m, placeOf(e))
+    const s = Math.round(start.getTime() / 1000)
+    const en = Math.round(end.getTime() / 1000)
+    if (s !== m.event.start || en !== m.event.end) emit('move', { event: m.event, start: s, end: en })
+  }
+  cancelMove()
+}
+
+function cancelMove() {
+  if (moving?.timer) clearTimeout(moving.timer)
+  window.removeEventListener('touchmove', blockScroll)
+  moving = null
+  // Keep the ghost a moment, until the event shows at its new place.
+  setTimeout(() => (preview.value = null), 120)
+}
+
+function onEventClick(ev: AgendaEvent) {
+  if (!justDragged) emit('select', ev)
+}
+
+/** Alt+↑/↓: 15 minutes; Alt+←/→: a day; Alt+Shift+↑/↓: the end. Without a mouse, like dragging. */
+function onEventKey(e: KeyboardEvent, ev: AgendaEvent) {
+  if (!e.altKey || ev.read_only) return
+  const step = { ArrowUp: -SNAP * 60, ArrowDown: SNAP * 60, ArrowLeft: -86_400, ArrowRight: 86_400 }[e.key]
+  if (step == null) return
+  e.preventDefault()
+  if (e.shiftKey) {
+    if (Math.abs(step) !== SNAP * 60) return
+    const end = Math.max(ev.start + SNAP * 60, ev.end + step)
+    if (end !== ev.end) emit('move', { event: ev, start: ev.start, end })
+    return
+  }
+  // A day keeps the clock time across a change of summer time: computed on dates.
+  const shift = (t: number) =>
+    Math.abs(step) === 86_400 ? addDays(new Date(t * 1000), Math.sign(step)).getTime() / 1000 : t + step
+  emit('move', { event: ev, start: shift(ev.start), end: shift(ev.end) })
+}
+
 function createAllDay(col: number) {
   const day = props.days[col]!
   emit('create', { start: day, end: addDays(day, 1), allDay: true })
@@ -286,6 +454,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
         <div
           v-for="(c, i) in columns"
           :key="c.day.getTime()"
+          :ref="(el) => { if (el) colEls[i] = el as HTMLElement }"
           class="col"
           :class="{ today: isToday(c.day) }"
           @pointerdown="onPointerDown($event, i)"
@@ -297,7 +466,12 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
             :key="b.event.id"
             type="button"
             class="event"
-            :class="{ selected: selected === b.event.id, short: b.height < 34, ro: b.event.read_only }"
+            :class="{
+              selected: selected === b.event.id,
+              short: b.height < 34,
+              ro: b.event.read_only,
+              dragging: preview?.id === b.event.id,
+            }"
             :style="{
               top: `${b.top}px`,
               height: `${b.height}px`,
@@ -305,12 +479,25 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
               width: `calc(${b.width * 100}% - 4px)`,
               '--c': color(b.event),
             }"
-            @click="emit('select', b.event)"
+            :aria-keyshortcuts="b.event.read_only ? undefined : 'Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight'"
+            @click="onEventClick(b.event)"
+            @pointerdown="onEventDown($event, b.event, 'move')"
+            @pointermove="onEventMove"
+            @pointerup="onEventUp"
+            @pointercancel="cancelMove"
+            @keydown="onEventKey($event, b.event)"
           >
             <span class="title">{{ b.event.title }}<template v-if="b.event.recurring"><HIcon name="repeat" :size="11" class="rep" /><span class="sr-only"> · repeats</span></template></span>
             <span class="time">
               {{ timeLabel(new Date(b.event.start * 1000)) }}<template v-if="b.event.location"> · {{ b.event.location }}</template>
             </span>
+            <!-- The bottom edge: drag to change when it ends. -->
+            <span
+              v-if="!b.event.read_only"
+              class="resize"
+              aria-hidden="true"
+              @pointerdown="onEventDown($event, b.event, 'resize')"
+            />
           </button>
           <button
             v-for="tt in timedTasks(c.day)"
@@ -327,6 +514,15 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
           </button>
           <div v-if="draft && draft.col === i" class="ghost" :style="{ top: `${draft.from * HOUR / 60}px`, height: `${(draft.to - draft.from) * HOUR / 60 - 2}px` }">
             {{ hhmm(draft.from) }} – {{ hhmm(Math.min(draft.to, 1440)) }}
+          </div>
+          <div
+            v-if="preview && preview.col === i"
+            class="ghost moving"
+            :style="{ top: `${(preview.from * HOUR) / 60}px`, height: `${((preview.to - preview.from) * HOUR) / 60 - 2}px`, '--c': preview.color }"
+            aria-hidden="true"
+          >
+            <span class="title">{{ preview.title }}</span>
+            <span class="time">{{ hhmm(preview.from) }} – {{ hhmm(Math.min(preview.to, 1440)) }}</span>
           </div>
           <div v-if="isToday(c.day)" class="now" :style="{ top: `${nowTop}px` }" aria-hidden="true" />
         </div>
@@ -594,6 +790,31 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
 .event:hover {
   background: color-mix(in oklab, var(--c) 34%, var(--panel));
 }
+/* Your events can be dragged: no text selection, and the browser leaves the touch hold to us. */
+.event:not(.ro) {
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.event.ro {
+  cursor: default;
+}
+.event.dragging {
+  opacity: 0.35;
+}
+/* The bottom edge, for changing the end. */
+.event .resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 7px;
+  cursor: ns-resize;
+}
+@media (pointer: coarse) {
+  .event .resize {
+    height: 12px;
+  }
+}
 .event .title {
   font-size: 12.5px;
   font-weight: 500;
@@ -630,6 +851,27 @@ const dayLabel = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
   color: var(--text);
   font-size: 12px;
   pointer-events: none;
+}
+/* Where a dragged event would go: its own colour, solid, above the others. */
+.ghost.moving {
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  left: 2px;
+  right: 2px;
+  border: 1px solid var(--c);
+  background: color-mix(in oklab, var(--c) 34%, var(--panel));
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
+}
+.ghost.moving .title {
+  font-weight: 500;
+  font-size: 12.5px;
+}
+.ghost.moving .time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
 }
 .now {
   position: absolute;

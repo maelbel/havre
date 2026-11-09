@@ -180,6 +180,8 @@ export async function runAiProposal(p: AiProposal, send: boolean): Promise<strin
     const calendar = writable.find((c) => c.is_default) ?? writable[0]
     if (!calendar) throw new Error('No calendar to add it to.')
     const canInvite = calendar.source === 'microsoft' || calendar.source === 'google'
+    // Your default reminder, like an event made in the editor.
+    const defaults = await fetchAgendaSettings().catch(() => null)
     const created = await createEvent({
       calendar: calendar.id,
       title: p.title,
@@ -191,6 +193,7 @@ export async function runAiProposal(p: AiProposal, send: boolean): Promise<strin
       attendees: canInvite ? p.guests : [],
       repeat: null,
       time_zone: browserTimeZone(),
+      reminder: defaults?.default_reminder ?? null,
     })
     logConfirmed('Created an event', `${created.title} · ${calendar.name}`)
     return `Created “${created.title}”${p.guests.length && !canInvite ? ' (guests not invited: this calendar can’t send invitations)' : ''}`
@@ -200,19 +203,8 @@ export async function runAiProposal(p: AiProposal, send: boolean): Promise<strin
     const around = await fetchEvents(p.from_start - 1, p.from_end + 1)
     const e = around.find((x) => x.id === p.event)
     if (!e) throw new Error(`“${p.title}” is no longer at that time: open the Agenda to move it.`)
-    await updateEvent(e.id, {
-      calendar: e.calendar,
-      title: e.title,
-      location: e.location,
-      description: e.description,
-      start: p.start,
-      end: p.end,
-      all_day: e.all_day,
-      attendees: e.attendees.map((a) => a.email),
-      // A repeating event: only this occurrence moves.
-      repeat: null,
-      time_zone: browserTimeZone(),
-    }, 'this')
+    // A repeating event: only this occurrence moves.
+    await updateEvent(e.id, movedInput(e, p.start, p.end, 'this'), 'this')
     logConfirmed('Moved an event', `${e.title} → ${aiDayTime(p.start)}`)
     return `Moved “${e.title}”`
   }

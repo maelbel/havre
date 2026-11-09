@@ -319,3 +319,23 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - Later: notification buttons (Archive, Mark as read), agenda reminders, new invitations.
 - *Learned:* elliptic-curve Diffie–Hellman, HKDF, AES-GCM and ECDSA in practice, JWTs, testing against an RFC's
   example; `OnceCell`; service workers, the Push and Notifications APIs, web app manifests.
+
+## 21 · Event reminders, and dragging events ✅
+- ✅ A reminder per event (minutes before the start; all-day: before midnight your time), in the editor and the
+  event panel, with a default for new events (and the AI's) in Settings › Calendars.
+- ✅ Synced both ways: Microsoft (`isReminderOn`, `reminderMinutesBeforeStart`), Google (`reminders.overrides`,
+  the calendar's `defaultReminders` for `useDefault`), CalDAV and Havre's calendar (the first `VALARM` relative
+  to the start; others kept — icalendar can't remove a child, so the event is rebuilt without it).
+- ✅ Rung every 30 s, exactly once per occurrence (`event_reminders_rung`, by calendar, provider id and start, so
+  a sync rewriting rows doesn't ring twice and a moved event rings again); not for declined meetings; more than
+  15 minutes late is skipped. A toast with *Join*, Havre Desktop's notification, a push (its own setting).
+- ✅ Dragging in the week and day views: move (time and day), resize from the bottom edge, 15-minute steps, a
+  ghost with the times, scrolling at the edges; press and hold on touch; Alt+arrows from the keyboard. Repeating
+  events ask the scope, meetings with guests ask before Microsoft or Google email them; Undo.
+- ✅ Tested: each provider's format, VALARMs kept and replaced, the loop (once, after a sync, moved, declined,
+  late, all-day at 9:00 Paris time), push; in Chromium the drags, Undo, resize, keyboard, a phone's hold and swipe.
+- Later: several reminders per event, dragging in the month view and the all-day band, snoozing a reminder.
+- *Learned:* "exactly once" bookkeeping that survives rewritten rows, one idea mapped onto three APIs and an RFC
+  (`VALARM`, `TRIGGER`), `Option<Option<T>>` for "missing / null / value"; pointer capture, long-press and
+  blocking a scroll with a non-passive `touchmove`, a click's default action after a handler, keyboard
+  alternatives to dragging.

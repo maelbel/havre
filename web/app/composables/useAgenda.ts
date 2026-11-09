@@ -46,6 +46,8 @@ export interface AgendaEvent {
   uid: string | null
   /** Your answer when you're a guest; `null` for your own events. */
   my_response: Response | 'needs_action' | null
+  /** Minutes before the start (all-day: before midnight, your time); `null`: none. */
+  reminder: number | null
 }
 
 export type Response = 'accepted' | 'tentative' | 'declined'
@@ -105,6 +107,77 @@ export interface EventInput {
   repeat: Repeat | null
   /** The browser's time zone: a repeating event keeps its clock time in it. */
   time_zone: string
+  /** Minutes before the start; `null`: no reminder. */
+  reminder: number | null
+}
+
+// ---- Reminders (step 21) ----------------------------------------------------------
+
+/** The choices in the editor, in minutes before the start. All-day events count from midnight. */
+export const REMINDERS: { label: string; value: number }[] = [
+  { label: 'At the start', value: 0 },
+  { label: '5 minutes before', value: 5 },
+  { label: '10 minutes before', value: 10 },
+  { label: '15 minutes before', value: 15 },
+  { label: '30 minutes before', value: 30 },
+  { label: '1 hour before', value: 60 },
+  { label: '2 hours before', value: 120 },
+  { label: '1 day before', value: 1440 },
+]
+export const ALL_DAY_REMINDERS: { label: string; value: number }[] = [
+  { label: 'The day before at 9:00', value: 15 * 60 },
+  { label: 'The day before at 18:00', value: 6 * 60 },
+  { label: 'Two days before at 9:00', value: 39 * 60 },
+  { label: 'A week before at 9:00', value: (6 * 24 + 15) * 60 },
+]
+
+/** "10 minutes before", or a plain "25 minutes before" for a value set in another app. */
+export function reminderLabel(minutes: number | null, allDay: boolean): string {
+  if (minutes == null) return 'No reminder'
+  const known = (allDay ? ALL_DAY_REMINDERS : REMINDERS).find((r) => r.value === minutes)
+  if (known) return known.label
+  if (minutes % 1440 === 0) return `${minutes / 1440} days before`
+  if (minutes % 60 === 0) return `${minutes / 60} hours before`
+  return `${minutes} minutes before`
+}
+
+export interface AgendaSettings {
+  default_reminder: number | null
+  default_all_day_reminder: number | null
+  time_zone: string | null
+}
+
+export function fetchAgendaSettings() {
+  return $fetch<AgendaSettings>('/api/agenda/settings')
+}
+/** A field set to `null` means "no reminder"; a missing one stays as it is. */
+export function saveAgendaSettings(change: Partial<Pick<AgendaSettings, 'default_reminder' | 'default_all_day_reminder'>>) {
+  return $fetch<AgendaSettings>('/api/agenda/settings', { method: 'PATCH', body: change })
+}
+/** Tells the server the browser's time zone (all-day reminders ring at your 9:00). */
+export function reportTimeZone() {
+  return $fetch('/api/agenda/time-zone', { method: 'PUT', body: { zone: browserTimeZone() } })
+}
+
+/**
+ * The event as it is, moved to `start`–`end`: what dragging and the
+ * assistant's "move" send. Only this occurrence keeps no rule (`null`); the
+ * whole series or "this and the following" keep theirs.
+ */
+export function movedInput(e: AgendaEvent, start: number, end: number, scope: Scope = 'this'): EventInput {
+  return {
+    calendar: e.calendar,
+    title: e.title,
+    location: e.location,
+    description: e.description,
+    start,
+    end,
+    all_day: e.all_day,
+    attendees: e.attendees.map((a) => a.email),
+    repeat: scope === 'this' ? null : repeatToSend(e.repeat),
+    time_zone: browserTimeZone(),
+    reminder: e.reminder,
+  }
 }
 
 // ---- Repeating events -----------------------------------------------------------

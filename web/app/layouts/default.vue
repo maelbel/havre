@@ -7,6 +7,7 @@
     <ComposeWindow />
     <CommandPalette />
     <TaskReminders />
+    <EventReminders />
   </div>
 </template>
 

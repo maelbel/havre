@@ -17,6 +17,25 @@ async function setDefault(id: number) {
   }
 }
 
+// What new events start with. `-1` is "no reminder" in the selects.
+const reminders = ref<{ timed: number; allDay: number } | null>(null)
+onMounted(async () => {
+  try {
+    const s = await fetchAgendaSettings()
+    reminders.value = { timed: s.default_reminder ?? -1, allDay: s.default_all_day_reminder ?? -1 }
+  } catch {
+    /* demo mode: no agenda settings */
+  }
+})
+async function saveReminder(field: 'default_reminder' | 'default_all_day_reminder', value: number) {
+  try {
+    const s = await saveAgendaSettings({ [field]: value < 0 ? null : value })
+    reminders.value = { timed: s.default_reminder ?? -1, allDay: s.default_all_day_reminder ?? -1 }
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+
 const adding = ref(false)
 const form = reactive({ url: '', username: '', password: '', name: '' })
 const busy = ref(false)
@@ -153,10 +172,36 @@ const count = (server: number) => calendars.data.value.filter((c) => c.caldav ==
         @update:model-value="(id) => setDefault(id as number)"
       />
     </article>
+
+    <article v-if="reminders" class="card row">
+      <div class="info">
+        <strong>Default reminder</strong>
+        <span class="faint small">What new events start with; each event can change it.</span>
+      </div>
+      <div class="reminders">
+        <USelect
+          :model-value="reminders.timed"
+          aria-label="Default reminder"
+          :items="[{ label: 'No reminder', value: -1 }, ...REMINDERS]"
+          @update:model-value="(v) => saveReminder('default_reminder', v as number)"
+        />
+        <USelect
+          :model-value="reminders.allDay"
+          aria-label="Default reminder for all-day events"
+          :items="[{ label: 'All day: no reminder', value: -1 }, ...ALL_DAY_REMINDERS.map((r) => ({ ...r, label: `All day: ${r.label.charAt(0).toLowerCase()}${r.label.slice(1)}` }))]"
+          @update:model-value="(v) => saveReminder('default_all_day_reminder', v as number)"
+        />
+      </div>
+    </article>
   </section>
 </template>
 
 <style scoped>
+.reminders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 section {
   display: flex;
   flex-direction: column;

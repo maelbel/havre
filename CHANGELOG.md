@@ -6,6 +6,16 @@ All notable changes to Havre are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Event reminders**: a *Reminder* in the event editor, a default for new events (Settings › Calendars), synced
+  with Microsoft 365, Google, CalDAV and Havre's calendar. When it's time: a toast, a Havre Desktop notification
+  and a push to your phone (*Event reminders* in Settings › Notifications). All-day reminders ring at 9:00 your
+  time; declined meetings don't ring.
+- **Move events by dragging** in the week and day views, or drag the bottom edge to change the end, with
+  *Undo*. Repeating events ask which ones; meetings with guests ask before sending the new time. Press and hold
+  on a phone; **Alt+arrows** from the keyboard.
+
 ## [0.3.0] - 2026-11-09
 
 Live AI answers, and Havre on your phone with push notifications.

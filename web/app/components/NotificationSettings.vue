@@ -92,7 +92,7 @@ function since(seconds: number) {
       <div>
         <h2 id="notifications-title">Notifications</h2>
         <p class="lead">
-          New mail and task reminders on your phone or computer, even when Havre is closed. They're encrypted on your
+          New mail and reminders on your phone or computer, even when Havre is closed. They're encrypted on your
           server: the phone's push service (Google, Apple, Mozilla) only carries them.
         </p>
       </div>
@@ -144,6 +144,12 @@ function since(seconds: number) {
         description="Off: just “New email”, for a lock screen others can see."
         class="indent"
         @update:model-value="(v) => change({ mail_details: v })"
+      />
+      <USwitch
+        :model-value="settings.event_reminders"
+        label="Event reminders"
+        description="When an event's reminder is due (set in each event, default in Settings › Calendars)."
+        @update:model-value="(v) => change({ event_reminders: v })"
       />
       <USwitch
         :model-value="settings.reminders"

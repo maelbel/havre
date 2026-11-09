@@ -161,8 +161,68 @@ fn base(event: &IcsEvent, href: Option<&str>, etag: Option<&str>, raw: Option<&s
         attendees: attendees(event),
         join_url: event.get_url().map(str::to_owned),
         uid: event.get_uid().map(str::to_owned),
+        reminder: reminder_of(event),
         ..RemoteEvent::default()
     }
+}
+
+/// Is this child component a reminder Havre reads and writes: a `VALARM`
+/// that shows or sounds something (not an email), at a time relative to the
+/// start (`TRIGGER:-PT15M`, not `RELATED=END` nor a fixed date)?
+fn start_alarm_minutes(component: &impl Component) -> Option<i64> {
+    if component.component_kind() != "VALARM" {
+        return None;
+    }
+    if !matches!(component.property_value("ACTION"), Some("DISPLAY" | "AUDIO")) {
+        return None;
+    }
+    let trigger = component.properties().get("TRIGGER")?;
+    let related_end = trigger.params().get("RELATED").is_some_and(|p| p.value() == "END");
+    let is_date = trigger.params().get("VALUE").is_some_and(|p| p.value() == "DATE-TIME");
+    if related_end || is_date {
+        return None;
+    }
+    // `-PT15M` is 15 minutes *before*: a negative duration.
+    let seconds = duration(trigger.value())?;
+    (seconds <= 0).then_some(-seconds / 60)
+}
+
+/// The event's reminder: its first alarm relative to the start.
+fn reminder_of(event: &IcsEvent) -> Option<i64> {
+    event.components().iter().find_map(start_alarm_minutes)
+}
+
+/// The event with its reminder set to `minutes` (`None`: removed). Only the
+/// first alarm Havre understands is replaced; other alarms (an email, one
+/// before the end…) stay as they are.
+///
+/// icalendar can add child components but not remove one, so this builds a
+/// copy of the event: the same properties, the same children minus the old
+/// alarm, plus the new one.
+fn with_reminder(event: &IcsEvent, minutes: Option<i64>) -> IcsEvent {
+    let mut fresh = IcsEvent::new();
+    for property in event.properties().values() {
+        fresh.append_property(property.clone());
+    }
+    for list in event.multi_properties().values() {
+        for property in list {
+            fresh.append_multi_property(property.clone());
+        }
+    }
+    let mut replaced = false;
+    for child in event.components() {
+        if !replaced && start_alarm_minutes(child).is_some() {
+            replaced = true;
+            continue;
+        }
+        fresh.append_component(child.clone());
+    }
+    if let Some(minutes) = minutes {
+        let title = event.get_summary().unwrap_or("Reminder");
+        let trigger = icalendar::Trigger::before_start(chrono::Duration::minutes(minutes));
+        fresh.alarm(icalendar::Alarm::display(title, trigger));
+    }
+    fresh
 }
 
 /// The start and length of an event.
@@ -390,6 +450,7 @@ fn apply_fields(event: &mut IcsEvent, input: &EventInput) {
     }
     event.timestamp(Utc::now());
     event.last_modified(Utc::now());
+    *event = with_reminder(event, input.reminder);
 }
 
 /// `DTSTART` / `DTEND`: dates for all-day events, else clock times in `tz`
@@ -648,6 +709,7 @@ pub fn export(name: &str, events: &[super::Event]) -> String {
                 attendees: Vec::new(),
                 repeat: None,
                 time_zone: None,
+                reminder: e.reminder,
             },
         );
         calendar.push(event.done());
@@ -730,6 +792,60 @@ mod tests {
     }
 
     #[test]
+    fn reminders_are_the_first_alarm_before_the_start() {
+        let alarm = |trigger: &str, action: &str| {
+            format!("BEGIN:VALARM\r\nTRIGGER{trigger}\r\nACTION:{action}\r\nDESCRIPTION:x\r\nEND:VALARM\r\n")
+        };
+        let event = |alarms: &str| {
+            ics(&format!(
+                "BEGIN:VEVENT\r\nUID:a\r\nSUMMARY:Kick-off\r\nDTSTART:20261005T080000Z\r\nDTEND:20261005T090000Z\r\n\
+                 {alarms}END:VEVENT\r\n"
+            ))
+        };
+        let read =
+            |text: &str| events_between(text, None, None, MONDAY, MONDAY + DAY, false).unwrap()[0].reminder;
+        assert_eq!(read(&event("")), None);
+        assert_eq!(read(&event(&alarm(":-PT1H", "DISPLAY"))), Some(60));
+        assert_eq!(read(&event(&alarm(":-P1D", "AUDIO"))), Some(1440));
+        assert_eq!(read(&event(&alarm(":PT0S", "DISPLAY"))), Some(0), "at the start");
+        // Not ours: an email, one before the end, one at a fixed time — the next one counts.
+        let others = [
+            alarm(":-PT10M", "EMAIL"),
+            alarm(";RELATED=END:-PT5M", "DISPLAY"),
+            alarm(";VALUE=DATE-TIME:20261005T070000Z", "DISPLAY"),
+        ]
+        .concat();
+        assert_eq!(read(&event(&others)), None);
+        let text = event(&[others.as_str(), &alarm(":-PT30M", "DISPLAY")].concat());
+        assert_eq!(read(&text), Some(30));
+
+        // Changing it replaces that alarm only; the others stay.
+        let input = EventInput {
+            calendar: 1,
+            title: "Kick-off".into(),
+            location: String::new(),
+            description: String::new(),
+            start: MONDAY + 8 * 3600,
+            end: MONDAY + 9 * 3600,
+            all_day: false,
+            attendees: vec![],
+            repeat: None,
+            time_zone: None,
+            reminder: Some(10),
+        };
+        let updated = update_ics(&text, &input).unwrap();
+        assert_eq!(read(&updated), Some(10));
+        assert_eq!(updated.matches("BEGIN:VALARM").count(), 4, "{updated}");
+        assert!(updated.contains("ACTION:EMAIL") && updated.contains("RELATED=END"));
+        // No reminder: only that alarm goes.
+        let none = update_ics(&text, &EventInput { reminder: None, ..input.clone() }).unwrap();
+        assert_eq!(read(&none), None);
+        assert_eq!(none.matches("BEGIN:VALARM").count(), 3);
+        // A new event gets a display alarm.
+        assert_eq!(read(&new_ics("n", &input)), Some(10));
+    }
+
+    #[test]
     fn all_day_events_and_writing_back() {
         let text = ics("BEGIN:VEVENT\r\nUID:h\r\nSUMMARY:Holiday\r\nDTSTART;VALUE=DATE:20261006\r\n\
              DTEND;VALUE=DATE:20261008\r\nBEGIN:VALARM\r\nTRIGGER:-PT15M\r\nACTION:DISPLAY\r\nEND:VALARM\r\nEND:VEVENT\r\n");
@@ -748,9 +864,12 @@ mod tests {
             attendees: vec![],
             repeat: None,
             time_zone: None,
+            // The editor sends the reminder it read (15 minutes): the alarm stays.
+            reminder: Some(15),
         };
+        assert_eq!(e.reminder, Some(15), "read from TRIGGER:-PT15M");
         let updated = update_ics(&text, &input).unwrap();
-        assert!(updated.contains("VALARM"), "the alarm is kept");
+        assert_eq!(updated.matches("BEGIN:VALARM").count(), 1, "the alarm is kept, once");
         let e = &events_between(&updated, None, None, MONDAY, MONDAY + 14 * DAY, false).unwrap()[0];
         assert_eq!(
             (e.title.as_str(), e.start, e.end, e.all_day),
@@ -797,6 +916,7 @@ mod tests {
             attendees: vec![],
             repeat: None,
             time_zone: None,
+            reminder: None,
         };
         let rule = Repeat {
             freq: repeat::Freq::Weekly,
@@ -847,6 +967,7 @@ mod tests {
             attendees: vec![],
             repeat: None,
             time_zone: None,
+            reminder: None,
         };
         // Only this one: moved an hour later, the others stay.
         let text = override_occurrence(&text, second, &input).unwrap();
@@ -888,6 +1009,7 @@ mod tests {
             attendees: vec![],
             repeat: None,
             time_zone: None,
+            reminder: None,
         };
         let with_override = override_occurrence(&text, all[1].2, &input(all[1].2 + 3600, "Moved")).unwrap();
         // Same time, new title: the moved one keeps its time, takes the title.

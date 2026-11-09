@@ -81,6 +81,7 @@ pub struct PushSettings {
     pub new_mail: bool,
     pub mail_details: bool,
     pub reminders: bool,
+    pub event_reminders: bool,
 }
 
 /// A partial update: only the fields that are present change.
@@ -89,6 +90,7 @@ pub struct PushSettingsUpdate {
     pub new_mail: Option<bool>,
     pub mail_details: Option<bool>,
     pub reminders: Option<bool>,
+    pub event_reminders: Option<bool>,
 }
 
 pub struct Push {
@@ -242,13 +244,16 @@ impl Push {
     }
 
     pub async fn settings(&self) -> Result<PushSettings> {
-        let r = sqlx::query("SELECT new_mail, mail_details, reminders FROM push_settings WHERE id = 1")
-            .fetch_one(&self.pool())
-            .await?;
+        let r = sqlx::query(
+            "SELECT new_mail, mail_details, reminders, event_reminders FROM push_settings WHERE id = 1",
+        )
+        .fetch_one(&self.pool())
+        .await?;
         Ok(PushSettings {
             new_mail: r.get("new_mail"),
             mail_details: r.get("mail_details"),
             reminders: r.get("reminders"),
+            event_reminders: r.get("event_reminders"),
         })
     }
 
@@ -256,11 +261,12 @@ impl Push {
         // `COALESCE(?, column)`: a missing field (NULL) keeps what's there.
         sqlx::query(
             "UPDATE push_settings SET new_mail = COALESCE(?, new_mail), mail_details = COALESCE(?, mail_details),
-             reminders = COALESCE(?, reminders) WHERE id = 1",
+             reminders = COALESCE(?, reminders), event_reminders = COALESCE(?, event_reminders) WHERE id = 1",
         )
         .bind(u.new_mail)
         .bind(u.mail_details)
         .bind(u.reminders)
+        .bind(u.event_reminders)
         .execute(&self.pool())
         .await?;
         self.settings().await
@@ -377,6 +383,12 @@ impl Push {
                     .await?;
                 }
             }
+            SyncEvent::EventReminder { event: id, title, start, all_day, location, .. } => {
+                if self.settings().await?.event_reminders {
+                    let tz = self.time_zone().await?;
+                    self.notify(&event_notification(*id, title, *start, *all_day, location, tz)).await?;
+                }
+            }
             SyncEvent::Folder { path } => {
                 let notes = self.new_mail(event.account, path).await?;
                 if self.settings().await?.new_mail {
@@ -388,6 +400,14 @@ impl Push {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Your time zone, as the Agenda knows it from your browser (UTC until then).
+    async fn time_zone(&self) -> Result<chrono_tz::Tz> {
+        let zone: Option<String> = sqlx::query_scalar("SELECT time_zone FROM agenda_settings WHERE id = 1")
+            .fetch_one(&self.pool())
+            .await?;
+        Ok(zone.and_then(|z| z.parse().ok()).unwrap_or(chrono_tz::Tz::UTC))
     }
 
     /// Notes the highest UID of every inbox: what's there now is never notified.
@@ -463,6 +483,34 @@ impl Push {
             })
             .collect();
         Ok(mail_notifications(account, folder, &mail, details))
+    }
+}
+
+/// An event reminder: "Kick-off" / "10:00 · Room 3" (your time), opening the
+/// event in the Agenda.
+fn event_notification(
+    id: i64,
+    title: &str,
+    start: i64,
+    all_day: bool,
+    location: &str,
+    tz: chrono_tz::Tz,
+) -> Notification {
+    use chrono::TimeZone;
+    // An all-day event's date is its UTC date; a timed one's, the date where you are.
+    let (date, when) = if all_day {
+        let day = chrono::DateTime::from_timestamp(start, 0).unwrap_or_default().date_naive();
+        (day, format!("All day, {}", day.format("%a %-d %b")))
+    } else {
+        let local = tz.timestamp_opt(start, 0).single().unwrap_or_else(|| tz.timestamp_opt(0, 0).unwrap());
+        (local.date_naive(), local.format("%H:%M").to_string())
+    };
+    let body = if location.trim().is_empty() { when } else { format!("{when} · {}", location.trim()) };
+    Notification {
+        title: title.to_owned(),
+        body,
+        url: format!("/agenda?date={}&event={id}", date.format("%Y-%m-%d")),
+        tag: format!("havre-event-{id}-{start}"),
     }
 }
 
@@ -712,6 +760,42 @@ mod tests {
         assert!(push.subscribe(&bad("http://push.example/x", UA_PUBLIC)).await.is_err(), "HTTPS only");
         assert!(push.subscribe(&bad("https://push.example/x", "nope")).await.is_err(), "a real key");
         assert!(push.subscribe(&bad("https://push.example/x", UA_PUBLIC)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn event_reminders_follow_their_setting() {
+        let db = Database::in_memory().await.unwrap();
+        sqlx::query("UPDATE agenda_settings SET time_zone = 'Europe/Paris'")
+            .execute(&db.pool())
+            .await
+            .unwrap();
+        let push = Push::new(db);
+        let (endpoint, got) = push_service(vec![201]).await;
+        subscribe(&push, &endpoint).await;
+        let ring = AccountEvent {
+            account: 0,
+            event: SyncEvent::EventReminder {
+                event: 4,
+                title: "Kick-off".into(),
+                start: 1_791_230_400, // Mon 5 Oct 2026, 20:00 UTC = 22:00 in Paris
+                all_day: false,
+                location: "Room 3".into(),
+                join_url: None,
+            },
+        };
+        push.on_event(&ring).await.unwrap();
+        push.update_settings(&PushSettingsUpdate { event_reminders: Some(false), ..Default::default() })
+            .await
+            .unwrap();
+        push.on_event(&ring).await.unwrap();
+        let requests = got.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1, "the second one is off");
+        let note = shown(&requests[0].1);
+        assert_eq!(
+            (note["title"].as_str(), note["body"].as_str()),
+            (Some("Kick-off"), Some("22:00 · Room 3"))
+        );
+        assert_eq!(note["url"], "/agenda?date=2026-10-05&event=4");
     }
 
     #[test]

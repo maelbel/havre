@@ -72,7 +72,7 @@ pub async fn calendars(token: &str) -> Result<Vec<RemoteCalendar>> {
 }
 
 const SELECT: &str = "id,iCalUId,responseStatus,subject,location,body,start,end,isAllDay,type,organizer,attendees,onlineMeeting,\
-                      isCancelled,isOrganizer,seriesMasterId,originalStart";
+                      isCancelled,isOrganizer,seriesMasterId,originalStart,isReminderOn,reminderMinutesBeforeStart";
 
 pub async fn events(
     token: &str,
@@ -160,6 +160,11 @@ fn to_remote(e: &Value, calendar_read_only: bool) -> Option<RemoteEvent> {
         attendees,
         join_url: e["onlineMeeting"]["joinUrl"].as_str().map(str::to_owned),
         uid: e["iCalUId"].as_str().map(str::to_owned),
+        // Outlook keeps a reminder's minutes even when it's off: only `isReminderOn` says.
+        reminder: match e["isReminderOn"].as_bool() {
+            Some(true) => e["reminderMinutesBeforeStart"].as_i64(),
+            _ => None,
+        },
         my_response: if e["isOrganizer"].as_bool() == Some(true) {
             None
         } else {
@@ -245,7 +250,11 @@ fn body(input: &EventInput, repeat: Option<&Repeat>, tz: Option<Tz>) -> Value {
         "start": when(input.start),
         "end": when(input.end),
         "isAllDay": input.all_day,
+        "isReminderOn": input.reminder.is_some(),
     });
+    if let Some(minutes) = input.reminder {
+        body["reminderMinutesBeforeStart"] = json!(minutes);
+    }
     if !input.attendees.is_empty() {
         body["attendees"] = input
             .attendees
@@ -353,5 +362,47 @@ pub async fn delete(token: &str, id: &str) -> Result<()> {
     match call(http().delete(url).bearer_auth(token)).await {
         Ok(_) | Err(Error::NotFound(_)) => Ok(()),
         Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(reminder: Option<i64>) -> EventInput {
+        EventInput {
+            calendar: 1,
+            title: "Kick-off".into(),
+            location: String::new(),
+            description: String::new(),
+            start: 1_791_158_400,
+            end: 1_791_162_000,
+            all_day: false,
+            attendees: vec![],
+            repeat: None,
+            time_zone: None,
+            reminder,
+        }
+    }
+
+    #[test]
+    fn reads_and_writes_the_reminder() {
+        let event = |on: bool| {
+            json!({ "id": "e1", "subject": "Kick-off", "isAllDay": false,
+                    "start": { "dateTime": "2026-10-05T08:00:00.0000000", "timeZone": "UTC" },
+                    "end": { "dateTime": "2026-10-05T09:00:00.0000000", "timeZone": "UTC" },
+                    "isReminderOn": on, "reminderMinutesBeforeStart": 15 })
+        };
+        assert_eq!(to_remote(&event(true), false).unwrap().reminder, Some(15));
+        // Outlook keeps the minutes of a reminder that's off.
+        assert_eq!(to_remote(&event(false), false).unwrap().reminder, None);
+
+        let on = body(&input(Some(30)), None, None);
+        assert_eq!(
+            (on["isReminderOn"].as_bool(), on["reminderMinutesBeforeStart"].as_i64()),
+            (Some(true), Some(30))
+        );
+        let off = body(&input(None), None, None);
+        assert_eq!(off["isReminderOn"], false);
     }
 }

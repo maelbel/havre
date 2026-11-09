@@ -186,6 +186,35 @@ to put one off, *View email*. The event panel shows who's coming and how
 they answered, the recent emails and files from those people, and *Join
 call* for Teams / Meet.
 
+### Moving events by dragging
+
+In the week and day views, **drag an event** to another time or day, or
+**drag its bottom edge** to change when it ends (15-minute steps; the time
+shows while you drag). A toast says where it went, with **Undo**. A repeating
+event first asks *Only this event* or *This and the following ones*; a
+meeting with guests asks before Microsoft or Google emails them the new
+time. Someone else's meeting and events in a read-only calendar don't move.
+On a phone, **press and hold** an event to pick it up (a quick swipe still
+scrolls the day). From the keyboard, with an event focused: **Alt+↑/↓**
+moves it 15 minutes, **Alt+←/→** a day, **Alt+Shift+↑/↓** changes its end.
+
+### Reminders
+
+Each event has a **Reminder** (in the editor): from *At the start* to *1 day
+before*; all-day events have their own (*The day before at 9:00*, *Two days
+before*…, at 9:00 your time). New events start with your **default
+reminder**, Settings › Calendars (10 minutes unless you change it). Reminders
+are read from and written to your calendars, so one set on your phone's
+calendar app shows here too: Microsoft 365, Google (an event using the
+calendar's usual reminder shows that one), CalDAV (the event's alarm; other
+alarms, like an email, are kept) and Havre's calendar.
+
+When it's time, Havre shows a toast (*Kick-off · in 10 min · 10:00, Room 3*,
+with *Join* for a Teams or Meet call), Havre Desktop a notification, and your
+phone gets one by push (Settings › Notifications › *Event reminders*). Not
+for meetings you declined. Each reminder rings once; one found more than 15
+minutes late (Havre was off) is skipped.
+
 ### Repeating events
 
 In the event editor, **Repeat** sets how often: every day, week (choose the
