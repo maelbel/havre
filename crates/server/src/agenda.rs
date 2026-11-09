@@ -18,6 +18,8 @@
 //! | POST   | /agenda/events/{id}/respond `{response}` | answer from the Agenda (Microsoft / Google) |
 //! | GET    | /agenda/events/{id}/related | recent mail and files from its guests and organizer |
 //! | GET    | /agenda/found-in-mail | invitations in your mail still to answer or add |
+//! | GET · PATCH | /agenda/settings `{default_reminder?, default_all_day_reminder?}` | what new events start with (`null`: no reminder) |
+//! | PUT    | /agenda/time-zone `{zone}` | the browser's time zone, to ring all-day reminders at your 9:00 |
 
 use std::sync::Arc;
 
@@ -28,7 +30,9 @@ use axum::{
     routing::{get, patch, post},
 };
 use havre_core::{
-    agenda::{Agenda, CalDavAccount, Calendar, Event, EventInput, Scope},
+    agenda::{
+        Agenda, AgendaSettings, AgendaSettingsUpdate, CalDavAccount, Calendar, Event, EventInput, Scope,
+    },
     invitations::{self, InvitationView},
 };
 use serde::Deserialize;
@@ -51,6 +55,32 @@ pub fn routes() -> Router<AppState> {
         .route("/agenda/events/{id}/respond", post(respond_event))
         .route("/agenda/events/{id}/related", get(related))
         .route("/agenda/found-in-mail", get(found_in_mail))
+        .route("/agenda/settings", get(settings).patch(update_settings))
+        .route("/agenda/time-zone", axum::routing::put(set_time_zone))
+}
+
+async fn settings(State(state): State<AppState>) -> Result<Json<AgendaSettings>, ApiError> {
+    Ok(Json(agenda(&state)?.store().settings().await?))
+}
+
+async fn update_settings(
+    State(state): State<AppState>,
+    Json(update): Json<AgendaSettingsUpdate>,
+) -> Result<Json<AgendaSettings>, ApiError> {
+    Ok(Json(agenda(&state)?.store().update_settings(&update).await?))
+}
+
+#[derive(Deserialize)]
+struct TimeZone {
+    zone: String,
+}
+
+async fn set_time_zone(
+    State(state): State<AppState>,
+    Json(t): Json<TimeZone>,
+) -> Result<StatusCode, ApiError> {
+    agenda(&state)?.store().set_time_zone(&t.zone).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn agenda(state: &AppState) -> Result<&Arc<Agenda>, ApiError> {
