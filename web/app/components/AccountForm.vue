@@ -22,7 +22,7 @@ const form = reactive<AccountForm>({
   smtp_host: props.account?.smtp_host ?? '',
   smtp_port: props.account?.smtp_port ?? 465,
   smtp_security: props.account?.smtp_security ?? 'tls',
-  signature: props.account?.signature ?? '',
+  signature_html: props.account?.signature_html ?? '',
   signature_in_replies: props.account?.signature_in_replies ?? true,
 })
 
@@ -145,7 +145,7 @@ async function submit() {
         'smtp_host',
         'smtp_port',
         'smtp_security',
-        'signature',
+        'signature_html',
         'signature_in_replies',
       ] as const) {
         if (form[key] !== a[key]) (changes as Record<string, unknown>)[key] = form[key]
@@ -228,20 +228,21 @@ const colors: { value: AccountColor; label: string }[] = ACCOUNT_COLORS
       <UFormField
         v-if="editing"
         label="Signature"
-        hint="plain text"
+        hint="bold, italic, links"
         help="Added to your new messages, below a line of two dashes (the usual signature line)."
         class="field wide"
       >
-        <UTextarea
-          v-model="form.signature"
-          :rows="3"
-          autoresize
-          :placeholder="`${form.sender_name || 'Maël Belliard'}\nAcme · +33 1 23 45 67 89`"
-          class="w-full"
+        <LazyRichText
+          :model-value="form.signature_html ?? ''"
+          @update:model-value="(html) => (form.signature_html = html)"
+          small
+          label="Signature"
+          :placeholder="`${form.sender_name || 'Maël Belliard'} · Acme · +33 1 23 45 67 89`"
+          class="signature-box"
         />
       </UFormField>
       <USwitch
-        v-if="editing && form.signature?.trim()"
+        v-if="editing && form.signature_html?.replace(/<[^>]+>/g, '').trim()"
         v-model="form.signature_in_replies"
         label="Also in replies and forwards"
         class="field wide"
@@ -496,5 +497,10 @@ legend {
   .grid.three {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+.signature-box {
+  border: 1px solid var(--line2);
+  border-radius: var(--radius);
+  background: var(--bg);
 }
 </style>
