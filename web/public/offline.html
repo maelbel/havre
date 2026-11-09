@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Havre</title>
+<style>
+  :root { --bg: #0e0f11; --text: #e9e4da; --muted: #9a958b; --accent: #c9a66b; }
+  @media (prefers-color-scheme: light) { :root { --bg: #e9e4da; --text: #0e0f11; --muted: #5c574e; --accent: #765a31; } }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); }
+  body { display: grid; place-items: center; padding: 24px; box-sizing: border-box;
+         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; text-align: center; }
+  main { max-width: 340px; }
+  img { width: 64px; height: 64px; border-radius: 16px; }
+  h1 { font-size: 19px; margin: 18px 0 6px; }
+  p { color: var(--muted); margin: 0 0 20px; }
+  button { font: inherit; padding: 8px 18px; border-radius: 8px; border: 1px solid var(--accent);
+           background: transparent; color: var(--text); cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <img src="/icon-192.png" alt="">
+  <h1>Havre can't be reached</h1>
+  <p>Your phone is offline, or your Havre server is. Nothing of your mail is kept on this device, so it shows once
+    you're connected again.</p>
+  <button type="button" onclick="location.reload()">Try again</button>
+</main>
+</body>
+</html>
