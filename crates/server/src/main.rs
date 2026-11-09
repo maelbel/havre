@@ -15,6 +15,7 @@ mod mcp;
 mod notes;
 mod organize;
 mod platform;
+mod push;
 mod tasks;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -22,7 +23,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use axum::Router;
 use havre_core::{
     accounts::AccountManager, agenda::Agenda, ai::Ai, auth::Auth, backup::Backups, config::ImapConfig,
-    secrets::Secrets, store::Database, tasks::Tasks,
+    push::Push, secrets::Secrets, store::Database, tasks::Tasks,
 };
 use mail_source::MailSource;
 use tokio::sync::watch;
@@ -47,6 +48,8 @@ pub struct AppState {
     pub ai: Option<Arc<Ai>>,
     /// Nightly backups (`None` in demo mode).
     pub backups: Option<Backups>,
+    /// Push notifications to phones and browsers (`None` in demo mode).
+    pub push: Option<Arc<Push>>,
     /// Slows down password guessing.
     pub throttle: auth::Throttle,
     /// Fires when the server is stopping (long-lived requests end early).
@@ -97,9 +100,9 @@ async fn main() -> anyhow::Result<()> {
 
     // `HAVRE_DEMO=1` serves sample mail; otherwise use the IMAP account.
     let demo = matches!(std::env::var("HAVRE_DEMO").as_deref(), Ok("1" | "true"));
-    let (mail, login, agenda, tasks, ai, backups) = if demo {
+    let (mail, login, agenda, tasks, ai, backups, push) = if demo {
         tracing::info!("demo mode: serving sample mail");
-        (MailSource::demo(), None, None, None, None, None)
+        (MailSource::demo(), None, None, None, None, None, None)
     } else {
         let secrets = Secrets::load_or_create(&data_dir)?;
         let db = Database::open(&data_dir.join("havre.db"), secrets.clone()).await?;
@@ -137,7 +140,17 @@ async fn main() -> anyhow::Result<()> {
         let tasks = Tasks::start(manager.database().clone(), manager.sender());
         // AI: does nothing until turned on in Settings › AI.
         let ai = Ai::start(Arc::clone(&manager), Arc::clone(&agenda));
-        (MailSource::Accounts(manager), Some(login), Some(agenda), Some(tasks), Some(ai), Some(backups))
+        // Push notifications: listens to the same channel (new mail, reminders).
+        let push = Push::start(manager.database().clone(), &manager.sender());
+        (
+            MailSource::Accounts(manager),
+            Some(login),
+            Some(agenda),
+            Some(tasks),
+            Some(ai),
+            Some(backups),
+            Some(push),
+        )
     };
 
     let web_dir =
@@ -154,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
         tasks,
         ai,
         backups,
+        push,
         throttle: auth::Throttle::default(),
         shutdown: Shutdown(stopping_rx),
     };
