@@ -8,6 +8,7 @@
     <CommandPalette />
     <TaskReminders />
     <EventReminders />
+    <OutboxNotices />
   </div>
 </template>
 

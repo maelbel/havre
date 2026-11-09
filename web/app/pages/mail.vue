@@ -325,6 +325,12 @@ function reloadSoon() {
   reloadTimer = setTimeout(() => loadFirstPage({ keep: true }), 150)
 }
 useMailEvents((event) => {
+  // The outbox sent, scheduled or took back a message.
+  if (event.type === 'outbox') {
+    scheduledAll.refresh()
+    drafts.refresh()
+    return
+  }
   // Unread counts (sidebar, dock) follow any account's changes.
   if (event.type === 'accounts' || event.type === 'folders') {
     clearTimeout(accountsTimer)
@@ -816,7 +822,26 @@ const labelsOpen = ref(false)
 const composer = useComposer()
 const drafts = useDrafts()
 // Drafts on the server are in each account's Drafts folder; the others here.
-const unsent = computed(() => drafts.data.value.filter(onlyInHavre))
+// (A window opened and left with nothing written isn't listed: the signature alone doesn't count.)
+const unsent = computed(() =>
+  drafts.data.value.filter(
+    (d) =>
+      onlyInHavre(d) &&
+      (d.to.trim() || d.subject.trim() || d.attachments.length || d.body.replace(`-- \n${d.signature}`, '').trim()),
+  ),
+)
+// Waiting to be sent (send later), and those that couldn't be.
+const scheduledAll = useScheduled()
+// Those in their undo seconds go too fast to list: only later ones, and failures.
+const scheduled = computed(() =>
+  scheduledAll.data.value.filter((d) => d.send_state === 'failed' || (d.send_at ?? 0) * 1000 - Date.now() > 60_000),
+)
+/** "Tue 8:00", "Today 13:00" */
+function scheduledWhen(unix: number) {
+  const d = new Date(unix * 1000)
+  const day = sameDay(d, new Date()) ? 'Today' : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+  return `${day} · ${timeLabel(d)}`
+}
 
 /** A new message, from the account being read. */
 async function write() {
@@ -1091,6 +1116,25 @@ const splitPanes: SplitPaneSpec[] = [
             <span class="draft-subject">{{ d.subject || '(no subject)' }}</span>
             <span class="draft-to">{{ d.to ? `To ${d.to}` : 'No recipient yet' }}</span>
             <span v-if="d.server_error" class="draft-why">{{ d.server_error }}</span>
+          </button>
+        </template>
+        <!-- Send later: waiting for their time (the undo-send ones go too fast to list). -->
+        <template v-if="scheduled.length">
+          <div class="eyebrow sec">Scheduled · {{ scheduled.length }}</div>
+          <button
+            v-for="d in scheduled"
+            :key="d.id"
+            type="button"
+            class="draft"
+            :class="{ open: composer?.id === d.id }"
+            @click="openDraft(d.id)"
+          >
+            <span class="draft-subject">{{ d.subject || '(no subject)' }}</span>
+            <span class="draft-to">
+              <HIcon name="clock" :size="11" class="when-icon" />
+              {{ d.send_at ? scheduledWhen(d.send_at) : '' }}{{ d.to ? ` · To ${d.to}` : '' }}
+            </span>
+            <span v-if="d.send_state === 'failed'" class="draft-why">{{ d.send_error }}</span>
           </button>
         </template>
         <NuxtLink to="/settings?add=1" class="add-account">
@@ -1672,6 +1716,11 @@ const splitPanes: SplitPaneSpec[] = [
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.when-icon {
+  display: inline;
+  vertical-align: -1px;
+  margin-right: 2px;
+}
 .draft-why {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1854,12 +1903,25 @@ const splitPanes: SplitPaneSpec[] = [
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.rowwrap:hover .pick .avatar,
 .rowwrap.selecting .pick .avatar {
   color: transparent;
   background: transparent;
   border: 1.5px solid var(--line2);
   border-radius: 4px;
+}
+/* Only with a mouse or a trackpad. On a touch screen, iOS treats a tap that
+   would reveal something on hover as "hover first": the message would then
+   open on the second tap only. */
+@media (hover: hover) and (pointer: fine) {
+  .rowwrap:hover .pick .avatar {
+    color: transparent;
+    background: transparent;
+    border: 1.5px solid var(--line2);
+    border-radius: 4px;
+  }
+  .rowwrap:hover .star {
+    opacity: 1;
+  }
 }
 .rowwrap.checked .pick .avatar {
   color: transparent;
@@ -1891,7 +1953,6 @@ const splitPanes: SplitPaneSpec[] = [
   cursor: pointer;
   opacity: 0;
 }
-.rowwrap:hover .star,
 .star:focus-visible,
 .star.on {
   opacity: 1;

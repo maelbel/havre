@@ -57,9 +57,16 @@ async function flush() {
   status.value = 'saving'
   saving = saveDraft(id, diff)
     .then((d) => {
+      // "From" changed: the server swapped the signature. Take its text,
+      // unless you typed meanwhile.
+      if (diff.account !== undefined && form.body === snapshot.body && d.body !== snapshot.body) {
+        form.body = d.body
+        snapshot.body = d.body
+      }
       saved = snapshot
       status.value = 'saved'
       server.value = serverState(d)
+      if (draft.value) Object.assign(draft.value, { signature: d.signature, send_at: d.send_at, send_state: d.send_state })
     })
     .catch((err) => {
       status.value = 'idle'
@@ -82,7 +89,7 @@ const serverState = (d: Draft): Server => ({
 const where = computed(() => {
   const s = server.value
   // Nothing written yet: nothing to keep anywhere.
-  const empty = !form.to.trim() && !form.cc.trim() && !form.bcc.trim() && !form.subject.trim() && !form.body.trim()
+  const empty = !form.to.trim() && !form.cc.trim() && !form.bcc.trim() && !form.subject.trim() && !written().trim()
   if (!s || (empty && !draft.value?.attachments.length)) return null
   if (s.server_error) return { text: s.server_error, warn: true, icon: 'alert' as const }
   if (s.server_pending) return { text: 'Saved in Havre · saving to the server…', warn: false, icon: 'loading' as const }
@@ -162,9 +169,9 @@ const aiInput = ref<{ inputRef: HTMLInputElement | null } | null>(null)
 const aiUndo = ref<string | null>(null)
 let aiAbort: AbortController | null = null
 
-/** Where the quoted original (or forwarded message) starts in the body. */
+/** Where your signature, or else the quoted original (or forwarded message), starts in the body. */
 function quoteStart(body: string) {
-  const m = body.match(/^(On .+ wrote:|>|-{5,} ?Forwarded message)/m)
+  const m = body.match(/^(-- $|On .+ wrote:|>|-{5,} ?Forwarded message)/m)
   return m?.index ?? body.length
 }
 
@@ -226,16 +233,29 @@ function onAiKey(e: KeyboardEvent) {
 
 // ---- Actions ------------------------------------------------------------------
 
-async function send() {
+/** Send (after the undo delay), or send later (`at`). */
+async function send(at?: Date) {
   if (!draft.value || sending.value) return
   error.value = null
   sending.value = true
   try {
     await flush()
-    const outcome = await sendDraft(draft.value.id)
-    toast.show(outcome.warning ?? 'Message sent', outcome.warning ? { tone: 'error' } : undefined)
+    const id = draft.value.id
+    const reply = await sendDraft(id, at ? Math.floor(at.getTime() / 1000) : undefined)
     finish()
     refreshNuxtData('drafts')
+    refreshNuxtData('scheduled')
+    const undo = { label: 'Undo', run: () => takeBack(id) }
+    if (reply.outcome) {
+      // No undo delay: already sent.
+      toast.show(reply.outcome.warning ?? 'Message sent', reply.outcome.warning ? { tone: 'error' } : undefined)
+    } else if (at) {
+      toast.show(`Scheduled for ${sendTime(reply.send_at)}`, { action: undo })
+    } else {
+      // Undo stays offered until it goes.
+      const left = reply.send_at * 1000 - Date.now()
+      toast.show('Sending…', { action: undo, duration: Math.max(1500, left) })
+    }
   } catch (err) {
     error.value = apiErrorMessage(err)
   } finally {
@@ -243,12 +263,89 @@ async function send() {
   }
 }
 
+/** Undo send: back to a draft, open again. */
+async function takeBack(id: number) {
+  try {
+    await unsendDraft(id)
+    refreshNuxtData('drafts')
+    refreshNuxtData('scheduled')
+    openDraft(id)
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+
+/** "Don't send" (a scheduled message): it stays open, as a draft. */
+async function dontSend() {
+  if (!draft.value) return
+  try {
+    const d = await unsendDraft(draft.value.id)
+    Object.assign(draft.value, { send_at: d.send_at, send_state: d.send_state, send_error: d.send_error })
+    refreshNuxtData('scheduled')
+    refreshNuxtData('drafts')
+    toast.show('Not scheduled any more: it’s a draft again')
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+
+// ---- Send later -----------------------------------------------------------------
+const picking = ref(false)
+const pickedAt = ref('')
+/** "Tue 10 Nov, 08:00" */
+function sendTime(unix: number) {
+  const d = new Date(unix * 1000)
+  return `${d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })}, ${timeLabel(d)}`
+}
+const laterItems = computed(() => [
+  sendLaterChoices().map((c) => ({
+    label: `${c.label} · ${sendTime(c.at.getTime() / 1000)}`,
+    icon: 'i-havre-clock',
+    onSelect: () => send(c.at),
+  })),
+  [{ label: 'Pick a date and time…', icon: 'i-havre-calendar', onSelect: openPicker }],
+])
+/** `YYYY-MM-DDTHH:MM` in local time, what `datetime-local` takes. */
+function localInput(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+function openPicker() {
+  const soon = sendLaterChoices()[0]!.at
+  pickedAt.value = localInput(soon)
+  picking.value = true
+}
+const pickedDate = computed(() => (pickedAt.value ? new Date(pickedAt.value) : null))
+const pickedOk = computed(() => !!pickedDate.value && !Number.isNaN(pickedDate.value.getTime()) && pickedDate.value.getTime() > Date.now())
+function sendPicked() {
+  if (!pickedOk.value || !pickedDate.value) return
+  picking.value = false
+  send(pickedDate.value)
+}
+/** A scheduled message open here: when it goes, or why it didn't. */
+const scheduledLine = computed(() => {
+  const d = draft.value
+  if (!d?.send_at) return null
+  if (d.send_state === 'failed') return { text: d.send_error ?? 'Not sent.', warn: true }
+  return { text: `Scheduled for ${sendTime(d.send_at)}`, warn: false }
+})
+
 /** Closes the window; the draft stays (in "Drafts"). */
+/** The text you wrote: the body without the signature Havre put in. */
+function written() {
+  const sig = draft.value?.signature
+  return sig ? form.body.replace(`-- \n${sig}`, '') : form.body
+}
+
 async function close() {
   await flush()
-  const empty = !form.to.trim() && !form.subject.trim() && !form.body.trim() && !draft.value?.attachments.length
+  const empty = !form.to.trim() && !form.subject.trim() && !written().trim() && !draft.value?.attachments.length
   if (draft.value && empty) await discardDraft(draft.value.id).catch(() => {})
-  else if (draft.value) {
+  else if (draft.value?.send_at && draft.value.send_state === 'waiting') {
+    // Still scheduled: it stays in "Scheduled", not on the server.
+    toast.show(`Still scheduled for ${sendTime(draft.value.send_at)}`)
+    refreshNuxtData('scheduled')
+  } else if (draft.value) {
     toast.show('Saved in Drafts')
     // To the server now; the list updates when it's there.
     closeDraft(draft.value.id)
@@ -393,7 +490,7 @@ const fromItems = computed(() =>
 
     <template v-if="!composer.minimized">
       <div v-if="loading" class="loading"><span class="spinner" aria-hidden="true" /></div>
-      <form v-else class="body" @submit.prevent="send">
+      <form v-else class="body" @submit.prevent="send()">
         <div class="row">
           <label for="compose-from" class="lbl">From</label>
           <USelect
@@ -490,14 +587,31 @@ const fromItems = computed(() =>
 
         <UAlert v-if="error" color="error" variant="soft" icon="i-havre-alert" :title="error" role="alert" class="error" />
 
-        <p v-if="where" class="where" :class="{ warn: where.warn }" role="status">
+        <p v-if="scheduledLine" class="where scheduled" :class="{ warn: scheduledLine.warn }" role="status">
+          <HIcon :name="scheduledLine.warn ? 'alert' : 'clock'" :size="13" />
+          <span>{{ scheduledLine.text }}</span>
+          <UButton color="primary" variant="link" size="xs" class="p-0" @click="dontSend">Don’t send</UButton>
+        </p>
+        <p v-else-if="where" class="where" :class="{ warn: where.warn }" role="status">
           <HIcon :name="where.icon" :size="13" :class="{ spin: where.icon === 'loading' }" />
           <span>{{ where.text }}</span>
         </p>
         <footer>
-          <UButton icon="i-havre-send" type="submit" :loading="sending" :disabled="sending || (account && !account.can_send)">
-            {{ sending ? 'Sending…' : 'Send' }}
-          </UButton>
+          <UFieldGroup>
+            <UButton icon="i-havre-send" type="submit" :loading="sending" :disabled="sending || (account && !account.can_send)">
+              {{ sending ? 'Sending…' : draft?.send_state === 'failed' ? 'Send again' : draft?.send_at ? 'Send now' : 'Send' }}
+            </UButton>
+            <UDropdownMenu :items="laterItems" :content="{ align: 'start', side: 'top' }">
+              <UButton
+                icon="i-havre-chevron"
+                square
+                type="button"
+                aria-label="Send later"
+                :disabled="sending || (account && !account.can_send)"
+                class="later"
+              />
+            </UDropdownMenu>
+          </UFieldGroup>
           <span class="hint"><UKbd :value="isMac ? '⌘' : 'Ctrl'" /> <UKbd value="Enter" /></span>
           <UButton
             icon="i-havre-paperclip"
@@ -537,6 +651,23 @@ const fromItems = computed(() =>
       </form>
       <div v-if="dragging" class="dropzone" aria-hidden="true">Drop files to attach them</div>
     </template>
+    <UModal v-model:open="picking" title="Send later" description="The message goes at this time (your time zone), even if Havre isn’t open.">
+      <template #body>
+        <form id="send-later" @submit.prevent="sendPicked">
+          <UFormField label="Date and time">
+            <UInput v-model="pickedAt" type="datetime-local" :min="localInput(new Date())" class="w-full" />
+          </UFormField>
+        </form>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-2 w-full">
+          <UButton color="neutral" variant="outline" @click="picking = false">Cancel</UButton>
+          <UButton type="submit" form="send-later" icon="i-havre-clock" :disabled="!pickedOk">
+            {{ pickedOk && pickedDate ? `Send ${sendTime(pickedDate.getTime() / 1000)}` : 'Send' }}
+          </UButton>
+        </div>
+      </template>
+    </UModal>
   </section>
 </template>
 
@@ -665,6 +796,9 @@ h2 {
   align-items: stretch;
 }
 :deep(.message) {
+  /* Plain text as typed: "--" stays two dashes (the signature line), not a joined dash. */
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'clig' 0;
   flex: 1;
   resize: none;
   min-height: 120px;

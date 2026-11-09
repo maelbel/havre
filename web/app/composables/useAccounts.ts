@@ -25,6 +25,10 @@ export interface Account {
   can_calendar: boolean
   /** The sign-in allows Tasks (Microsoft To Do, Google Tasks). */
   can_tasks: boolean
+  /** Added after a `-- ` line to new messages (plain text). */
+  signature: string
+  /** Replies and forwards get it too (above the quote). */
+  signature_in_replies: boolean
   status: SyncStatus
   /** Unread messages in the inbox. */
   unread: number
@@ -42,6 +46,9 @@ export interface AccountForm {
   smtp_host: string
   smtp_port: number
   smtp_security: 'tls' | 'starttls'
+  /** Editing only (a new account sets it afterwards). */
+  signature?: string
+  signature_in_replies?: boolean
 }
 
 export const ACCOUNT_COLORS: { value: AccountColor; label: string }[] = [
