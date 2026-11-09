@@ -1,6 +1,6 @@
 //! The Agenda's tables: calendars, events, CalDAV servers.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
 use super::{Attendee, COLORS, Calendar, Event, RemoteCalendar, RemoteEvent, Repeat, SeriesRule};
@@ -8,7 +8,7 @@ use crate::{Error, Result, secrets::Secrets};
 
 #[derive(Clone)]
 pub struct AgendaStore {
-    pool: SqlitePool,
+    pub(super) pool: SqlitePool,
     secrets: Secrets,
 }
 
@@ -65,9 +65,91 @@ pub(crate) struct CalDavLogin {
 const CALENDAR_COLUMNS: &str = "id, source, account_id, caldav_id, remote_id, name, color, read_only, enabled, \
                                 is_default, sync_from, sync_to, synced_at, error";
 
+/// Settings › Calendars: what new events start with, and your time zone.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AgendaSettings {
+    /// Minutes before; `None`: no reminder.
+    pub default_reminder: Option<i64>,
+    pub default_all_day_reminder: Option<i64>,
+    /// What the browser last reported (`Europe/Paris`).
+    pub time_zone: Option<String>,
+}
+
+impl AgendaSettings {
+    /// The reminder a new event gets.
+    pub fn default_for(&self, all_day: bool) -> Option<i64> {
+        if all_day { self.default_all_day_reminder } else { self.default_reminder }
+    }
+}
+
+/// A partial update. The reminders use `Option<Option<i64>>`: missing (keep
+/// it), `null` (no reminder) or a number — three cases a plain `Option`
+/// can't tell apart.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AgendaSettingsUpdate {
+    #[serde(default, deserialize_with = "some")]
+    pub default_reminder: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "some")]
+    pub default_all_day_reminder: Option<Option<i64>>,
+}
+
+/// A field that is present (even `null`) becomes `Some(…)`; a missing one
+/// stays `None` thanks to `#[serde(default)]`.
+fn some<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<Option<i64>>, D::Error> {
+    Option::<i64>::deserialize(d).map(Some)
+}
+
 impl AgendaStore {
     pub(crate) fn new(pool: SqlitePool, secrets: Secrets) -> Self {
         Self { pool, secrets }
+    }
+
+    // ---- Settings -----------------------------------------------------------------
+
+    pub async fn settings(&self) -> Result<AgendaSettings> {
+        let r =
+            sqlx::query("SELECT default_reminder, default_all_day_reminder, time_zone FROM agenda_settings")
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(AgendaSettings {
+            default_reminder: r.get("default_reminder"),
+            default_all_day_reminder: r.get("default_all_day_reminder"),
+            time_zone: r.get("time_zone"),
+        })
+    }
+
+    pub async fn update_settings(&self, u: &AgendaSettingsUpdate) -> Result<AgendaSettings> {
+        for minutes in [u.default_reminder, u.default_all_day_reminder].into_iter().flatten().flatten() {
+            if !(0..=super::MAX_REMINDER).contains(&minutes) {
+                return Err(Error::Config("A reminder is between the start and four weeks before.".into()));
+            }
+        }
+        // Each field only when it was sent (`Some`), even to clear it (`Some(None)`).
+        if let Some(minutes) = u.default_reminder {
+            sqlx::query("UPDATE agenda_settings SET default_reminder = ?")
+                .bind(minutes)
+                .execute(&self.pool)
+                .await?;
+        }
+        if let Some(minutes) = u.default_all_day_reminder {
+            sqlx::query("UPDATE agenda_settings SET default_all_day_reminder = ?")
+                .bind(minutes)
+                .execute(&self.pool)
+                .await?;
+        }
+        self.settings().await
+    }
+
+    /// Remembers the browser's time zone (when it's one Havre knows).
+    pub async fn set_time_zone(&self, zone: &str) -> Result<()> {
+        if zone.parse::<chrono_tz::Tz>().is_ok() {
+            sqlx::query("UPDATE agenda_settings SET time_zone = ? WHERE time_zone IS NOT ?")
+                .bind(zone)
+                .bind(zone)
+                .execute(&self.pool)
+                .await?;
+        }
+        Ok(())
     }
 
     // ---- Calendars ----------------------------------------------------------------
@@ -586,15 +668,15 @@ async fn upsert(tx: &mut sqlx::SqliteConnection, calendar: i64, e: &RemoteEvent)
     Ok(sqlx::query_scalar(
         "INSERT INTO events (calendar_id, remote_id, href, etag, raw, title, location, description, start_ts, end_ts,
                              all_day, recurring, read_only, organizer, attendees, join_url, uid, my_response,
-                             series, original_start)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             series, original_start, reminder)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (calendar_id, remote_id) DO UPDATE SET
             href = excluded.href, etag = excluded.etag, raw = excluded.raw, title = excluded.title,
             location = excluded.location, description = excluded.description, start_ts = excluded.start_ts,
             end_ts = excluded.end_ts, all_day = excluded.all_day, recurring = excluded.recurring,
             read_only = excluded.read_only, organizer = excluded.organizer, attendees = excluded.attendees,
             join_url = excluded.join_url, uid = excluded.uid, my_response = excluded.my_response,
-            series = excluded.series, original_start = excluded.original_start
+            series = excluded.series, original_start = excluded.original_start, reminder = excluded.reminder
          RETURNING id",
     )
     .bind(calendar)
@@ -617,6 +699,7 @@ async fn upsert(tx: &mut sqlx::SqliteConnection, calendar: i64, e: &RemoteEvent)
     .bind(&e.my_response)
     .bind(&e.series)
     .bind(e.original_start)
+    .bind(e.reminder)
     .fetch_one(&mut *tx)
     .await?)
 }
@@ -716,6 +799,7 @@ fn event_from_row(r: &SqliteRow) -> EventRow {
             join_url: r.get("join_url"),
             uid: r.get("uid"),
             my_response: r.get("my_response"),
+            reminder: r.get("reminder"),
         },
         remote_id: r.get("remote_id"),
         href: r.get("href"),

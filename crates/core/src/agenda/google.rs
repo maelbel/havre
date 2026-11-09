@@ -86,6 +86,13 @@ pub async fn events(
     to: i64,
     read_only: bool,
 ) -> Result<Vec<RemoteEvent>> {
+    // Events that say "the calendar's usual reminder" (`useDefault`) need it:
+    // it's in your calendar list entry. Not essential, so a failure is ignored.
+    let entry = format!("{}/users/me/calendarList/{}", base(), enc(calendar));
+    let usual = call(http().get(entry).bearer_auth(token))
+        .await
+        .ok()
+        .and_then(|c| popup_minutes(&c["defaultReminders"]));
     let mut out = Vec::new();
     let mut page: Option<String> = None;
     for _ in 0..50 {
@@ -104,7 +111,7 @@ pub async fn events(
             if e["status"].as_str() == Some("cancelled") {
                 continue;
             }
-            if let Some(event) = to_remote(e, read_only) {
+            if let Some(event) = to_remote(e, read_only, usual) {
                 out.push(event);
             }
         }
@@ -116,7 +123,28 @@ pub async fn events(
     Ok(out)
 }
 
-fn to_remote(e: &Value, calendar_read_only: bool) -> Option<RemoteEvent> {
+/// The reminder that shows on screen (`popup`; not `email`): the one
+/// closest to the start when there are several.
+fn popup_minutes(list: &Value) -> Option<i64> {
+    list.as_array()?
+        .iter()
+        .filter(|r| r["method"].as_str() == Some("popup"))
+        .filter_map(|r| r["minutes"].as_i64())
+        .min()
+}
+
+/// An event's reminder: its own (`overrides`), or the calendar's usual one
+/// (`useDefault`, which is also what a missing `reminders` means).
+fn reminder(e: &Value, usual: Option<i64>) -> Option<i64> {
+    let reminders = &e["reminders"];
+    if reminders.is_null() || reminders["useDefault"].as_bool() == Some(true) {
+        return usual;
+    }
+    popup_minutes(&reminders["overrides"])
+}
+
+/// `usual`: the calendar's default reminder, for events that use it.
+fn to_remote(e: &Value, calendar_read_only: bool, usual: Option<i64>) -> Option<RemoteEvent> {
     let (start, all_day) = time(&e["start"])?;
     let (end, _) = time(&e["end"]).unwrap_or((start, all_day));
     let attendees = e["attendees"]
@@ -164,6 +192,7 @@ fn to_remote(e: &Value, calendar_read_only: bool) -> Option<RemoteEvent> {
         attendees,
         join_url: e["hangoutLink"].as_str().map(str::to_owned),
         uid: e["iCalUID"].as_str().map(str::to_owned),
+        reminder: reminder(e, usual),
         my_response: if mine {
             None
         } else {
@@ -246,6 +275,10 @@ fn body(input: &EventInput, tz: Option<Tz>) -> Value {
     if !input.attendees.is_empty() {
         body["attendees"] = input.attendees.iter().map(|email| json!({ "email": email.trim() })).collect();
     }
+    // Always the event's own reminder (none is an empty list), never the calendar's usual one.
+    let overrides: Vec<Value> =
+        input.reminder.map(|m| json!({ "method": "popup", "minutes": m })).into_iter().collect();
+    body["reminders"] = json!({ "useDefault": false, "overrides": overrides });
     body
 }
 
@@ -259,14 +292,16 @@ pub async fn create(token: &str, calendar: &str, input: &EventInput, tz: Option<
         event["recurrence"] = json!([format!("RRULE:{rule}")]);
     }
     let created = call(http().post(url).bearer_auth(token).json(&event)).await?;
-    to_remote(&created, false).ok_or_else(|| Error::Config("Google returned an unreadable event".into()))
+    to_remote(&created, false, None)
+        .ok_or_else(|| Error::Config("Google returned an unreadable event".into()))
 }
 
 /// Changes one event, or one occurrence of a series.
 pub async fn update(token: &str, calendar: &str, id: &str, input: &EventInput) -> Result<RemoteEvent> {
     let url = format!("{}/calendars/{}/events/{}?sendUpdates=all", base(), enc(calendar), enc(id));
     let updated = call(http().patch(url).bearer_auth(token).json(&body(input, None))).await?;
-    to_remote(&updated, false).ok_or_else(|| Error::Config("Google returned an unreadable event".into()))
+    to_remote(&updated, false, None)
+        .ok_or_else(|| Error::Config("Google returned an unreadable event".into()))
 }
 
 /// The series (the event its occurrences name in `recurringEventId`).
@@ -365,5 +400,64 @@ pub async fn delete(token: &str, calendar: &str, id: &str) -> Result<()> {
     match call(http().delete(url).bearer_auth(token)).await {
         Ok(_) | Err(Error::NotFound(_)) => Ok(()),
         Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(reminders: Value) -> Value {
+        let mut e = json!({ "id": "g1", "summary": "Kick-off",
+                            "start": { "dateTime": "2026-10-05T10:00:00+02:00" },
+                            "end": { "dateTime": "2026-10-05T11:00:00+02:00" } });
+        if !reminders.is_null() {
+            e["reminders"] = reminders;
+        }
+        e
+    }
+
+    #[test]
+    fn reads_the_events_or_the_calendars_reminder() {
+        let usual = Some(10);
+        let own = event(json!({ "useDefault": false, "overrides": [
+            { "method": "email", "minutes": 5 }, { "method": "popup", "minutes": 60 }, { "method": "popup", "minutes": 30 }
+        ] }));
+        assert_eq!(
+            to_remote(&own, false, usual).unwrap().reminder,
+            Some(30),
+            "the closest popup, not the email"
+        );
+        let default = event(json!({ "useDefault": true }));
+        assert_eq!(to_remote(&default, false, usual).unwrap().reminder, Some(10));
+        assert_eq!(
+            to_remote(&event(Value::Null), false, usual).unwrap().reminder,
+            Some(10),
+            "missing = default"
+        );
+        let none = event(json!({ "useDefault": false, "overrides": [] }));
+        assert_eq!(to_remote(&none, false, usual).unwrap().reminder, None);
+    }
+
+    #[test]
+    fn writes_its_own_reminder() {
+        let input = |reminder| EventInput {
+            calendar: 1,
+            title: "Kick-off".into(),
+            location: String::new(),
+            description: String::new(),
+            start: 1_791_158_400,
+            end: 1_791_162_000,
+            all_day: false,
+            attendees: vec![],
+            repeat: None,
+            time_zone: None,
+            reminder,
+        };
+        assert_eq!(
+            body(&input(Some(15)), None)["reminders"],
+            json!({ "useDefault": false, "overrides": [{ "method": "popup", "minutes": 15 }] })
+        );
+        assert_eq!(body(&input(None), None)["reminders"], json!({ "useDefault": false, "overrides": [] }));
     }
 }

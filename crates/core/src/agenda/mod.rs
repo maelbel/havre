@@ -19,6 +19,7 @@ mod google;
 mod graph;
 pub mod ics;
 mod manager;
+pub mod reminders;
 pub mod repeat;
 pub(crate) mod store;
 
@@ -26,7 +27,7 @@ pub use manager::Agenda;
 pub(crate) use manager::random_id;
 pub use repeat::Repeat;
 use serde::{Deserialize, Serialize};
-pub use store::{AgendaStore, CalDavAccount};
+pub use store::{AgendaSettings, AgendaSettingsUpdate, AgendaStore, CalDavAccount};
 
 /// A calendar, as the UI sees it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -93,6 +94,9 @@ pub struct Event {
     /// Your answer when you're a guest (`accepted`, `tentative`, `declined`,
     /// `needs_action`); `None` for your own events.
     pub my_response: Option<String>,
+    /// Minutes before the start to remind you (all-day events: before
+    /// midnight, your time); `None`: no reminder.
+    pub reminder: Option<i64>,
 }
 
 /// What the event editor sends.
@@ -118,6 +122,9 @@ pub struct EventInput {
     /// clock time in it.
     #[serde(default)]
     pub time_zone: Option<String>,
+    /// Minutes before the start; `None` (or missing): no reminder.
+    #[serde(default)]
+    pub reminder: Option<i64>,
 }
 
 /// Which occurrences of a repeating event a change or a deletion is for.
@@ -168,6 +175,8 @@ pub struct RemoteEvent {
     pub join_url: Option<String>,
     pub uid: Option<String>,
     pub my_response: Option<String>,
+    /// Minutes before the start; `None`: no reminder.
+    pub reminder: Option<i64>,
     /// Repeating: the series it belongs to…
     pub series: Option<String>,
     /// …and which of its occurrences it is.
@@ -197,6 +206,9 @@ pub fn day_start(ts: i64) -> i64 {
     ts - ts.rem_euclid(86_400)
 }
 
+/// The longest reminder, in minutes: four weeks (Google's limit too).
+pub const MAX_REMINDER: i64 = 4 * 7 * 24 * 60;
+
 /// The palette used when a provider gives no color.
 pub(crate) const COLORS: [&str; 6] = ["#86a9d1", "#a9c79c", "#e3bc6a", "#c99ab0", "#9fb8b0", "#d39a7a"];
 
@@ -209,6 +221,9 @@ pub(crate) fn validate(input: &EventInput) -> crate::Result<()> {
     }
     if input.all_day && (input.start % 86_400 != 0 || input.end % 86_400 != 0) {
         return Err(crate::Error::Config("All-day events start and end at midnight (UTC).".into()));
+    }
+    if input.reminder.is_some_and(|m| !(0..=MAX_REMINDER).contains(&m)) {
+        return Err(crate::Error::Config("A reminder is between the start and four weeks before.".into()));
     }
     if let Some(repeat) = &input.repeat {
         let tz = repeat::zone(input.time_zone.as_deref())?;

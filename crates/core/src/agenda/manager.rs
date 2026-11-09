@@ -119,7 +119,41 @@ impl Agenda {
                 }
             }
         });
+        // Event reminders, every 30 s. A `Weak` reference: the loop ends when
+        // Havre drops the Agenda.
+        let ringer = Arc::downgrade(&agenda);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(super::reminders::EVERY).await;
+                let Some(agenda) = ringer.upgrade() else { break };
+                if let Err(err) = agenda.ring(now()).await {
+                    tracing::warn!("event reminders: {err}");
+                }
+            }
+        });
         agenda
+    }
+
+    /// Announces the event reminders whose time has come (once each).
+    pub(crate) async fn ring(&self, now: i64) -> Result<()> {
+        let settings = self.store.settings().await?;
+        // Your time zone, as your browser last said; UTC until it has.
+        let tz: Tz = settings.time_zone.as_deref().and_then(|z| z.parse().ok()).unwrap_or(Tz::UTC);
+        for (event, ring) in self.store.due_reminders(now, tz).await? {
+            self.store.mark_rung(event.id, now).await?;
+            if ring {
+                let reminder = SyncEvent::EventReminder {
+                    event: event.id,
+                    title: event.title,
+                    start: event.start,
+                    all_day: event.all_day,
+                    location: event.location,
+                    join_url: event.join_url,
+                };
+                let _ = self.events.send(AccountEvent { account: 0, event: reminder });
+            }
+        }
+        self.store.forget_old_marks(now).await
     }
 
     pub fn store(&self) -> &AgendaStore {
@@ -809,6 +843,11 @@ impl Agenda {
                 attendees: Vec::new(),
                 repeat: None,
                 time_zone: None,
+                // The invitation's own alarm, or your default.
+                reminder: match event.reminder {
+                    Some(minutes) => Some(minutes),
+                    None => self.store.settings().await?.default_for(event.all_day),
+                },
             };
             let created = self.create(&input).await?;
             // Remember which meeting it is a copy of (the invitation card
@@ -916,6 +955,7 @@ fn local_event(remote_id: &str, input: &EventInput) -> RemoteEvent {
                 status: "needs_action".into(),
             })
             .collect(),
+        reminder: input.reminder,
         ..RemoteEvent::default()
     }
 }
@@ -950,7 +990,93 @@ mod tests {
             attendees: vec![],
             repeat,
             time_zone: Some("Europe/Paris".into()),
+            reminder: None,
         }
+    }
+
+    /// The event reminders announced since the last call.
+    fn rung(rx: &mut broadcast::Receiver<AccountEvent>) -> Vec<String> {
+        let mut titles = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            if let SyncEvent::EventReminder { title, .. } = e.event {
+                titles.push(title);
+            }
+        }
+        titles
+    }
+
+    #[tokio::test]
+    async fn event_reminders_ring_once() {
+        let (agenda, local) = agenda().await;
+        let mut rx = agenda.events.subscribe();
+        let now = 1_791_200_000;
+        let with = |title: &str, start: i64, reminder: Option<i64>| EventInput {
+            reminder,
+            time_zone: None,
+            ..input(local, title, start, None)
+        };
+        let kickoff = agenda.create(&with("Kick-off", now + 600, Some(10))).await.unwrap();
+        agenda.create(&with("Later", now + 3600, Some(10))).await.unwrap();
+        agenda.create(&with("No reminder", now + 300, None)).await.unwrap();
+        agenda.create(&with("Long gone", now - 7200, Some(10))).await.unwrap();
+        let declined = agenda.create(&with("Declined", now + 300, Some(15))).await.unwrap();
+        agenda.store.set_my_response(declined.id, "declined").await.unwrap();
+
+        agenda.ring(now).await.unwrap();
+        assert_eq!(
+            rung(&mut rx),
+            ["Kick-off"],
+            "due now; not later, not without one, not too late, not declined"
+        );
+        agenda.ring(now + 30).await.unwrap();
+        assert!(rung(&mut rx).is_empty(), "once");
+
+        // A sync rewrites the occurrence's row: still rung.
+        let row = agenda.store.event_row(kickoff.id).await.unwrap();
+        agenda.store.delete_event(kickoff.id).await.unwrap();
+        let again = RemoteEvent {
+            remote_id: row.remote_id.clone(),
+            title: "Kick-off".into(),
+            start: now + 600,
+            end: now + 2400,
+            reminder: Some(10),
+            ..RemoteEvent::default()
+        };
+        agenda.store.save_event(local, &again).await.unwrap();
+        agenda.ring(now + 60).await.unwrap();
+        assert!(rung(&mut rx).is_empty(), "the same occurrence, a new row");
+
+        // Moved to an hour later: its new time rings.
+        agenda
+            .store
+            .save_event(local, &RemoteEvent { start: now + 4200, end: now + 6000, ..again })
+            .await
+            .unwrap();
+        agenda.ring(now + 3600).await.unwrap();
+        let mut both = rung(&mut rx);
+        both.sort();
+        assert_eq!(both, ["Kick-off", "Later"]);
+    }
+
+    #[tokio::test]
+    async fn all_day_reminders_use_your_time_zone() {
+        let (agenda, local) = agenda().await;
+        let mut rx = agenda.events.subscribe();
+        agenda.store.set_time_zone("Europe/Paris").await.unwrap();
+        let day = 1_791_244_800; // Tue 6 Oct 2026
+        let holiday = EventInput {
+            all_day: true,
+            start: day,
+            end: day + DAY,
+            reminder: Some(15 * 60),
+            ..input(local, "Holiday", day, None)
+        };
+        agenda.create(&holiday).await.unwrap();
+        // The day before at 9:00 Paris time = 07:00 UTC.
+        agenda.ring(day - DAY + 7 * 3600 - 60).await.unwrap();
+        assert!(rung(&mut rx).is_empty(), "a minute early");
+        agenda.ring(day - DAY + 7 * 3600).await.unwrap();
+        assert_eq!(rung(&mut rx), ["Holiday"]);
     }
 
     /// The series' occurrences in the next two months: (title, start).

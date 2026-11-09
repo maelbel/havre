@@ -79,6 +79,15 @@ pub enum SyncEvent {
     Tasks,
     /// A task's reminder time has come.
     Reminder { task: i64, title: String },
+    /// An event's reminder time has come (`event_reminder` in JSON).
+    EventReminder {
+        event: i64,
+        title: String,
+        start: i64,
+        all_day: bool,
+        location: String,
+        join_url: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
