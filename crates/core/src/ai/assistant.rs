@@ -11,12 +11,23 @@
 //! The loop: send the conversation + tool list → the model either answers
 //! or asks for tool calls → we run them and send the results back → … (at
 //! most [`MAX_ROUNDS`] times).
+//!
+//! **Live answers:** with a [`Live`], the answer is sent while it's written
+//! ([`AskEvent`]): pieces of text, each step as it starts, and `Restart` when
+//! the text so far was the model thinking aloud before using a tool.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::sync::mpsc;
 
 use super::{
     Ai, LocalTime, UNTRUSTED, claude_code, full_text,
@@ -92,6 +103,18 @@ pub enum Proposal {
         people: Vec<PersonLink>,
         event: Option<EventLink>,
     },
+    /// Add text at the end of an existing note (found with search_notes).
+    AppendNote {
+        note: i64,
+        title: String,
+        /// Markdown, added after a blank line.
+        text: String,
+    },
+    /// Tick an existing task (found with list_tasks).
+    CompleteTask {
+        task: i64,
+        title: String,
+    },
 }
 
 /// A note's to-do line a task would be made from.
@@ -123,6 +146,82 @@ pub struct Answer {
     pub tasks: HashMap<String, Task>,
 }
 
+/// What the assistant sends while it works (see [`Live`]). Serialized as
+/// `{"type": "text", "text": "…"}`, `{"type": "step", …}`, `{"type": "restart"}`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AskEvent {
+    /// A piece of the answer, to add to what's shown.
+    Text { text: String },
+    /// A tool started ("Searched mail for “budget”").
+    Step { tool: String, label: String },
+    /// Forget the text shown so far: the model wrote it before using a tool,
+    /// and the real answer comes after.
+    Restart,
+}
+
+/// Where a live answer goes. Cloned into each place that sends (the text
+/// forwarder, the tools; with Claude Code, the MCP server's handlers).
+///
+/// The channel is *unbounded* (it never makes a sender wait): steps are sent
+/// from code that isn't `async`, and the events are small.
+#[derive(Debug, Clone)]
+pub struct Live {
+    tx: mpsc::UnboundedSender<AskEvent>,
+    /// Text was sent since the last step: the next step must say `Restart`
+    /// first. `Arc<AtomicBool>`: a flag several tasks share without a lock.
+    wrote: Arc<AtomicBool>,
+}
+
+impl Live {
+    pub fn new(tx: mpsc::UnboundedSender<AskEvent>) -> Self {
+        Self { tx, wrote: Arc::new(AtomicBool::new(false)) }
+    }
+
+    /// The reader left (Stop, or the page was closed).
+    pub fn stopped(&self) -> bool {
+        self.tx.is_closed()
+    }
+
+    /// Sends an event as it is, for tests of code that reads live answers.
+    #[doc(hidden)]
+    pub fn send_for_test(&self, event: AskEvent) {
+        let _ = self.tx.send(event);
+    }
+
+    fn text(&self, text: String) -> bool {
+        self.wrote.store(true, Ordering::Relaxed);
+        self.tx.send(AskEvent::Text { text }).is_ok()
+    }
+
+    fn restart(&self) {
+        // `swap` sets the flag back to false and tells what it was, in one step.
+        if self.wrote.swap(false, Ordering::Relaxed) {
+            let _ = self.tx.send(AskEvent::Restart);
+        }
+    }
+
+    fn step(&self, step: &Step) {
+        self.restart();
+        let _ = self.tx.send(AskEvent::Step { tool: step.tool.clone(), label: step.label.clone() });
+    }
+
+    /// Sends what the model writes as it's written: returns a channel for
+    /// [`Client::stream_reply`], and a future that forwards from it (run both
+    /// together; it ends when the channel's sender is dropped).
+    fn forward(&self) -> (mpsc::Sender<String>, impl std::future::Future<Output = ()> + '_) {
+        let (tx, mut rx) = mpsc::channel::<String>(32);
+        let forward = async move {
+            while let Some(piece) = rx.recv().await {
+                if !self.text(piece) {
+                    break; // nobody reads: dropping `rx` makes the model stop too
+                }
+            }
+        };
+        (tx, forward)
+    }
+}
+
 /// Who is using the tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolSet {
@@ -152,6 +251,8 @@ pub fn tools(set: ToolSet) -> Vec<Tool> {
             "propose_email",
             "propose_task",
             "propose_note",
+            "propose_note_append",
+            "propose_task_done",
         ],
         ToolSet::External => &[
             "search_mail",
@@ -177,8 +278,8 @@ pub fn allowed(name: &str, s: &super::settings::AiSettings) -> bool {
         "search_mail" | "read_email" | "unread_mail" | "create_draft" | "propose_email" => s.read_mail,
         "list_events" | "find_free_time" | "propose_event" | "propose_move" => s.read_agenda,
         "search_people" => s.read_people,
-        "search_notes" | "read_note" | "propose_note" => s.notes_app && s.read_notes,
-        "list_tasks" | "propose_task" => s.tasks_app && s.read_tasks,
+        "search_notes" | "read_note" | "propose_note" | "propose_note_append" => s.notes_app && s.read_notes,
+        "list_tasks" | "propose_task" | "propose_task_done" => s.tasks_app && s.read_tasks,
         "today" => s.read_mail || s.read_agenda,
         _ => true,
     }
@@ -188,7 +289,14 @@ pub fn allowed(name: &str, s: &super::settings::AiSettings) -> bool {
 pub fn is_read_only(name: &str) -> bool {
     !matches!(
         name,
-        "propose_event" | "propose_move" | "propose_email" | "propose_task" | "propose_note" | "create_draft"
+        "propose_event"
+            | "propose_move"
+            | "propose_email"
+            | "propose_task"
+            | "propose_note"
+            | "propose_note_append"
+            | "propose_task_done"
+            | "create_draft"
     )
 }
 
@@ -329,6 +437,24 @@ fn all_tools() -> Vec<Tool> {
             }, "required": ["title", "body"] }),
         },
         Tool {
+            name: "propose_note_append",
+            description: "Propose adding text at the end of an existing note (an id like n1 from search_notes). \
+                          The user sees the text and confirms; it is NOT added by this call. Never repeat what \
+                          the note already says.",
+            schema: json!({ "type": "object", "properties": {
+                "note": { "type": "string", "description": "A note id like n1" },
+                "text": { "type": "string", "description": "Markdown to add at the end" }
+            }, "required": ["note", "text"] }),
+        },
+        Tool {
+            name: "propose_task_done",
+            description: "Propose marking a task as done (an id like t4 from list_tasks). The user confirms; \
+                          it is NOT ticked by this call.",
+            schema: json!({ "type": "object", "properties": {
+                "task": { "type": "string", "description": "A task id like t4" }
+            }, "required": ["task"] }),
+        },
+        Tool {
             name: "propose_email",
             description: "Propose an email. The user sees it in the compose window and sends it themselves.",
             schema: json!({ "type": "object", "properties": {
@@ -349,6 +475,8 @@ pub struct ToolState {
     pub answer: Answer,
     /// m3 → where the message is.
     message_ids: HashMap<String, (i64, String, u32)>,
+    /// Set for a live answer: steps are sent as they start.
+    pub live: Option<Live>,
 }
 
 impl ToolState {
@@ -366,6 +494,7 @@ impl ToolState {
                 tasks: HashMap::new(),
             },
             message_ids: HashMap::new(),
+            live: None,
         }
     }
 }
@@ -379,6 +508,12 @@ struct Session<'a> {
 impl Ai {
     /// Answers the last user turn of `turns`.
     pub async fn ask(&self, turns: &[Turn], local: LocalTime) -> Result<Answer> {
+        self.ask_live(turns, local, None).await
+    }
+
+    /// [`Ai::ask`], sending the answer to `live` while it's written. Stops
+    /// (with an error) when nobody reads any more.
+    pub async fn ask_live(&self, turns: &[Turn], local: LocalTime, live: Option<Live>) -> Result<Answer> {
         let client = self.client().await?;
         let accounts = self.db().accounts().await?;
         let me = accounts
@@ -403,12 +538,12 @@ impl Ai {
         let mut cite = vec!["[m3]", "[e2]"];
         if notes {
             what.push("notes");
-            propose.push("propose_note");
+            propose.push("propose_note / propose_note_append");
             cite.push("[n1]");
         }
         if tasks {
             what.push("tasks");
-            propose.push("propose_task");
+            propose.push("propose_task / propose_task_done");
             cite.push("[t4]");
         }
         let system = format!(
@@ -439,9 +574,10 @@ impl Ai {
         }
         // Claude Code runs its own tool loop, with Havre's tools over MCP.
         if client.is_claude_code() {
-            return self.ask_claude_code(&client, &system, turns, local).await;
+            return self.ask_claude_code(&client, &system, turns, local, live).await;
         }
         let mut state = ToolState::new(local, "assistant");
+        state.live = live.clone();
         let mut session = Session { ai: self, st: &mut state };
         for _ in 0..MAX_ROUNDS {
             let request = Request {
@@ -450,7 +586,23 @@ impl Ai {
                 tools: tools(ToolSet::Assistant).into_iter().filter(|t| allowed(t.name, &settings)).collect(),
                 max_tokens: 1500,
             };
-            let reply = client.complete(&request).await?;
+            let reply = match &live {
+                None => client.complete(&request).await?,
+                Some(live) => {
+                    let (tx, forward) = live.forward();
+                    // `async move` owns `tx`: it's dropped when the model is done,
+                    // which ends `forward`. `join!` runs both at the same time.
+                    // It would also take `client`, needed by the next round: give it a
+                    // reference instead (a `&` is copied into the block, not moved).
+                    let client = &client;
+                    let ask = async move { client.stream_reply(&request, &tx).await };
+                    let (reply, ()) = tokio::join!(ask, forward);
+                    if live.stopped() {
+                        return Err(Error::Ai("Stopped.".into()));
+                    }
+                    reply?
+                }
+            };
             if reply.calls.is_empty() {
                 session.st.answer.text = reply.text;
                 break;
@@ -463,6 +615,12 @@ impl Ai {
                     Err(err) => format!("Error: {err}"),
                 };
                 results.push((call.id.clone(), result));
+            }
+            if let Some(live) = &live {
+                if live.stopped() {
+                    return Err(Error::Ai("Stopped.".into()));
+                }
+                live.restart();
             }
             messages.push(Message::Assistant { text: reply.text, calls: reply.calls });
             messages.push(Message::ToolResults(results));
@@ -484,12 +642,15 @@ impl Ai {
         system: &str,
         turns: &[Turn],
         local: LocalTime,
+        live: Option<Live>,
     ) -> Result<Answer> {
         let claude = client.claude_code().expect("checked by the caller");
         let url = self
             .self_url()
             .ok_or_else(|| Error::Ai("Havre doesn't know its own address for Claude Code.".into()))?;
-        let state = std::sync::Arc::new(tokio::sync::Mutex::new(ToolState::new(local, "assistant")));
+        let mut tools = ToolState::new(local, "assistant");
+        tools.live = live.clone();
+        let state = std::sync::Arc::new(tokio::sync::Mutex::new(tools));
         let secret = self.mcp.start_run(std::sync::Arc::clone(&state));
         let config = json!({ "mcpServers": { "havre": {
             "type": "http",
@@ -518,8 +679,18 @@ impl Ai {
             allowed_tools: Some("mcp__havre"),
             max_turns: Some(10),
         };
-        let result = claude.run(&system, &prompt, options, None).await;
+        let result = match &live {
+            None => claude.run(&system, &prompt, options, None).await,
+            Some(live) => {
+                let (tx, forward) = live.forward();
+                let run = async move { claude.run(&system, &prompt, options, Some(&tx)).await };
+                tokio::join!(run, forward).0
+            }
+        };
         self.mcp.end_run(&secret);
+        if live.as_ref().is_some_and(Live::stopped) {
+            return Err(Error::Ai("Stopped.".into()));
+        }
         let text = result?;
         let mut answer = state.lock().await.answer.clone();
         answer.text = text.trim().to_owned();
@@ -728,6 +899,39 @@ impl Session<'_> {
                 self.st.answer.proposals.push(Proposal::Note { title, body: text("body"), people, event });
                 Ok("Shown to the user with a Confirm button. It is not written yet.".into())
             }
+            "propose_note_append" => {
+                let id = text("note");
+                let note = self.note_id(&id)?;
+                let added = text("text");
+                if added.is_empty() {
+                    return Err(Error::Config("say what to add to the note".into()));
+                }
+                let title = self.ai.db().notes().view(note).await?.note.title;
+                self.step("propose_note_append", format!("Prepared an addition to “{title}”"));
+                self.st.answer.proposals.push(Proposal::AppendNote { note, title, text: added });
+                Ok("Shown to the user with a Confirm button. It is not added yet.".into())
+            }
+            "propose_task_done" => {
+                let id = text("task");
+                let task = self
+                    .st
+                    .answer
+                    .tasks
+                    .get(&id)
+                    .cloned()
+                    .ok_or_else(|| Error::NotFound(format!("task {id} (use list_tasks first)")))?;
+                if task.done_at.is_some() {
+                    return Ok(format!("{id} is already done."));
+                }
+                if task.read_only {
+                    return Err(Error::Config(format!(
+                        "{id} is in a list shared with the user: it can't be ticked"
+                    )));
+                }
+                self.step("propose_task_done", format!("Prepared to tick “{}”", task.title));
+                self.st.answer.proposals.push(Proposal::CompleteTask { task: task.id, title: task.title });
+                Ok("Shown to the user with a Confirm button. It is not ticked yet.".into())
+            }
             "propose_email" => {
                 let subject = text("subject");
                 self.step("propose_email", format!("Prepared an email “{subject}”"));
@@ -743,7 +947,11 @@ impl Session<'_> {
     }
 
     fn step(&mut self, tool: &str, label: String) {
-        self.st.answer.steps.push(Step { tool: tool.into(), label: label.clone() });
+        let step = Step { tool: tool.into(), label: label.clone() };
+        if let Some(live) = &self.st.live {
+            live.step(&step);
+        }
+        self.st.answer.steps.push(step);
         // Every read and proposal goes to the activity log (spawned: the
         // log must never slow an answer down).
         let pool = self.ai.db().pool();
@@ -1297,6 +1505,183 @@ mod tests {
             .execute(&db.pool())
             .await
             .unwrap();
+    }
+
+    /// A pretend AI server: answers each request with the next of `replies`
+    /// (Server-Sent Events bodies), written a few bytes at a time like a slow
+    /// model. Plain tokio, no extra dependency. Returns its `…/v1` address.
+    async fn fake_model(replies: Vec<&'static str>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            for body in replies {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                // Read the request: the headers, then as many bytes as Content-Length says.
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = socket.read(&mut buf).await.unwrap();
+                    request.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&request).to_lowercase();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let length = text
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+                socket.write_all(head.as_bytes()).await.unwrap();
+                for piece in body.as_bytes().chunks(9) {
+                    socket.write_all(piece).await.unwrap();
+                    socket.flush().await.unwrap();
+                }
+            }
+        });
+        url
+    }
+
+    async fn use_model(ai: &Ai, db: &Database, url: String) {
+        dock(db, "ai", true).await;
+        ai.update_settings(&super::super::settings::AiSettingsUpdate {
+            provider: Some(super::super::settings::ProviderKind::OpenAi),
+            url: Some(url),
+            model: Some("fake".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn streams_the_answer_with_its_steps() {
+        let db = Database::in_memory().await.unwrap();
+        let ai = ai(&db).await;
+        // Round 1: some thinking aloud, then a tool call. Round 2: the answer.
+        let url = fake_model(vec![
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Let me check.\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",",
+                "\"function\":{\"name\":\"search_people\",\"arguments\":\"{\\\"query\\\":\\\"Zoé\\\"}\"}}]}}]}\n\n",
+                "data: [DONE]\n\n",
+            ),
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Nobody \"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"called Zoé.\"}}]}\n\n",
+                "data: [DONE]\n\n",
+            ),
+        ])
+        .await;
+        use_model(&ai, &db, url).await;
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let turns = [Turn { role: "user".into(), text: "Who is Zoé?".into() }];
+        let answer = ai.ask_live(&turns, LocalTime::server(), Some(Live::new(tx))).await.unwrap();
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        let text = |t: &str| AskEvent::Text { text: t.into() };
+        assert_eq!(
+            events,
+            [
+                text("Let me check."),
+                AskEvent::Restart,
+                AskEvent::Step {
+                    tool: "search_people".into(), label: "Looked up “Zoé” in People".into()
+                },
+                text("Nobody "),
+                text("called Zoé."),
+            ]
+        );
+        // The same answer as without streaming.
+        assert_eq!(answer.text, "Nobody called Zoé.");
+        assert_eq!(answer.steps.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn stops_when_nobody_reads() {
+        let db = Database::in_memory().await.unwrap();
+        let ai = ai(&db).await;
+        let url = fake_model(vec!["data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"]).await;
+        use_model(&ai, &db, url).await;
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx); // the page was closed before the first word
+        let turns = [Turn { role: "user".into(), text: "Hi".into() }];
+        let err = ai.ask_live(&turns, LocalTime::server(), Some(Live::new(tx))).await.unwrap_err();
+        assert_eq!(err.to_string(), Error::Ai("Stopped.".into()).to_string());
+    }
+
+    #[tokio::test]
+    async fn proposes_to_add_to_a_note_and_to_tick_a_task() {
+        let db = Database::in_memory().await.unwrap();
+        dock(&db, "notes", true).await;
+        dock(&db, "tasks", true).await;
+        let ai = ai(&db).await;
+        let note = db
+            .notes()
+            .create(&NoteInput {
+                title: "Lyon kick-off".into(),
+                body: "Three sites.".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO tasks (list_id, remote_id, title, updated_at)
+             VALUES ((SELECT id FROM task_lists LIMIT 1), 'r1', 'Book the room', 0)",
+        )
+        .execute(&db.pool())
+        .await
+        .unwrap();
+        let mut st = ToolState::new(LocalTime::server(), "test");
+        let mut run =
+            async |name: &str, input| ai.run_tool(&mut st, ToolSet::Assistant, &call(name, input)).await;
+
+        // Only notes and tasks the assistant found in this conversation.
+        assert!(run("propose_note_append", json!({ "note": "n1", "text": "- Badges" })).await.is_err());
+        assert!(run("propose_task_done", json!({ "task": "t1" })).await.is_err());
+        run("search_notes", json!({ "query": "Lyon" })).await.unwrap();
+        run("list_tasks", json!({})).await.unwrap();
+        assert!(
+            run("propose_note_append", json!({ "note": "n1", "text": "  " })).await.is_err(),
+            "nothing to add"
+        );
+        run("propose_note_append", json!({ "note": "n1", "text": "- Badges for everyone" })).await.unwrap();
+        run("propose_task_done", json!({ "task": "t1" })).await.unwrap();
+
+        let task = st.answer.tasks["t1"].id;
+        assert_eq!(
+            st.answer.proposals,
+            [
+                Proposal::AppendNote {
+                    note: note.note.id,
+                    title: "Lyon kick-off".into(),
+                    text: "- Badges for everyone".into()
+                },
+                Proposal::CompleteTask { task, title: "Book the room".into() },
+            ]
+        );
+        // Nothing changed yet: the user confirms.
+        assert_eq!(db.notes().view(note.note.id).await.unwrap().note.body, "Three sites.");
+        let done: Option<i64> = sqlx::query_scalar("SELECT done_at FROM tasks WHERE id = ?")
+            .bind(task)
+            .fetch_one(&db.pool())
+            .await
+            .unwrap();
+        assert_eq!(done, None);
+        // Without the Tasks app in the dock, the tool isn't there.
+        dock(&db, "tasks", false).await;
+        assert!(
+            ai.run_tool(&mut st, ToolSet::Assistant, &call("propose_task_done", json!({ "task": "t1" })))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

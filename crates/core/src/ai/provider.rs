@@ -10,8 +10,9 @@
 //! each dialect here, so the features never care which one is used.
 //!
 //! Streaming: the server sends the answer in small pieces (Server-Sent
-//! Events). [`Client::stream`] forwards each piece to a channel as it
-//! arrives, so the UI can show the text being written.
+//! Events). [`Client::stream_reply`] forwards each piece of text to a channel
+//! as it arrives, so the UI can show the text being written, and puts the
+//! tool calls together from their pieces (`SseLines`, `StreamedReply`).
 
 use std::time::Duration;
 
@@ -257,46 +258,43 @@ impl Client {
     }
 
     /// The answer piece by piece, sent to `out` as it's written. Returns
-    /// the whole text at the end.
+    /// the whole text at the end (summaries, drafts, the brief: no tools).
     pub async fn stream(&self, request: &Request, out: &mpsc::Sender<String>) -> Result<String> {
+        Ok(self.stream_reply(request, out).await?.text)
+    }
+
+    /// Like [`Client::complete`], but the text is sent to `out` as it's
+    /// written; tool calls, which arrive in pieces too, are put together and
+    /// returned at the end with the whole text.
+    ///
+    /// If `out` is closed (nobody reads any more), it stops asking and
+    /// returns what it has: the caller sees `out.is_closed()`.
+    pub async fn stream_reply(&self, request: &Request, out: &mpsc::Sender<String>) -> Result<Reply> {
         if let Some(claude) = &self.claude {
-            return claude.run(&request.system, &flatten(request), Run::default(), Some(out)).await;
+            let text = claude.run(&request.system, &flatten(request), Run::default(), Some(out)).await?;
+            return Ok(Reply { text: text.trim().to_owned(), calls: Vec::new() });
         }
         let (url, body) = self.chat_body(request, true);
         let mut response = self.send(self.post(url, self.key.as_deref()).json(&body)).await?;
-        let mut full = String::new();
-        let mut pending = Vec::<u8>::new();
-        // SSE: lines of `data: {json}`; a chunk may end mid-line.
+        let mut lines = SseLines::default();
+        let mut reply = StreamedReply::default();
         while let Some(chunk) =
             response.chunk().await.map_err(|e| Error::Ai(format!("{}: {e}", self.name())))?
         {
-            pending.extend_from_slice(&chunk);
-            while let Some(end) = pending.iter().position(|&b| b == b'\n') {
-                let line: Vec<u8> = pending.drain(..=end).collect();
-                let line = String::from_utf8_lossy(&line);
-                let Some(data) = line.trim().strip_prefix("data:") else { continue };
-                let data = data.trim();
-                if data == "[DONE]" {
-                    continue;
-                }
-                let Ok(event) = serde_json::from_str::<Value>(data) else { continue };
-                if let Some(message) = event["error"]["message"].as_str() {
-                    return Err(Error::Ai(format!("{}: {message}", self.name())));
-                }
-                let piece = match self.kind {
-                    ProviderKind::Anthropic => event["delta"]["text"].as_str(),
-                    _ => event["choices"][0]["delta"]["content"].as_str(),
-                };
-                if let Some(piece) = piece.filter(|p| !p.is_empty()) {
-                    full.push_str(piece);
+            for data in lines.push(&chunk) {
+                let Ok(event) = serde_json::from_str::<Value>(&data) else { continue };
+                let piece =
+                    reply.add(self.kind, &event).map_err(|e| Error::Ai(format!("{}: {e}", self.name())))?;
+                // `if let … && …`: only a non-empty piece is sent.
+                if let Some(piece) = piece
+                    && out.send(piece).await.is_err()
+                {
                     // The reader left (closed the page): stop asking.
-                    if out.send(piece.to_owned()).await.is_err() {
-                        return Ok(full);
-                    }
+                    return Ok(reply.finish());
                 }
             }
         }
-        Ok(full)
+        Ok(reply.finish())
     }
 
     fn chat_body(&self, r: &Request, stream: bool) -> (String, Value) {
@@ -480,6 +478,138 @@ pub fn normalize(mut v: Vec<f32>) -> Vec<f32> {
     v
 }
 
+/// Splits a Server-Sent Events body into its `data:` payloads.
+///
+/// The body arrives in chunks of any size: a chunk may end in the middle of a
+/// line (even in the middle of a UTF-8 character), so the bytes after the
+/// last new line wait in `pending` for the next chunk.
+#[derive(Default)]
+struct SseLines {
+    pending: Vec<u8>,
+}
+
+impl SseLines {
+    /// Adds a chunk; returns the complete `data:` payloads it finished.
+    fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.pending.extend_from_slice(chunk);
+        let mut payloads = Vec::new();
+        while let Some(end) = self.pending.iter().position(|&b| b == b'\n') {
+            // `drain` removes the line from the buffer and gives it to us.
+            let line: Vec<u8> = self.pending.drain(..=end).collect();
+            let line = String::from_utf8_lossy(&line);
+            if let Some(data) = line.trim().strip_prefix("data:") {
+                let data = data.trim();
+                if !data.is_empty() && data != "[DONE]" {
+                    payloads.push(data.to_owned());
+                }
+            }
+        }
+        payloads
+    }
+}
+
+/// A tool call being received: its arguments come as pieces of a JSON text.
+#[derive(Default)]
+struct PartialCall {
+    id: String,
+    name: String,
+    arguments: String,
+    /// Ollama sometimes sends the arguments as an object, all at once.
+    object: Option<Value>,
+}
+
+/// A streamed answer being put together, event by event.
+#[derive(Default)]
+struct StreamedReply {
+    text: String,
+    /// By the index the server gives each call (calls can be interleaved).
+    calls: Vec<(u64, PartialCall)>,
+}
+
+impl StreamedReply {
+    fn call(&mut self, index: u64) -> &mut PartialCall {
+        // Find it, or add it: two steps, because the borrow checker won't let
+        // us return a borrow from the search and then push in the same branch.
+        if let Some(pos) = self.calls.iter().position(|(i, _)| *i == index) {
+            return &mut self.calls[pos].1;
+        }
+        self.calls.push((index, PartialCall::default()));
+        &mut self.calls.last_mut().expect("just pushed").1
+    }
+
+    /// Reads one event of either dialect. Returns the piece of text it
+    /// carries (if any), or the server's error message.
+    fn add(&mut self, kind: ProviderKind, event: &Value) -> std::result::Result<Option<String>, String> {
+        if let Some(message) = event["error"]["message"].as_str() {
+            return Err(message.to_owned());
+        }
+        let piece = match kind {
+            ProviderKind::Anthropic => {
+                let index = event["index"].as_u64().unwrap_or_default();
+                match event["type"].as_str() {
+                    Some("content_block_start") if event["content_block"]["type"] == "tool_use" => {
+                        let block = &event["content_block"];
+                        let call = self.call(index);
+                        call.id = block["id"].as_str().unwrap_or_default().to_owned();
+                        call.name = block["name"].as_str().unwrap_or_default().to_owned();
+                        None
+                    }
+                    Some("content_block_delta") => match event["delta"]["type"].as_str() {
+                        Some("input_json_delta") => {
+                            let part = event["delta"]["partial_json"].as_str().unwrap_or_default();
+                            self.call(index).arguments.push_str(part);
+                            None
+                        }
+                        _ => event["delta"]["text"].as_str(),
+                    },
+                    _ => None,
+                }
+            }
+            _ => {
+                let delta = &event["choices"][0]["delta"];
+                for (n, part) in delta["tool_calls"].as_array().into_iter().flatten().enumerate() {
+                    let call = self.call(part["index"].as_u64().unwrap_or(n as u64));
+                    if let Some(id) = part["id"].as_str() {
+                        call.id = id.to_owned();
+                    }
+                    let f = &part["function"];
+                    if let Some(name) = f["name"].as_str() {
+                        call.name.push_str(name);
+                    }
+                    match &f["arguments"] {
+                        Value::String(piece) => call.arguments.push_str(piece),
+                        Value::Null => {}
+                        object => call.object = Some(object.clone()),
+                    }
+                }
+                delta["content"].as_str()
+            }
+        };
+        let piece = piece.filter(|p| !p.is_empty()).map(str::to_owned);
+        if let Some(piece) = &piece {
+            self.text.push_str(piece);
+        }
+        Ok(piece)
+    }
+
+    fn finish(self) -> Reply {
+        let calls = self
+            .calls
+            .into_iter()
+            .filter(|(_, c)| !c.name.is_empty())
+            .enumerate()
+            .map(|(n, (_, c))| ToolCall {
+                id: if c.id.is_empty() { format!("call_{n}") } else { c.id },
+                name: c.name,
+                // Empty arguments (a tool without any) are `{}`; unreadable ones too,
+                // and the tool then says what it's missing.
+                input: c.object.unwrap_or_else(|| serde_json::from_str(&c.arguments).unwrap_or(json!({}))),
+            })
+            .collect();
+        Reply { text: self.text.trim().to_owned(), calls }
+    }
+}
+
 fn openai_reply(body: &Value) -> Reply {
     let message = &body["choices"][0]["message"];
     let calls = message["tool_calls"]
@@ -542,6 +672,105 @@ mod tests {
         let r = anthropic_reply(&anthropic);
         assert_eq!(r.text, "Let me look.");
         assert_eq!(r.calls[0].input["from"], "2026-10-15");
+    }
+
+    /// Feeds a recorded stream in chunks of `size` bytes, like a slow network.
+    fn replay(kind: ProviderKind, body: &str, size: usize) -> (Vec<String>, Reply) {
+        let mut lines = SseLines::default();
+        let mut reply = StreamedReply::default();
+        let mut pieces = Vec::new();
+        for chunk in body.as_bytes().chunks(size) {
+            for data in lines.push(chunk) {
+                let event: Value = serde_json::from_str(&data).unwrap();
+                pieces.extend(reply.add(kind, &event).unwrap());
+            }
+        }
+        (pieces, reply.finish())
+    }
+
+    // What OpenAI (and Ollama, Mistral…) send: a tool call whose name and
+    // arguments are spread over several events, then the end.
+    const OPENAI_TOOL_STREAM: &str = r#"data: {"choices":[{"delta":{"role":"assistant","content":"Let me "}}]}
+
+data: {"choices":[{"delta":{"content":"look."}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"search_mail","arguments":""}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":"}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"budget été\"}"}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_b","function":{"name":"unread_mail","arguments":""}}]}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+"#;
+
+    #[test]
+    fn puts_streamed_openai_tool_calls_together() {
+        // Every chunk size, down to one byte: the result must not depend on where the network cuts.
+        for size in [1, 3, 7, 64, 10_000] {
+            let (pieces, reply) = replay(ProviderKind::OpenAi, OPENAI_TOOL_STREAM, size);
+            assert_eq!(pieces, ["Let me ", "look."], "chunks of {size}");
+            assert_eq!(reply.text, "Let me look.");
+            assert_eq!(reply.calls.len(), 2);
+            assert_eq!(reply.calls[0].id, "call_a");
+            assert_eq!(reply.calls[0].input["query"], "budget été");
+            assert_eq!(reply.calls[1].name, "unread_mail");
+            assert_eq!(reply.calls[1].input, json!({}));
+        }
+    }
+
+    #[test]
+    fn reads_ollama_arguments_sent_as_an_object() {
+        let body = r#"data: {"choices":[{"delta":{"tool_calls":[{"function":{"name":"list_events","arguments":{"from":"2026-11-09"}}}]}}]}
+
+"#;
+        let (_, reply) = replay(ProviderKind::Ollama, body, 5);
+        assert_eq!(reply.calls[0].id, "call_0", "Ollama may leave the id out");
+        assert_eq!(reply.calls[0].input["from"], "2026-11-09");
+    }
+
+    #[test]
+    fn puts_streamed_anthropic_tool_calls_together() {
+        let body = r#"event: message_start
+data: {"type":"message_start","message":{"id":"msg_1"}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Checking your week."}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"list_events","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"from\": \"2026-"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"11-09\"}"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+"#;
+        for size in [1, 13, 4096] {
+            let (pieces, reply) = replay(ProviderKind::Anthropic, body, size);
+            assert_eq!(pieces, ["Checking your week."]);
+            assert_eq!(reply.calls.len(), 1);
+            assert_eq!(reply.calls[0].id, "toolu_1");
+            assert_eq!(reply.calls[0].input["from"], "2026-11-09");
+        }
+    }
+
+    #[test]
+    fn a_streamed_error_is_an_error() {
+        let mut reply = StreamedReply::default();
+        let event = json!({"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}});
+        assert_eq!(reply.add(ProviderKind::Anthropic, &event), Err("Overloaded".to_owned()));
     }
 
     #[test]

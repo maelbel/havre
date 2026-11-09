@@ -452,8 +452,12 @@ What it does:
 
 - **The AI tab**: your conversations on the left (kept, grouped by day),
   one conversation in the middle, and on the right the email the assistant
-  cites when you click it. Each answer shows what it looked up, and the
-  actions it prepared wait for your **Confirm** (they stay marked *Done*).
+  cites when you click it. The answer is written **as the model writes it**,
+  with each step showing as it starts (“Searched mail for “budget”…”), so
+  even a slow local model shows something right away. **Stop** (the button
+  where *Send* was) cancels a question: nothing is kept, and it comes back
+  to the box. The actions it prepared wait for your **Confirm** (they stay
+  marked *Done*).
   **N** starts a new conversation; click a title to rename it. The box
   under the list says what it may read (from Settings › AI).
 - **Summarize** a message: the ✨ button or **S** in Mail.
@@ -472,16 +476,18 @@ What it does:
   searches and reads your mail and calendar, and cites what it used. It
   never creates, moves or sends anything by itself: it shows the **actions**
   it prepared (with a conflict check for times), and nothing runs until you
-  click **Confirm** — or *Edit email* to change the message first. The chat
-  is kept: *Continue in the AI app →* opens it in the AI tab.
+  click **Confirm** — or *Edit email* to change the message first. Answers
+  are written live here too; **Stop**, or closing the palette, cancels. The
+  chat is kept: *Continue in the AI app →* opens it in the AI tab.
 - **Draft a reply** on a summary: the reply window opens with the AI's
   answer already written.
 - **Notes and tasks** (with the Notes and Tasks apps in your dock): “what's
   left before the Lyon kick-off?” finds the meeting's note, reads its open
   to-dos and looks at your tasks; the note and tasks it used show as cards
   you can open. It can prepare **a task** (from a note's to-do it's made the
-  way the note's *Make a task* does: linked, ticked together) and **a new
-  note** — added only when you click **Confirm**. Over MCP, other AI apps can
+  way the note's *Make a task* does: linked, ticked together), **a new
+  note**, **an addition to a note** (the text is shown first, then added at
+  the end) and **ticking a task**, each only when you click **Confirm**. Over MCP, other AI apps can
   search and read notes and tasks, but not change them.
 
 Emails are written by other people: one could contain “ignore your

@@ -6,6 +6,13 @@ All notable changes to Havre are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Live answers** in the AI tab and Ctrl+K: the answer is written as the model writes it, and each step shows as
+  it starts. **Stop** cancels a question (nothing is kept); closing the page or the palette does too, and the
+  model stops working. Works with Ollama, OpenAI-compatible APIs, Anthropic and Claude Code.
+- The assistant can prepare **an addition to a note** and **ticking a task**, shown before you confirm.
+
 ## [0.2.0] - 2026-11-08
 
 Off-site copies of the backups, a tidier Mail, and up-to-date dependencies.

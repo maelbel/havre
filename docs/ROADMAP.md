@@ -283,3 +283,21 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
   checking old copies now and then.
 - *Learned:* authenticated encryption on a stream, deriving keys, AWS Signature V4 (canonical requests,
   HMAC chains), WebDAV verbs (`PROPFIND`, `MKCOL`, `MOVE`), parsing XML answers, a retry queue in SQLite.
+
+## 19 · Live answers ✅
+- ✅ The assistant (AI tab, Ctrl+K) writes its answer as the model writes it, steps shown as they start; text the
+  model wrote before using a tool is replaced by the real answer (`restart`). Citations become links at the end.
+- ✅ Tool calls read from a stream too, in both dialects: OpenAI's `delta.tool_calls` fragments (Ollama's
+  arguments sent as an object), Anthropic's `tool_use` blocks and `input_json_delta`; Claude Code's text as it
+  comes, its steps through the MCP server.
+- ✅ `POST /ai/ask` and `/ai/conversations/ask` answer with NDJSON lines when asked (`Accept:
+  application/x-ndjson`), JSON otherwise. Stop, or a closed page, drops the receiver: the model stops, nothing is
+  saved.
+- ✅ New proposals, confirmed by you: `propose_note_append` (text added at the end of a note) and
+  `propose_task_done` (tick a task), for notes and tasks the assistant found, with their apps in the dock.
+- ✅ Tested on recorded streams cut at every byte, and with a pretend model server (tokio's `TcpListener`).
+- Later: changing a note's existing text, the assistant deleting anything (never without a click).
+- *Learned:* putting a protocol together from pieces of any size (buffer until a full line, JSON from fragments),
+  `tokio::join!` and `async move` blocks, an unbounded channel and an `AtomicBool` shared between tasks,
+  cancelling by dropping a `Receiver`; on the web, `ReadableStream`, `AbortController`, and why a click's default
+  action can still run after its handler changed the button (`preventDefault`).

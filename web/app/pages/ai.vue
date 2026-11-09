@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import type { SplitPaneSpec } from '~/composables/useSplit'
-import type { AiAnswer, AiConversation, AiConversationSummary, AiHit, AiSettings, AiStoredTurn } from '~/composables/useAi'
+import type {
+  AiAnswer,
+  AiConversation,
+  AiConversationSummary,
+  AiHit,
+  AiLive,
+  AiSettings,
+  AiStoredTurn,
+} from '~/composables/useAi'
 import type { MessageDetail } from '~/composables/useMail'
 
 // The AI app: your conversations on the left, one conversation in the
@@ -98,27 +106,60 @@ function scrollDown() {
   nextTick(() => log.value?.scrollTo({ top: log.value.scrollHeight, behavior: 'smooth' }))
 }
 
+/** The answer being written (text and steps so far), and how to stop it. */
+const live = ref<AiLive | null>(null)
+let stopper: AbortController | null = null
+/** Follows the answer down while it's written, unless you scrolled up to read. */
+function followDown() {
+  const el = log.value
+  if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight
+}
+
 async function send() {
   const q = question.value.trim()
   if (!q || asking.value) return
   asking.value = q
   askError.value = null
+  live.value = null
   question.value = ''
   scrollDown()
+  stopper = new AbortController()
   try {
-    const saved = await askInConversation(current.value?.id ?? null, q)
+    const saved = await askInConversation(
+      current.value?.id ?? null,
+      q,
+      (now) => {
+        live.value = now
+        nextTick(followDown)
+      },
+      stopper.signal,
+    )
     current.value = saved
     if (selectedId.value !== saved.id) router.replace({ query: { c: saved.id } })
     loadList()
   } catch (err) {
-    askError.value = apiErrorMessage(err)
-    // The question comes back to the composer, to try again.
+    // Stopped by you: no error. Either way the question comes back to the composer.
+    if (!stopper?.signal.aborted) askError.value = apiErrorMessage(err)
     question.value = q
   } finally {
     asking.value = null
+    live.value = null
+    stopper = null
     scrollDown()
     nextTick(() => composer.value?.textareaRef?.focus())
   }
+}
+
+/**
+ * Stop: the server stops the model; nothing is kept.
+ *
+ * `preventDefault`: the answer ends *during* this click (promises settle
+ * between event listeners), so the button is already Send again when the
+ * browser finishes the click, and it would send the question once more.
+ */
+function stop(e?: Event) {
+  e?.preventDefault()
+  stopper?.abort()
 }
 // ---- Title and delete -------------------------------------------------------------
 const editingTitle = ref<string | null>(null)
@@ -448,7 +489,20 @@ const IDEAS = [
 
             <template v-if="asking">
               <div class="q">{{ asking }}</div>
-              <p class="thinking"><span class="dot" /><span class="dot" /><span class="dot" /> Looking it up…</p>
+              <div class="a" aria-live="polite" :aria-busy="true">
+                <ul v-if="live?.steps.length" class="steps">
+                  <li v-for="(s, k) in live.steps" :key="k" :class="{ now: k === live.steps.length - 1 && !live.text }">
+                    <HIcon :name="k === live.steps.length - 1 && !live.text ? 'loading' : 'check'" :size="12" />
+                    {{ s.label }}
+                  </li>
+                </ul>
+                <div v-if="live?.text" class="text writing">
+                  <p v-for="(line, k) in live.text.split('\n').filter((l) => l.trim())" :key="k">{{ line }}</p>
+                </div>
+                <p v-else-if="!live?.steps.length" class="thinking">
+                  <span class="dot" /><span class="dot" /><span class="dot" /> Thinking…
+                </p>
+              </div>
             </template>
             <p v-if="askError" class="err" role="alert"><HIcon name="alert" :size="14" /> {{ askError }}</p>
           </div>
@@ -469,11 +523,13 @@ const IDEAS = [
               class="box"
               @submit="send"
             >
+              <!-- While it answers, the same button is Stop (UChatPromptSubmit's `stop` event). -->
               <UChatPromptSubmit
                 icon="i-havre-send"
-                :status="asking ? 'submitted' : 'ready'"
-                :disabled="!!asking || !question.trim()"
-                aria-label="Send question"
+                :status="!asking ? 'ready' : live?.text ? 'streaming' : 'submitted'"
+                :disabled="!asking && !question.trim()"
+                :aria-label="asking ? 'Stop the answer' : 'Send question'"
+                @stop="stop"
               />
             </UChatPrompt>
             <div class="under">
@@ -859,6 +915,29 @@ a.card {
   gap: 6px;
   font-size: 12.5px;
   color: var(--faint);
+}
+.steps li.now {
+  color: var(--muted);
+}
+.steps li.now :deep(svg) {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* The caret after the last word, while the answer is being written. */
+.text.writing p:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: blink 1s steps(2, start) infinite;
 }
 .thinking {
   display: flex;

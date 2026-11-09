@@ -2,8 +2,8 @@
 import type { AiProposal } from '~/composables/useAi'
 
 // What the assistant proposes to do, as numbered steps to review: the
-// event (and whether that time is free), the move, the email, the task, the
-// note. Nothing here
+// event (and whether that time is free), the move, the email, the task (to
+// add or to tick), the note (to write or to add to). Nothing here
 // runs anything — the confirm buttons are the caller's (Ctrl+K's bar, the
 // AI app's), so the same steps look the same everywhere.
 const props = defineProps<{
@@ -34,6 +34,8 @@ const LOOK: Record<AiProposal['kind'], { icon: 'mail' | 'calendar' | 'task' | 'n
   move: { icon: 'calendar', tint: 'var(--c-lyon)' },
   task: { icon: 'task', tint: 'var(--c-hol)' },
   note: { icon: 'note', tint: 'var(--c-personal)' },
+  append_note: { icon: 'note', tint: 'var(--c-personal)' },
+  complete_task: { icon: 'task', tint: 'var(--c-hol)' },
 }
 const who = (p: { name: string | null; email: string }) => p.name || p.email
 </script>
@@ -80,6 +82,13 @@ const who = (p: { name: string | null; email: string }) => p.name || p.email
           </div>
           <!-- The Markdown as text: shown, never run as HTML. -->
           <div class="mailbox"><div class="mbody">{{ p.body }}</div></div>
+        </template>
+        <template v-else-if="p.kind === 'append_note'">
+          <div class="times">Added at the end of the note</div>
+          <div class="mailbox"><div class="mbody">{{ p.text }}</div></div>
+        </template>
+        <template v-else-if="p.kind === 'complete_task'">
+          <div class="times">Ticked in Tasks (and in its list's app, at the next sync)</div>
         </template>
         <template v-if="p.kind === 'event' || p.kind === 'move'">
           <div v-if="conflicts.get(p) && conflicts.get(p)!.length" class="conflict">
