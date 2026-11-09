@@ -711,7 +711,7 @@ impl SyncEngine {
                         .collect();
                     changed += self.store.reconcile(path, oldest, newest, &present).await?;
 
-                    // Messages stored before Havre kept Message-IDs: read theirs.
+                    // Messages stored before Havre kept Message-IDs or recipients: read them.
                     let missing = self.store.missing_message_ids(path, MESSAGE_ID_BATCH).await?;
                     if !missing.is_empty() {
                         let set = missing.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -723,13 +723,18 @@ impl SyncEngine {
                             let (Some(uid), Some(header)) = (f.uid, f.header()) else { continue };
                             let parsed = mail::MessageSummary::from_headers(uid, false, header);
                             self.store
-                                .set_message_id(path, uid, parsed.message_id.as_deref().unwrap_or(""))
+                                .set_message_id(
+                                    path,
+                                    uid,
+                                    parsed.message_id.as_deref().unwrap_or(""),
+                                    parsed.recipients.as_deref().unwrap_or_default(),
+                                )
                                 .await?;
                             found.insert(uid);
                         }
                         // Gone meanwhile, or no answer: don't ask again and again.
                         for uid in missing.iter().filter(|u| !found.contains(u)) {
-                            self.store.set_message_id(path, *uid, "").await?;
+                            self.store.set_message_id(path, *uid, "", &[]).await?;
                         }
                     }
                 }

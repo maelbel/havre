@@ -127,6 +127,13 @@ MessageSummary {
     message_id: Some(
         "reply-2@example.org",
     ),
+    recipients: Some(
+        [
+            "mael@example.net",
+            "jean@example.com",
+            "claire@example.org",
+        ],
+    ),
     labels: [],
     snoozed_until: None,
     preview: None,
@@ -292,6 +299,11 @@ MessageSummary {
     message_id: Some(
         "ci-77@forge.example",
     ),
+    recipients: Some(
+        [
+            "mael@example.net",
+        ],
+    ),
     labels: [],
     snoozed_until: None,
     preview: None,
@@ -452,6 +464,11 @@ MessageSummary {
     flagged: false,
     message_id: Some(
         "inv-oct@ovh.example",
+    ),
+    recipients: Some(
+        [
+            "mael@example.net",
+        ],
     ),
     labels: [],
     snoozed_until: None,
@@ -662,6 +679,11 @@ MessageSummary {
     message_id: Some(
         "photos@example.org",
     ),
+    recipients: Some(
+        [
+            "mael@example.net",
+        ],
+    ),
     labels: [],
     snoozed_until: None,
     preview: None,
@@ -864,6 +886,11 @@ MessageSummary {
     message_id: Some(
         "invite-1@example.org",
     ),
+    recipients: Some(
+        [
+            "mael@example.net",
+        ],
+    ),
     labels: [],
     snoozed_until: None,
     preview: None,
@@ -1048,6 +1075,11 @@ MessageSummary {
     flagged: false,
     message_id: Some(
         "accept-1@example.com",
+    ),
+    recipients: Some(
+        [
+            "claire@example.org",
+        ],
     ),
     labels: [],
     snoozed_until: None,
@@ -1240,6 +1272,13 @@ MessageSummary {
     message_id: Some(
         "groups@example.fr",
     ),
+    recipients: Some(
+        [
+            "a@example.fr",
+            "b@example.fr",
+            "solo@example.fr",
+        ],
+    ),
     labels: [],
     snoozed_until: None,
     preview: None,
@@ -1350,6 +1389,9 @@ MessageSummary {
     flagged: false,
     message_id: Some(
         "",
+    ),
+    recipients: Some(
+        [],
     ),
     labels: [],
     snoozed_until: None,
@@ -1517,6 +1559,11 @@ MessageSummary {
     flagged: false,
     message_id: Some(
         "fwd-1@example.com",
+    ),
+    recipients: Some(
+        [
+            "mael@example.net",
+        ],
     ),
     labels: [],
     snoozed_until: None,
