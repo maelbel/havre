@@ -5,6 +5,10 @@
 //! address; until then the person is just that address. A contact can hold
 //! several addresses (`contact_emails`, one row each); an address belongs to
 //! one contact at most (it's the table's primary key, so SQLite enforces it).
+//!
+//! A contact can also have **no address** (a phone-only contact from your
+//! address book, someone you added by name): its key is then `~` and its
+//! id, `~42` (see [`Key`]).
 
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -13,11 +17,25 @@ use super::{People, PersonDetail, kinds, now};
 use crate::{Error, Result};
 
 /// A phone number with what it is ("mobile", "work"…).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Phone {
     #[serde(default)]
     pub label: String,
     pub number: String,
+}
+
+/// The details you keep about someone, the part that address books share
+/// (synced with Google, Microsoft and CardDAV, read from `.vcf` files).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Details {
+    pub name: String,
+    pub company: String,
+    pub role: String,
+    pub phones: Vec<Phone>,
+    /// `YYYY-MM-DD`, or `--MM-DD` without the year.
+    pub birthday: Option<String>,
+    pub note: String,
 }
 
 /// A stored contact (see the migration `0023_people.sql`).
@@ -34,6 +52,45 @@ pub(super) struct ContactRow {
     pub note: String,
     pub favorite: bool,
     pub kind: Option<String>,
+    /// Created by a sync (see `0024_contact_sync.sql`).
+    pub from_sync: bool,
+    /// The address book that last changed the details, and when.
+    pub updated_from: Option<String>,
+    pub updated_from_at: Option<i64>,
+    /// The address books they're in.
+    pub books: Vec<String>,
+    /// One of those books has a photo of them (or may have: Outlook's).
+    pub photo: bool,
+}
+
+impl ContactRow {
+    pub fn details(&self) -> Details {
+        Details {
+            name: self.name.clone(),
+            company: self.company.clone(),
+            role: self.role.clone(),
+            phones: self.phones.clone(),
+            birthday: self.birthday.clone(),
+            note: self.note.clone(),
+        }
+    }
+}
+
+/// How a person is named in a request: by one of their addresses, or by
+/// their contact (`~42`) when they have none.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Key {
+    Address(String),
+    Contact(i64),
+}
+
+impl Key {
+    pub fn parse(key: &str) -> Result<Key> {
+        match key.trim().strip_prefix('~') {
+            Some(id) => id.parse().map(Key::Contact).map_err(|_| Error::NotFound(format!("person {key}"))),
+            None => address(key).map(Key::Address),
+        }
+    }
 }
 
 /// A change to someone's details: only the fields that are present change.
@@ -85,7 +142,13 @@ impl People {
             "SELECT c.id, c.name, c.company, c.role, c.phones, c.birthday, c.note, c.favorite, c.kind,
                     COALESCE((SELECT json_group_array(email) FROM
                                 (SELECT email FROM contact_emails WHERE contact_id = c.id ORDER BY position, email)),
-                             '[]') AS emails
+                             '[]') AS emails,
+                    c.from_sync, c.updated_from, c.updated_from_at,
+                    (SELECT json_group_array(b.name) FROM contact_links l JOIN contact_books b ON b.id = l.book_id
+                     WHERE l.contact_id = c.id) AS books,
+                    EXISTS (SELECT 1 FROM contact_links l LEFT JOIN contact_photos p ON p.link_id = l.id
+                            WHERE l.contact_id = c.id
+                              AND ((l.photo_url IS NOT NULL AND p.link_id IS NULL) OR length(p.data) > 0)) AS photo
              FROM contacts c ORDER BY c.id",
         )
         .fetch_all(&self.pool)
@@ -103,15 +166,35 @@ impl People {
                 note: r.get("note"),
                 favorite: r.get("favorite"),
                 kind: r.get("kind"),
+                from_sync: r.get("from_sync"),
+                updated_from: r.get("updated_from"),
+                updated_from_at: r.get("updated_from_at"),
+                books: serde_json::from_str(r.get("books")).unwrap_or_default(),
+                photo: r.get("photo"),
             })
             .collect())
     }
 
-    async fn contact_of(&self, email: &str) -> Result<Option<i64>> {
+    pub(super) async fn contact_of(&self, email: &str) -> Result<Option<i64>> {
         Ok(sqlx::query_scalar("SELECT contact_id FROM contact_emails WHERE email = ?")
             .bind(email)
             .fetch_optional(&self.pool)
             .await?)
+    }
+
+    /// The contact for a key: the one named, or this address's (created,
+    /// empty, when it has none).
+    pub(super) async fn contact_for_key(&self, key: &Key) -> Result<i64> {
+        match key {
+            Key::Address(email) => self.contact_for(email).await,
+            Key::Contact(id) => {
+                let found: Option<i64> = sqlx::query_scalar("SELECT id FROM contacts WHERE id = ?")
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await?;
+                found.ok_or_else(|| Error::NotFound(format!("person ~{id}")))
+            }
+        }
     }
 
     /// The contact for this address, created (empty) when it has none.
@@ -135,9 +218,38 @@ impl People {
         Ok(id)
     }
 
+    /// Someone new, by name (and an address if you know one); returns their
+    /// page. An address already known gives that person, named.
+    pub async fn create(&self, name: &str, email: Option<&str>) -> Result<PersonDetail> {
+        let name = short(name, "name", 200)?;
+        let email = email.map(str::trim).filter(|e| !e.is_empty()).map(address).transpose()?;
+        if name.is_empty() && email.is_none() {
+            return Err(Error::Config("Give a name or an address.".into()));
+        }
+        let id = match &email {
+            Some(email) => self.contact_for(email).await?,
+            None => {
+                sqlx::query_scalar("INSERT INTO contacts (created_at, updated_at) VALUES (?, ?) RETURNING id")
+                    .bind(now())
+                    .bind(now())
+                    .fetch_one(&self.pool)
+                    .await?
+            }
+        };
+        if !name.is_empty() {
+            sqlx::query("UPDATE contacts SET name = ?, updated_at = ? WHERE id = ?")
+                .bind(&name)
+                .bind(now())
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+        }
+        self.person(&format!("~{id}")).await
+    }
+
     /// Changes someone's details (see [`PersonUpdate`]); returns their page.
-    pub async fn update(&self, email: &str, u: &PersonUpdate) -> Result<PersonDetail> {
-        let email = address(email)?;
+    pub async fn update(&self, key: &str, u: &PersonUpdate) -> Result<PersonDetail> {
+        let key = Key::parse(key)?;
         // Check everything before writing anything.
         let name = u.name.as_deref().map(|t| short(t, "name", 200)).transpose()?;
         let company = u.company.as_deref().map(|t| short(t, "company", 200)).transpose()?;
@@ -181,7 +293,7 @@ impl People {
             return Err(Error::Config("A person is either “person” or “automated”.".into()));
         }
 
-        let id = self.contact_for(&email).await?;
+        let id = self.contact_for_key(&key).await?;
         // One `UPDATE`, each column kept unless its field was sent: `CASE WHEN ? THEN ? ELSE col END`
         // (a flag says "sent", since the value itself may be NULL on purpose).
         sqlx::query(
@@ -207,18 +319,19 @@ impl People {
         .bind(id)
         .execute(&self.pool)
         .await?;
-        self.person(&email).await
+        self.person(&format!("~{id}")).await
     }
 
-    /// `other` is the same person as `email`: one contact, their addresses
-    /// together. Details already set on `email` win; empty ones are taken
-    /// from `other`'s contact, if it had one.
-    pub async fn merge(&self, email: &str, other: &str) -> Result<PersonDetail> {
-        let (email, other) = (address(email)?, address(other)?);
-        if email == other {
+    /// `other` is the same person as `key`: one contact, their addresses
+    /// (and address books) together. Details already set on `key` win; empty
+    /// ones are taken from `other`'s contact, if it had one. `other` can be
+    /// a new address: it's added to them.
+    pub async fn merge(&self, key: &str, other: &str) -> Result<PersonDetail> {
+        let (key, other) = (Key::parse(key)?, Key::parse(other)?);
+        if key == other {
             return Err(Error::Config("Pick another address than this one.".into()));
         }
-        let keep = self.contact_for(&email).await?;
+        let keep = self.contact_for_key(&key).await?;
         let mut tx = self.pool.begin().await?;
         let next: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(position), 0) + 1 FROM contact_emails WHERE contact_id = ?",
@@ -226,13 +339,21 @@ impl People {
         .bind(keep)
         .fetch_one(&mut *tx)
         .await?;
-        let theirs: Option<i64> = sqlx::query_scalar("SELECT contact_id FROM contact_emails WHERE email = ?")
-            .bind(&other)
-            .fetch_optional(&mut *tx)
-            .await?;
+        // Keys tasks and notes may know them by, before: `~keep`, and `~from` below.
+        let mut old_keys = vec![format!("~{keep}")];
+        let theirs: Option<i64> = match &other {
+            Key::Address(email) => {
+                sqlx::query_scalar("SELECT contact_id FROM contact_emails WHERE email = ?")
+                    .bind(email)
+                    .fetch_optional(&mut *tx)
+                    .await?
+            }
+            Key::Contact(id) => Some(*id),
+        };
         match theirs {
             Some(same) if same == keep => {} // already one person
             Some(from) => {
+                old_keys.push(format!("~{from}"));
                 // Fill what's empty here from there, then move its addresses over and drop it.
                 sqlx::query(
                     "UPDATE contacts SET
@@ -244,6 +365,8 @@ impl People {
                         birthday = COALESCE(birthday, (SELECT birthday FROM contacts WHERE id = ?2)),
                         kind = COALESCE(kind, (SELECT kind FROM contacts WHERE id = ?2)),
                         favorite = favorite OR (SELECT favorite FROM contacts WHERE id = ?2),
+                        -- Made by you if either was: then a sync never removes it.
+                        from_sync = from_sync AND (SELECT from_sync FROM contacts WHERE id = ?2),
                         updated_at = ?3
                      WHERE id = ?1",
                 )
@@ -260,39 +383,81 @@ impl People {
                 .bind(from)
                 .execute(&mut *tx)
                 .await?;
+                // Its address books follow (the same person in Google and in iCloud).
+                sqlx::query("UPDATE contact_links SET contact_id = ? WHERE contact_id = ?")
+                    .bind(keep)
+                    .bind(from)
+                    .execute(&mut *tx)
+                    .await?;
                 sqlx::query("DELETE FROM contacts WHERE id = ?").bind(from).execute(&mut *tx).await?;
             }
             None => {
+                let Key::Address(email) = &other else {
+                    return Err(Error::NotFound("this person".into()));
+                };
                 sqlx::query("INSERT INTO contact_emails (email, contact_id, position) VALUES (?, ?, ?)")
-                    .bind(&other)
+                    .bind(email)
                     .bind(keep)
                     .bind(next)
                     .execute(&mut *tx)
                     .await?;
             }
         }
+        // Their key now: the main address, else `~keep`. Tasks and notes
+        // about them under an older `~…` key follow.
+        let main: Option<String> = sqlx::query_scalar(
+            "SELECT email FROM contact_emails WHERE contact_id = ? ORDER BY position, email LIMIT 1",
+        )
+        .bind(keep)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let key = main.unwrap_or_else(|| format!("~{keep}"));
+        for old in old_keys.iter().filter(|old| **old != key) {
+            sqlx::query("UPDATE tasks SET person = ? WHERE person = ?")
+                .bind(&key)
+                .bind(old)
+                .execute(&mut *tx)
+                .await?;
+            // `OR IGNORE`: a note already about them under the new key keeps that row.
+            sqlx::query("UPDATE OR IGNORE note_people SET email = ? WHERE email = ?")
+                .bind(&key)
+                .bind(old)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM note_people WHERE email = ?").bind(old).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
-        self.person(&email).await
+        self.person(&format!("~{keep}")).await
     }
 
-    /// Takes `other` out of `email`'s contact: it's someone else again (or
-    /// no one in particular). A contact keeps at least one address.
-    pub async fn remove_address(&self, email: &str, other: &str) -> Result<PersonDetail> {
-        let (email, other) = (address(email)?, address(other)?);
-        if email == other {
-            return Err(Error::Config("Open another of their addresses to remove this one.".into()));
-        }
-        let mine = self.contact_of(&email).await?;
-        if mine.is_none() || mine != self.contact_of(&other).await? {
+    /// Takes `other` out of this person's contact: it's someone else again
+    /// (or no one in particular). The address you're on becomes the main one.
+    pub async fn remove_address(&self, key: &str, other: &str) -> Result<PersonDetail> {
+        let (key, other) = (Key::parse(key)?, address(other)?);
+        let mine = match &key {
+            Key::Address(email) if *email == other => {
+                return Err(Error::Config("Open another of their addresses to remove this one.".into()));
+            }
+            Key::Address(email) => self.contact_of(email).await?,
+            Key::Contact(id) => Some(*id),
+        };
+        let Some(mine) = mine else {
+            return Err(Error::NotFound(format!("{other} on this person")));
+        };
+        if self.contact_of(&other).await? != Some(mine) {
             return Err(Error::NotFound(format!("{other} on this person")));
         }
         sqlx::query("DELETE FROM contact_emails WHERE email = ?").bind(&other).execute(&self.pool).await?;
-        // The address you're on becomes the main one if it wasn't.
-        sqlx::query("UPDATE contact_emails SET position = CASE WHEN email = ? THEN 0 ELSE position + 1 END WHERE contact_id = ?")
-            .bind(&email)
+        if let Key::Address(email) = &key {
+            sqlx::query(
+                "UPDATE contact_emails SET position = CASE WHEN email = ? THEN 0 ELSE position + 1 END
+                 WHERE contact_id = ?",
+            )
+            .bind(email)
             .bind(mine)
             .execute(&self.pool)
             .await?;
-        self.person(&email).await
+        }
+        self.person(&format!("~{mine}")).await
     }
 }

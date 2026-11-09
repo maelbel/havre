@@ -3,8 +3,10 @@
 //! Everyone who wrote to you, everyone you write to (Mail) and everyone you
 //! meet (Agenda guests) is a person; their email address is the key. You can
 //! add details (company, phones, birthday, a note), mark favourites, and
-//! **merge** two addresses of the same person ([`contacts`]). The same list
-//! feeds:
+//! **merge** two addresses of the same person ([`contacts`]). Your address
+//! books (Google, Microsoft, CardDAV) are kept in step with those details
+//! ([`books`], [`sync`]); someone there without an address is a person too,
+//! keyed `~<contact id>`. The same list feeds:
 //!
 //! - the **People** app: the list (sorts, filters) and a page per person
 //!   (details, keeping in touch, mail, meetings, files);
@@ -17,8 +19,14 @@
 //! so it's always up to date). Then, in Rust, the addresses of one contact are
 //! put together and your details laid on top.
 
+pub mod books;
+pub(crate) mod carddav;
 pub mod contacts;
+pub(crate) mod google;
+pub(crate) mod graph;
 pub mod kinds;
+pub mod sync;
+pub mod vcard;
 
 use std::collections::HashMap;
 
@@ -30,7 +38,7 @@ use crate::{
     Result,
     agenda::{AgendaStore, Event},
 };
-pub use contacts::{PersonUpdate, Phone};
+pub use contacts::{Details, Key, PersonUpdate, Phone};
 
 /// Waiting for your reply: only for mail of the last 30 days.
 const WAITING_FOR: i64 = 30 * 86_400;
@@ -40,7 +48,8 @@ const KEEP_IN_TOUCH: i64 = 30 * 86_400;
 /// One person, in a list.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Person {
-    /// The main address (the page's address).
+    /// The main address (the page's address), or `~<contact id>` for someone
+    /// without one.
     pub email: String,
     /// Every address of this person, the main one first.
     pub emails: Vec<String>,
@@ -65,6 +74,9 @@ pub struct Person {
     pub waiting_since: Option<i64>,
     /// `YYYY-MM-DD`, or `--MM-DD` without the year.
     pub birthday: Option<String>,
+    /// An address book has a photo of them (`GET /people/{email}/photo`).
+    pub photo: bool,
+    pub phones: Vec<Phone>,
 }
 
 /// A person's page.
@@ -72,10 +84,14 @@ pub struct Person {
 pub struct PersonDetail {
     #[serde(flatten)]
     pub person: Person,
-    pub phones: Vec<Phone>,
     pub note: String,
     /// What you said: `person` or `automated` (`None`: guessed).
     pub kind: Option<String>,
+    /// The address books they're in ("Google Contacts", "iCloud"…).
+    pub books: Vec<String>,
+    /// The address book that last changed their details, and when.
+    pub updated_from: Option<String>,
+    pub updated_from_at: Option<i64>,
     pub last_from: Option<i64>,
     pub last_to: Option<i64>,
     pub last_meeting: Option<i64>,
@@ -233,11 +249,17 @@ impl Entry {
 
     fn person(&self, now: i64) -> Person {
         let c = self.contact.as_ref();
-        let email = self.emails.first().cloned().unwrap_or_default();
+        // No address: the contact's id is the key.
+        let email = match (self.emails.first(), c) {
+            (Some(email), _) => email.clone(),
+            (None, Some(c)) => format!("~{}", c.id),
+            (None, None) => String::new(),
+        };
         let automated = match c.and_then(|c| c.kind.as_deref()) {
             Some("automated") => true,
             Some("person") => false,
-            _ => self.emails.iter().all(|e| kinds::looks_automated(e)),
+            // `all` is true for an empty list: someone without an address is a person.
+            _ => !self.emails.is_empty() && self.emails.iter().all(|e| kinds::looks_automated(e)),
         };
         let name = c.map(|c| c.name.trim()).filter(|n| !n.is_empty()).unwrap_or(&self.seen_name).to_owned();
         let last_contact = [self.last_from, self.last_to, self.last_meeting].into_iter().flatten().max();
@@ -260,6 +282,8 @@ impl Entry {
             last_contact,
             waiting_since,
             birthday: c.and_then(|c| c.birthday.clone()),
+            photo: c.is_some_and(|c| c.photo),
+            phones: c.map(|c| c.phones.clone()).unwrap_or_default(),
         }
     }
 }
@@ -397,6 +421,8 @@ impl People {
     pub async fn list(&self, q: &ListQuery) -> Result<Vec<Person>> {
         let now = now();
         let query = q.q.trim().to_lowercase();
+        // A number searches phones, whatever its spaces and dots: "0612" finds "06 12 34…".
+        let digits = only_digits(&query);
         let company = q.company.as_deref().map(str::to_lowercase);
         let everyone: Vec<Person> = self.everyone(now).await?.iter().map(|e| e.person(now)).collect();
         let names = company_names(&everyone);
@@ -417,6 +443,8 @@ impl People {
                     || p.name.to_lowercase().contains(&query)
                     || p.company.to_lowercase().contains(&query)
                     || p.emails.iter().any(|e| e.contains(&query))
+                    || (digits.len() >= 3
+                        && p.phones.iter().any(|ph| only_digits(&ph.number).contains(&digits)))
             })
             .collect();
         let frequency = |p: &Person| p.messages + 2 * p.sent + 3 * p.meetings;
@@ -465,17 +493,21 @@ impl People {
         Ok(list)
     }
 
-    /// One person's page, by any of their addresses. Works for any address,
-    /// even one never seen (the page is then empty).
-    pub async fn person(&self, email: &str) -> Result<PersonDetail> {
-        let email = email.trim().to_lowercase();
+    /// One person's page, by any of their addresses or their contact
+    /// (`~42`). Works for any address, even one never seen (the page is then
+    /// empty).
+    pub async fn person(&self, key: &str) -> Result<PersonDetail> {
+        let key = Key::parse(key)?;
         let now = now();
-        let entry = self
-            .everyone(now)
-            .await?
-            .into_iter()
-            .find(|e| e.emails.contains(&email))
-            .unwrap_or_else(|| Entry { emails: vec![email.clone()], ..Entry::default() });
+        let found = self.everyone(now).await?.into_iter().find(|e| match &key {
+            Key::Address(email) => e.emails.contains(email),
+            Key::Contact(id) => e.contact.as_ref().is_some_and(|c| c.id == *id),
+        });
+        let entry = match (found, &key) {
+            (Some(entry), _) => entry,
+            (None, Key::Address(email)) => Entry { emails: vec![email.clone()], ..Entry::default() },
+            (None, Key::Contact(id)) => return Err(crate::Error::NotFound(format!("person ~{id}"))),
+        };
         let person = entry.person(now);
 
         let Related { messages: recent_messages, files } = self.related(&entry.emails, 15).await?;
@@ -501,9 +533,11 @@ impl People {
         let c = entry.contact.as_ref();
         Ok(PersonDetail {
             person,
-            phones: c.map(|c| c.phones.clone()).unwrap_or_default(),
             note: c.map(|c| c.note.clone()).unwrap_or_default(),
             kind: c.and_then(|c| c.kind.clone()),
+            books: c.map(|c| c.books.clone()).unwrap_or_default(),
+            updated_from: c.and_then(|c| c.updated_from.clone()),
+            updated_from_at: c.and_then(|c| c.updated_from_at),
             last_from: entry.last_from,
             last_to: entry.last_to,
             last_meeting: entry.last_meeting,
@@ -607,6 +641,10 @@ impl People {
         files.truncate(8);
         Ok(Related { messages, files })
     }
+}
+
+fn only_digits(text: &str) -> String {
+    text.chars().filter(char::is_ascii_digit).collect()
 }
 
 fn now() -> i64 {
@@ -805,7 +843,7 @@ mod tests {
         };
         let claire = people.update("claire@acme.fr", &set("Claire Dubois", "Acme")).await.unwrap();
         assert_eq!(claire.person.name, "Claire Dubois", "your name wins");
-        assert_eq!(claire.phones.len(), 1, "the empty row is dropped");
+        assert_eq!(claire.person.phones.len(), 1, "the empty row is dropped");
         assert!(claire.person.favorite);
         // Only what's sent changes; null clears the birthday.
         let claire = people

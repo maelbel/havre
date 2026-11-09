@@ -57,6 +57,8 @@ pub struct Account {
     pub can_calendar: bool,
     /// The sign-in allows Tasks (Microsoft To Do, Google Tasks).
     pub can_tasks: bool,
+    /// The sign-in allows contacts sync (Outlook contacts, Google Contacts).
+    pub can_contacts: bool,
 }
 
 /// What the user types to add an account.
@@ -218,6 +220,8 @@ impl Database {
         let people = self.people().search(query, limit).await?;
         Ok(people
             .into_iter()
+            // Someone without an address (`~42`) can't be written to or invited.
+            .filter(|p| !p.emails.is_empty())
             .map(|p| Contact { name: (!p.name.is_empty()).then_some(p.name), address: p.email })
             .collect())
     }
@@ -560,6 +564,7 @@ impl Database {
         };
         let can_calendar = app.is_some_and(|app| app.can_calendar(scope));
         let can_tasks = app.is_some_and(|app| app.can_tasks(scope));
+        let can_contacts = app.is_some_and(|app| app.can_contacts(scope));
         Account {
             id: r.get("id"),
             name: r.get("name"),
@@ -578,6 +583,7 @@ impl Database {
             can_send,
             can_calendar,
             can_tasks,
+            can_contacts,
         }
     }
 

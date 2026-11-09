@@ -353,6 +353,27 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - ✅ Tested: sightings both ways and meetings, your names first, merging, robots by pattern and by choice,
   waiting (and not after you replied, after 30 days, or from robots), birthdays (Feb 29), recipients from headers;
   in Chromium the list, editing, merging, Today, a phone, dark and light.
-- Next: step 23, contacts sync (Google, Microsoft, CardDAV) and `.vcf` import.
 - *Learned:* one person with several addresses (a join table, a unique address), grouping in Rust after one SQL
   pass, backfilling a new column without blocking the app, dates without a year.
+
+## 23 · Contacts sync ✅
+- ✅ Google Contacts (People API, sync tokens, a full read when one expires), Outlook contacts (Graph, the main
+  folder, skipped when `changeKey` is unchanged), CardDAV address books (discovery from the CalDAV server,
+  `getctag`, ETags, `addressbook-multiget`, `PUT` with `If-Match`). Off until switched on per account.
+- ✅ A three-way merge field by field (the details as last synced on each link): each side's changes reach the
+  other, the address book wins a field changed on both, the page says *updated from …*. Edits go out right away,
+  in the background; someone in no address book can go to a default one.
+- ✅ One Havre contact in several books; deleted there or the account switched off: the people that only came
+  from it go (favourites stay). Nothing is ever deleted from an address book.
+- ✅ People without an address (`/people/~42`): listed, searched (phones too), edited, given an address later
+  (their tasks and notes follow). Photos (inline in vCards, Google's links, Graph's on demand), kept small.
+- ✅ A hand-written vCard reader and writer (2.1, 3.0, 4.0; folding, escaping, quoted-printable, Apple's
+  no-year birthdays); writing back keeps every line Havre doesn't know. `.vcf` import and export.
+- ✅ Tested: the vCard flavours, each provider's format, the merge table, listings (full, changes, deleted,
+  unchanged ETags), people without an address; end to end against a Radicale server (both ways, a new person to
+  the default book, `%40` in card names, deletion, switching off); in Chromium the list, a page without an
+  address, adding one, a new person, the settings, a phone, dark and light.
+- Later: other Outlook folders, contact groups, postal addresses on the page, writing photos back.
+- *Learned:* incremental sync with tokens (and when they expire), a three-way merge, a line-based format by hand
+  (folding at byte boundaries, escaping), conditional requests (`If-Match`), percent-encoding when comparing
+  URLs, a page remounted on a new address (state in the URL instead).

@@ -8,9 +8,9 @@
 //! | GET    | /people?q=&sort=&filter=&company=&limit= | people from Mail and the Agenda (sort: recent, frequent, name; filter: everyone, favorites, waiting, automated, all) |
 //! | GET    | /people/companies | the companies of the people you know, the biggest first |
 //! | GET    | /people/today?date= | birthdays this week, favourites to keep in touch with (`date`: the browser's day) |
-//! | GET    | /people/{email} | one person, by any of their addresses: details, keeping in touch, mail, meetings |
-//! | PATCH  | /people/{email} `{name?, company?, role?, phones?, birthday?, note?, favorite?, kind?}` | your details about them |
-//! | POST   | /people/{email}/merge `{email}` | the same person: one page for both addresses |
+//! | GET    | /people/{email} | one person, by any of their addresses (or `~42`, their contact): details, keeping in touch, mail, meetings |
+//! | PATCH  | /people/{email} `{name?, company?, role?, phones?, birthday?, note?, favorite?, kind?}` | your details about them (sent on to their address books) |
+//! | POST   | /people/{email}/merge `{email}` | the same person: one page for both addresses (`email` may be `~42`, or a new address) |
 //! | DELETE | /people/{email}/addresses/{other} | that address is someone else again |
 //! | GET    | /mail/unread?limit= | unread mail in every inbox (the Today page) |
 //! | GET    | /system | version, memory, data size, counts (the App library) |
@@ -147,7 +147,16 @@ async fn update_person(
     Json(update): Json<PersonUpdate>,
 ) -> Result<Json<PersonDetail>, ApiError> {
     let db = state.mail.manager()?.database();
-    Ok(Json(db.people().update(&email, &update).await?))
+    let page = db.people().update(&email, &update).await?;
+    sync_contact(&state, &page);
+    Ok(Json(page))
+}
+
+/// Sends a changed person on to their address books, in the background.
+fn sync_contact(state: &AppState, page: &PersonDetail) {
+    if let Some(contacts) = &state.contacts {
+        contacts.push_later(page.person.contact);
+    }
 }
 
 #[derive(Deserialize)]
@@ -161,7 +170,9 @@ async fn merge_person(
     Json(other): Json<Other>,
 ) -> Result<Json<PersonDetail>, ApiError> {
     let db = state.mail.manager()?.database();
-    Ok(Json(db.people().merge(&email, &other.email).await?))
+    let page = db.people().merge(&email, &other.email).await?;
+    sync_contact(&state, &page);
+    Ok(Json(page))
 }
 
 async fn remove_address(

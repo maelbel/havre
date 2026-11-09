@@ -106,6 +106,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(auth::protected_routes())
         .merge(crate::agenda::routes())
         .merge(crate::tasks::routes())
+        .merge(crate::contacts::routes())
         .merge(crate::notes::routes())
         .merge(crate::files::routes())
         .merge(crate::platform::routes())

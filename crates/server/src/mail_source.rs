@@ -60,6 +60,7 @@ impl MailSource {
                         can_send: false,
                         can_calendar: false,
                         can_tasks: false,
+                        can_contacts: false,
                     },
                     status: idle_status(),
                     unread,

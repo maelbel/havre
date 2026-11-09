@@ -33,9 +33,10 @@ const ABOUT: Record<string, { where: string; keys: [string, string][]; keeps: (s
     keeps: (s) => `A copy of ${plural(s.calendars, 'calendar')}`,
   },
   people: {
-    where: 'On this server. Nothing to fill in: People is made from your mail and your meetings.',
+    where:
+      'On this server: People is made from your mail and your meetings, plus your details and the address books you sync (they keep theirs).',
     keys: [],
-    keeps: (s) => `${plural(s.people, 'person', 'people')}, from Mail and Agenda — nothing of its own`,
+    keeps: (s) => `${plural(s.people, 'person', 'people')}, from Mail, the Agenda and your address books`,
   },
   tasks: {
     where: 'Each list lives in its app (Microsoft To Do, Google Tasks, CalDAV) or in Havre; the links to emails, people and meetings stay in Havre.',
@@ -113,6 +114,7 @@ async function setInDock(on: boolean) {
         <h3 id="app-settings" class="eyebrow">Settings</h3>
         <TaskSyncSettings v-if="app.id === 'tasks'" />
         <FilesSettings v-else-if="app.id === 'files'" />
+        <ContactSyncSettings v-else-if="app.id === 'people'" />
         <p v-else-if="app.id === 'mail'" class="none">
           Accounts, their passwords and sending servers are in <NuxtLink to="/settings">Settings › Accounts</NuxtLink>.
         </p>

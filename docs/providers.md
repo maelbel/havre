@@ -56,8 +56,9 @@ mailbox, ask your IT admin if you don't have the rights:
    search **Office 365 Exchange Online** → *Delegated permissions* →
    **IMAP.AccessAsUser.All** and **SMTP.Send** (to send mail) → Add. Then
    *Add a permission* → **Microsoft Graph** → *Delegated permissions* →
-   **Calendars.ReadWrite** (for the Agenda) and **Tasks.ReadWrite** (for
-   Tasks, Microsoft To Do) → Add. If your organisation
+   **Calendars.ReadWrite** (for the Agenda), **Tasks.ReadWrite** (for
+   Tasks, Microsoft To Do) and **Contacts.ReadWrite** (for contacts sync in
+   People) → Add. If your organisation
    requires it, click **Grant admin consent**.
 4. **Overview** → copy the **Application (client) ID** into `.env`:
 
@@ -102,15 +103,17 @@ One-time setup in Google Cloud:
 
 1. Open <https://console.cloud.google.com> → create a project named `Havre`.
    *APIs & Services › Library* → enable the **Gmail API**, the **Google
-   Calendar API** (for the Agenda) and the **Google Tasks API** (for Tasks).
+   Calendar API** (for the Agenda), the **Google Tasks API** (for Tasks) and
+   the **People API** (for contacts sync in People).
 2. **Google Auth Platform** (the OAuth consent screen):
    - *Branding*: app name `Havre`, your email.
    - *Audience*: **Internal** if it's for a Google Workspace organisation
      only (simplest), otherwise **External**. With *External*, add yourself
      under *Test users*, then **Publish app** (see the note below).
    - *Data access* → *Add or remove scopes* → add
-     `https://mail.google.com/`, `https://www.googleapis.com/auth/calendar`
-     and `https://www.googleapis.com/auth/tasks` (manually if they aren't
+     `https://mail.google.com/`, `https://www.googleapis.com/auth/calendar`,
+     `https://www.googleapis.com/auth/tasks` and
+     `https://www.googleapis.com/auth/contacts` (manually if they aren't
      listed).
 3. **Clients** → *Create client* → *Web application* → *Authorized redirect
    URIs*: the address you open Havre at, followed by
@@ -137,3 +140,19 @@ One-time setup in Google Cloud:
 
 Unlike Microsoft, Google has no "type a code" fallback for mail: the window
 is the only way, so the redirect URI must match the address you use.
+
+## Contacts (CardDAV)
+
+Most CalDAV servers also keep your address books (CardDAV), with the same
+login: once a server is added in *Settings › Calendars*, switch it on in
+*Settings › Your apps › People*. Havre finds the address books from the
+address you gave for the calendars:
+
+- **Nextcloud**: the same address (`https://cloud.example.com/remote.php/dav`).
+- **iCloud**: the calendars' address (`https://caldav.icloud.com`) and an
+  app-specific password; Havre also looks at `contacts.icloud.com`.
+- **Fastmail**, **Radicale**, **Baïkal**, **SOGo**: the same address.
+
+Accounts signed in with Microsoft or Google before contacts sync existed
+don't have the contacts permission yet: *Settings › Your apps › People*
+shows *Reconnect* next to them.

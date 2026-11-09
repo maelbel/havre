@@ -392,7 +392,7 @@ const briefTime = computed(() =>
           <NuxtLink v-for="p in people.keep_in_touch" :key="p.email" :to="`/people/${encodeURIComponent(p.email)}`" class="tline">
             <span class="pi"><HIcon name="star" :size="14" /></span>
             <span>
-              {{ personName(p) }}<span class="faint"> · last talked {{ p.last_contact ? `${ago(p.last_contact)} ago` : 'a while ago' }}</span>
+              {{ personName(p) }}<span class="faint"> · last talked {{ p.last_contact ? agoText(p.last_contact) : 'a while ago' }}</span>
             </span>
           </NuxtLink>
         </div>

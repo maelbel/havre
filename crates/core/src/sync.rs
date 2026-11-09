@@ -77,6 +77,8 @@ pub enum SyncEvent {
     Agenda,
     /// Task lists or tasks changed.
     Tasks,
+    /// People changed (an address book was synced).
+    People,
     /// A task's reminder time has come.
     Reminder { task: i64, title: String },
     /// An event's reminder time has come (`event_reminder` in JSON).
