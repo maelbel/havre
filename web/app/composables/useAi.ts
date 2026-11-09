@@ -231,6 +231,10 @@ export type AiProposal =
       from_note: { note: number; line: number; title: string } | null
     }
   | { kind: 'note'; title: string; body: string; people: PersonLink[]; event: EventLink | null }
+  /** Add `text` (Markdown) at the end of an existing note. */
+  | { kind: 'append_note'; note: number; title: string; text: string }
+  /** Tick an existing task. */
+  | { kind: 'complete_task'; task: number; title: string }
 
 export interface AiAnswer {
   text: string
@@ -243,8 +247,73 @@ export interface AiAnswer {
   tasks?: Record<string, Task>
 }
 
-export function askAi(turns: AiTurn[]) {
-  return $fetch<AiAnswer>('/api/ai/ask', { method: 'POST', body: { turns, utc_offset: utcOffset() } })
+export type AiStep = AiAnswer['steps'][number]
+
+/** What the page shows while the assistant answers. */
+export interface AiLive {
+  /** The answer so far (citations like `[m3]` left out until it's done). */
+  text: string
+  steps: AiStep[]
+}
+
+/** One line of a live answer (see "Live lines" in crates/server/src/ai.rs). */
+type AiLine =
+  | { type: 'text'; text: string }
+  | ({ type: 'step' } & AiStep)
+  | { type: 'restart' }
+  | { type: 'done'; result: unknown }
+  | { type: 'error'; message: string }
+
+/** `[m3]`, `[e12]`, `[n1]`, `[t4]`, and a mark still being written at the end (`[m`). */
+const CITATION = /\s?\[[ment]\d+\]|\s?\[[ment]?\d*$/g
+
+/**
+ * Calls an assistant route with `Accept: application/x-ndjson`: `onLive` gets
+ * the text and steps so far each time something arrives; resolves with the
+ * route's usual result. `signal` stops it (the server stops the model too).
+ */
+async function askLive<T>(path: string, body: unknown, onLive: (live: AiLive) => void, signal?: AbortSignal) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+    body: JSON.stringify(body),
+    credentials: 'same-origin',
+    signal,
+  })
+  if (!response.ok) {
+    const data = await response.json().catch(() => null)
+    if (response.status === 401) await navigateTo('/login')
+    throw new Error(data?.error ?? `${response.status} ${response.statusText}`)
+  }
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let raw = ''
+  const live: AiLive = { text: '', steps: [] }
+  // A piece of the body can end in the middle of a line: `pending` keeps it
+  // until the rest arrives (the same idea as SseLines in provider.rs).
+  let pending = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    pending += decoder.decode(value, { stream: !done })
+    const lines = pending.split('\n')
+    pending = lines.pop() ?? ''
+    for (const json of lines) {
+      if (!json.trim()) continue
+      const line = JSON.parse(json) as AiLine
+      if (line.type === 'done') return line.result as T
+      if (line.type === 'error') throw new Error(line.message)
+      if (line.type === 'text') raw += line.text
+      else if (line.type === 'restart') raw = ''
+      else live.steps = [...live.steps, { tool: line.tool, label: line.label }]
+      onLive({ text: raw.replace(CITATION, '').trimStart(), steps: live.steps })
+    }
+    if (done) throw new Error('The answer stopped before the end. Try again.')
+  }
+}
+
+/** The assistant without a conversation (Ctrl+K), live. */
+export function askAi(turns: AiTurn[], onLive: (live: AiLive) => void = () => {}, signal?: AbortSignal) {
+  return askLive<AiAnswer>('/api/ai/ask', { turns, utc_offset: utcOffset() }, onLive, signal)
 }
 
 // ---- Conversations (the AI app; Ctrl+K chats are kept there too) ------------------
@@ -277,12 +346,19 @@ export function fetchConversations() {
 export function fetchConversation(id: number) {
   return $fetch<AiConversation>(`/api/ai/conversations/${id}`)
 }
-/** Asks in a conversation (none: starts one); returns it, with the new answer. */
-export function askInConversation(conversation: number | null, question: string) {
-  return $fetch<AiConversation>('/api/ai/conversations/ask', {
-    method: 'POST',
-    body: { conversation, question, utc_offset: utcOffset() },
-  })
+/** Asks in a conversation (none: starts one), live; returns it, with the new answer. */
+export function askInConversation(
+  conversation: number | null,
+  question: string,
+  onLive: (live: AiLive) => void = () => {},
+  signal?: AbortSignal,
+) {
+  return askLive<AiConversation>(
+    '/api/ai/conversations/ask',
+    { conversation, question, utc_offset: utcOffset() },
+    onLive,
+    signal,
+  )
 }
 export function renameConversation(id: number, title: string) {
   return $fetch<AiConversation>(`/api/ai/conversations/${id}`, { method: 'PATCH', body: { title } })

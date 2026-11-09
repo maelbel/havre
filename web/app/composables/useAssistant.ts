@@ -132,6 +132,8 @@ export function aiProposalTitle(p: AiProposal) {
   if (p.kind === 'move') return `Move “${p.title}”`
   if (p.kind === 'task') return `Add the task “${p.title}”`
   if (p.kind === 'note') return `Write the note “${p.title}”`
+  if (p.kind === 'append_note') return `Add to the note “${p.title}”`
+  if (p.kind === 'complete_task') return `Mark “${p.title}” as done`
   const to = aiRecipients(p)
   return to.length === 1 ? `Email ${nameIn(to[0])}` : `Email the ${to.length} recipients`
 }
@@ -141,6 +143,8 @@ const AI_PROPOSAL_APP: Record<AiProposal['kind'], string> = {
   move: 'Agenda',
   task: 'Tasks',
   note: 'Notes',
+  append_note: 'Notes',
+  complete_task: 'Tasks',
 }
 /** "Agenda + Mail": which apps the proposals touch. */
 export function aiProposalApps(proposals: AiProposal[]) {
@@ -164,7 +168,7 @@ export async function aiConflicts(p: AiProposal): Promise<string[]> {
 
 /**
  * Runs a proposal you confirmed: creates or moves the event, writes the
- * email, adds the task, writes the note. `send: false` opens the email in
+ * email, adds or ticks the task, writes or adds to the note. `send: false` opens the email in
  * compose instead of sending it.
  * Returns what to tell you ("Created “Kick-off”"), or null. Each run is
  * noted in Settings › AI › activity.
@@ -233,6 +237,19 @@ export async function runAiProposal(p: AiProposal, send: boolean): Promise<strin
     const created = await createNote({ title: p.title, body: p.body, people: p.people, event: p.event })
     logConfirmed('Wrote a note', created.title)
     return `Wrote the note “${created.title}”`
+  }
+  if (p.kind === 'append_note') {
+    // The note as it is now (you may have changed it since the answer), then the text after a blank line.
+    const note = await fetchNote(p.note)
+    const body = note.body.trimEnd() ? `${note.body.trimEnd()}\n\n${p.text.trim()}\n` : `${p.text.trim()}\n`
+    await saveNote(note.id, noteInput(note, { body }))
+    logConfirmed('Added to a note', note.title)
+    return `Added to “${note.title}”`
+  }
+  if (p.kind === 'complete_task') {
+    await setTaskDone(p.task, true)
+    logConfirmed('Ticked a task', p.title)
+    return `Ticked “${p.title}”`
   }
   const account = useAccounts().data.value.find((a) => a.can_send)
   if (!account) throw new Error('No account can send yet: add or reconnect one in Settings.')

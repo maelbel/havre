@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AiAnswer, AiHit, AiProposal } from '~/composables/useAi'
+import type { AiAnswer, AiHit, AiLive, AiProposal } from '~/composables/useAi'
 import type { AiEmailProposal } from '~/composables/useAssistant'
 import type { IconName } from './HIcon.vue'
 import type { NoteSummary } from '~/composables/useNotes'
@@ -377,6 +377,20 @@ const conversation = ref<number | null>(null)
 const chat = ref<ChatEntry[]>([])
 const chatInput = ref('')
 const chatBusy = ref(false)
+/**
+ * The answer being written, and how to stop it (Stop, or closing the palette).
+ * Stop also calls `preventDefault`: see `stop` in pages/ai.vue.
+ */
+const live = ref<AiLive | null>(null)
+let stopper: AbortController | null = null
+function stopAnswer(e: Event) {
+  e.preventDefault()
+  stopper?.abort()
+}
+// Closing the palette stops an answer still being written (it starts fresh next time).
+watch(open, (on) => {
+  if (!on) stopper?.abort()
+})
 const chatInputEl = ref<{ textareaRef: HTMLTextAreaElement | null } | null>(null)
 const chatLog = ref<HTMLElement | null>(null)
 
@@ -392,17 +406,30 @@ async function send(question: string) {
   chat.value.push({ role: 'user', text: question.trim() })
   chatInput.value = ''
   chatBusy.value = true
+  live.value = null
   scrollDown()
+  stopper = new AbortController()
   try {
-    const saved = await askInConversation(conversation.value, question.trim())
+    const saved = await askInConversation(
+      conversation.value,
+      question.trim(),
+      (now) => {
+        live.value = now
+        nextTick(() => chatLog.value && (chatLog.value.scrollTop = chatLog.value.scrollHeight))
+      },
+      stopper.signal,
+    )
     conversation.value = saved.id
     const last = saved.turns[saved.turns.length - 1]
     const answer = last?.answer ?? undefined
     chat.value.push({ role: 'assistant', text: last?.text ?? '', answer, turn: last?.id })
   } catch (err) {
-    chat.value.push({ role: 'assistant', text: '', error: apiErrorMessage(err) })
+    if (stopper?.signal.aborted) chat.value.push({ role: 'assistant', text: '', error: 'Stopped. Nothing was kept.' })
+    else chat.value.push({ role: 'assistant', text: '', error: apiErrorMessage(err) })
   } finally {
     chatBusy.value = false
+    live.value = null
+    stopper = null
     scrollDown()
     nextTick(() => (pending.value ? confirmBtn() : chatInputEl.value?.textareaRef)?.focus())
   }
@@ -639,8 +666,18 @@ function onPlanKey(e: KeyboardEvent) {
               />
             </template>
           </div>
-          <div v-if="chatBusy" class="turn assistant">
-            <p class="thinking"><span class="dot" /><span class="dot" /><span class="dot" /> Looking it up…</p>
+          <div v-if="chatBusy" class="turn assistant" :aria-busy="true">
+            <ul v-if="live?.steps.length" class="steps">
+              <li v-for="(s, k) in live.steps" :key="k">
+                <HIcon :name="k === live.steps.length - 1 && !live.text ? 'loading' : 'check'" :size="12" /> {{ s.label }}
+              </li>
+            </ul>
+            <div v-if="live?.text" class="a writing">
+              <p v-for="(line, k) in live.text.split('\n').filter((l) => l.trim())" :key="k">{{ line }}</p>
+            </div>
+            <p v-else-if="!live?.steps.length" class="thinking">
+              <span class="dot" /><span class="dot" /><span class="dot" /> Thinking…
+            </p>
           </div>
         </div>
         <div v-if="pending" class="confirmbar">
@@ -668,8 +705,12 @@ function onPlanKey(e: KeyboardEvent) {
           class="ask"
           @submit="send(chatInput)"
         >
-          <UChatPromptSubmit :status="chatBusy ? 'submitted' : 'ready'" :disabled="chatBusy || !chatInput.trim()">
-            Ask
+          <UChatPromptSubmit
+            :status="!chatBusy ? 'ready' : live?.text ? 'streaming' : 'submitted'"
+            :disabled="!chatBusy && !chatInput.trim()"
+            @stop="stopAnswer"
+          >
+            {{ chatBusy ? 'Stop' : 'Ask' }}
           </UChatPromptSubmit>
         </UChatPrompt>
         <p v-if="!pending" class="disclaimer">AI answers can be wrong. Nothing is created, moved or sent until you confirm.</p>
@@ -847,6 +888,17 @@ function onPlanKey(e: KeyboardEvent) {
   gap: 6px;
   font-size: 12.5px;
   color: var(--faint);
+}
+.a.writing p:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: blink 1s steps(2, start) infinite;
 }
 .thinking {
   display: flex;
