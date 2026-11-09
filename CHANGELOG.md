@@ -6,6 +6,10 @@ All notable changes to Havre are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-09
+
+Live AI answers, and Havre on your phone with push notifications.
+
 ### Added
 
 - **Live answers** in the AI tab and Ctrl+K: the answer is written as the model writes it, and each step shows as
@@ -99,6 +103,7 @@ The first release.
 - Email HTML sanitised and sandboxed; the assistant only proposes changes, confirmed by the user.
 - The web UI loads nothing from other servers.
 
-[Unreleased]: https://github.com/maelbel/havre/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/maelbel/havre/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/maelbel/havre/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/maelbel/havre/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/maelbel/havre/releases/tag/v0.1.0
