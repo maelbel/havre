@@ -8,7 +8,7 @@ members = ["crates/core", "crates/server", "crates/cli"]
 exclude = ["desktop/src-tauri"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 # The oldest Rust that builds Havre (mail-parser 1.0 needs 1.98). An older one gets a clear
 # message from cargo instead of strange errors. `rustup update` fixes it.
