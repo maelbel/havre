@@ -145,8 +145,8 @@ impl OAuthApp {
     /// and who you are (to fill in the address). Microsoft also needs
     /// `offline_access` for a refresh token; Google uses `access_type=offline`
     /// in the link instead, and its mail scope covers IMAP and SMTP.
-    /// The calendar (Agenda) and tasks too: Microsoft Graph (Calendars,
-    /// To Do), Google Calendar and Google Tasks.
+    /// The calendar (Agenda), tasks and contacts too: Microsoft Graph
+    /// (Calendars, To Do, Contacts), Google Calendar, Tasks and Contacts.
     pub fn scopes(&self) -> &'static str {
         match self.provider {
             // Mail first: Microsoft gives the first sign-in token for the
@@ -154,11 +154,12 @@ impl OAuthApp {
             Provider::Microsoft => {
                 "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send \
                  https://graph.microsoft.com/Calendars.ReadWrite \
-                 https://graph.microsoft.com/Tasks.ReadWrite offline_access openid email profile"
+                 https://graph.microsoft.com/Tasks.ReadWrite https://graph.microsoft.com/Contacts.ReadWrite \
+                 offline_access openid email profile"
             }
             Provider::Google => {
                 "https://mail.google.com/ https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/tasks \
-                 openid email"
+                 https://www.googleapis.com/auth/contacts openid email"
             }
         }
     }
@@ -189,6 +190,15 @@ impl OAuthApp {
         granted.is_some_and(|s| match self.provider {
             Provider::Microsoft => s.contains("Tasks.ReadWrite"),
             Provider::Google => s.contains("auth/tasks"),
+        })
+    }
+
+    /// Can a sign-in with these scopes read and change your contacts?
+    /// (Signed in before contacts sync existed: reconnect once.)
+    pub fn can_contacts(&self, granted: Option<&str>) -> bool {
+        granted.is_some_and(|s| match self.provider {
+            Provider::Microsoft => s.contains("Contacts.ReadWrite"),
+            Provider::Google => s.contains("auth/contacts"),
         })
     }
 
@@ -770,9 +780,14 @@ mod tests {
         let calendar = app.scopes_for(granted, Resource::Calendar);
         assert_eq!(
             calendar,
-            "https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Tasks.ReadWrite offline_access"
+            "https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Tasks.ReadWrite \
+             https://graph.microsoft.com/Contacts.ReadWrite offline_access"
         );
         assert!(app.can_calendar(granted) && app.can_send(granted) && app.can_tasks(granted));
+        assert!(
+            app.can_contacts(granted)
+                && !app.can_contacts(Some("https://graph.microsoft.com/Tasks.ReadWrite"))
+        );
         // Signed in before sending and the Agenda existed.
         assert_eq!(
             app.scopes_for(None, Resource::Mail),
@@ -797,7 +812,8 @@ mod tests {
         assert!(url.contains("access_type=offline"));
         assert!(url.contains(
             "scope=https%3A%2F%2Fmail.google.com%2F+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar+\
-             https%3A%2F%2Fwww.googleapis.com%2Fauth%2Ftasks+openid+email"
+             https%3A%2F%2Fwww.googleapis.com%2Fauth%2Ftasks+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcontacts+\
+             openid+email"
         ));
         assert!(!app.supports_device_code());
         assert_eq!(Provider::for_host("imap.gmail.com"), Some(Provider::Google));
