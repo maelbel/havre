@@ -33,7 +33,7 @@ Each step teaches something and leaves the app working.
 - Later: several users, passkeys.
 - ✅ Compose, reply, reply all, forward with SMTP (`lettre`): password or OAuth2 (`XOAUTH2`), copy filed in Sent, `\Answered` flag.
 - ✅ Drafts saved as you type, attachments, recipient suggestions; SMTP settings and sender name per account.
-- Later: rich text editor, signatures, undo send, send later. (Drafts on the server: step 17.)
+- Later: rich text editor, ~~signatures, undo send, send later~~ (step 24). (Drafts on the server: step 17.)
 
 ## 4 · Agenda ✅
 - ✅ Day, week and month views; create, edit, move between calendars, delete; guests.
@@ -377,3 +377,23 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - *Learned:* incremental sync with tokens (and when they expire), a three-way merge, a line-based format by hand
   (folding at byte boundaries, escaping), conditional requests (`If-Match`), percent-encoding when comparing
   URLs, a page remounted on a new address (state in the URL instead).
+
+## 24 · Signatures, undo send, send later ✅
+- ✅ A plain-text signature per account, below a `-- ` line; above the quote in replies and forwards (or not);
+  swapped when *From* changes unless edited; grey in the HTML version. A body that's only the signature counts as
+  empty (no Drafts copy, not listed).
+- ✅ One outbox for both: a draft with a time to send. *Send* = now + the undo delay (Settings › Your apps › Mail);
+  *Undo* / *Don't send* clear it; *Send later* picks the time (tomorrow 8:00 / 13:00, Monday 8:00, any). A loop
+  every 2 s sends what's due with the usual `send_draft`.
+- ✅ Never twice: an atomic claim (`UPDATE … WHERE send_state = 'waiting'`); a message caught mid-send by a
+  restart is marked *may have gone*, never resent on its own. Scheduled messages leave the server's Drafts
+  folder. Failures stay in *Scheduled* with the reason, announced (toast, Desktop, push); late sends said so.
+- ✅ Tested: signatures (new, reply, off in replies, swap, edited, HTML), the outbox (due times, the claim,
+  undo, interrupted, settings, recipients checked at *Send*), the failure push; end to end against a TLS SMTP
+  server (undo before the time, sent after it, *too late* to undo, send later, a failure with the server down,
+  sending again); in Chromium the signature, *From* swap, the menu, the picker, *Scheduled*, *Don't send*, the
+  settings, the night of a clock change (8:00 stays 8:00), dark, light, phone.
+- Later: rich text in messages and signatures, several signatures per account, aliases, follow-up reminders.
+- *Learned:* a job queue in SQLite (a column as the schedule, a loop as the worker), "at most once" with an atomic
+  claim and its affected-rows count, what to do after a crash in the middle of something that can't be undone,
+  delays done on the server, local time for "tomorrow at 8" across a clock change, `trim` in SQLite.

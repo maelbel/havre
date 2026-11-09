@@ -79,6 +79,9 @@ pub enum SyncEvent {
     Tasks,
     /// People changed (an address book was synced).
     People,
+    /// The outbox sent a message, couldn't, or one was scheduled or taken
+    /// back (undo send, send later).
+    Outbox { draft: i64, subject: String, sent: bool, late: bool, error: Option<String> },
     /// A task's reminder time has come.
     Reminder { task: i64, title: String },
     /// An event's reminder time has come (`event_reminder` in JSON).

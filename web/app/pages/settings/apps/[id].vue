@@ -115,9 +115,13 @@ async function setInDock(on: boolean) {
         <TaskSyncSettings v-if="app.id === 'tasks'" />
         <FilesSettings v-else-if="app.id === 'files'" />
         <ContactSyncSettings v-else-if="app.id === 'people'" />
-        <p v-else-if="app.id === 'mail'" class="none">
-          Accounts, their passwords and sending servers are in <NuxtLink to="/settings">Settings › Accounts</NuxtLink>.
-        </p>
+        <template v-else-if="app.id === 'mail'">
+          <MailSettings />
+          <p class="none">
+            Accounts, their signatures, passwords and sending servers are in
+            <NuxtLink to="/settings">Settings › Accounts</NuxtLink>.
+          </p>
+        </template>
         <p v-else-if="app.id === 'agenda'" class="none">
           Calendars — which ones show, their colour, where new events go, CalDAV servers to add — are in
           <NuxtLink to="/settings/calendars">Settings › Calendars</NuxtLink>.

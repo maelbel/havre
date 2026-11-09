@@ -389,6 +389,17 @@ impl Push {
                     self.notify(&event_notification(*id, title, *start, *all_day, location, tz)).await?;
                 }
             }
+            // A scheduled message couldn't go: always said (you may count on it).
+            SyncEvent::Outbox { draft, subject, sent: false, error: Some(error), .. } => {
+                let subject = if subject.trim().is_empty() { "(no subject)" } else { subject.trim() };
+                self.notify(&Notification {
+                    title: format!("Not sent: {subject}"),
+                    body: error.chars().take(160).collect(),
+                    url: "/mail?view=scheduled".into(),
+                    tag: format!("havre-outbox-{draft}"),
+                })
+                .await?;
+            }
             SyncEvent::Folder { path } => {
                 let notes = self.new_mail(event.account, path).await?;
                 if self.settings().await?.new_mail {
@@ -726,6 +737,33 @@ mod tests {
         let requests = got.lock().unwrap().clone();
         assert_eq!(requests.len(), 1, "the second one is off");
         assert_eq!(shown(&requests[0].1)["url"], "/tasks?task=7");
+    }
+
+    #[tokio::test]
+    async fn a_failed_scheduled_message_is_pushed() {
+        let db = Database::in_memory().await.unwrap();
+        let push = Push::new(db);
+        let (endpoint, got) = push_service(vec![201]).await;
+        subscribe(&push, &endpoint).await;
+        let outbox = |sent: bool, error: Option<&str>| AccountEvent {
+            account: 0,
+            event: SyncEvent::Outbox {
+                draft: 3,
+                subject: "Quote".into(),
+                sent,
+                late: false,
+                error: error.map(str::to_owned),
+            },
+        };
+        // Sent, and scheduled: nothing to say.
+        push.on_event(&outbox(true, None)).await.unwrap();
+        push.on_event(&outbox(false, None)).await.unwrap();
+        push.on_event(&outbox(false, Some("The server refused the password."))).await.unwrap();
+        let requests = got.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1);
+        let note = shown(&requests[0].1);
+        assert_eq!(note["title"], "Not sent: Quote");
+        assert_eq!(note["body"], "The server refused the password.");
     }
 
     #[tokio::test]

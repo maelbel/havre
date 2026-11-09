@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use havre_core::{
     Error, Result,
     accounts::{AccountManager, AccountView, OAuthRequest, SignInStart, SignInState},
-    compose::{Draft, Drafts, NewDraft, SendOutcome},
+    compose::{Draft, Drafts, NewDraft},
     mail::{
         self, ActionOutcome, AttachmentData, ListQuery, MessageDetail, MessagePage, RenderOptions,
         demo::DemoStore,
@@ -61,6 +61,8 @@ impl MailSource {
                         can_calendar: false,
                         can_tasks: false,
                         can_contacts: false,
+                        signature: String::new(),
+                        signature_in_replies: true,
                     },
                     status: idle_status(),
                     unread,
@@ -103,10 +105,6 @@ impl MailSource {
 
     pub async fn new_draft(&self, start: NewDraft) -> Result<Draft> {
         self.manager()?.new_draft(start).await
-    }
-
-    pub async fn send_draft(&self, id: i64) -> Result<SendOutcome> {
-        self.manager()?.send_draft(id).await
     }
 
     /// A draft from the server's Drafts folder, to finish in Havre.

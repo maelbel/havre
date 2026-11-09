@@ -22,6 +22,8 @@ const form = reactive<AccountForm>({
   smtp_host: props.account?.smtp_host ?? '',
   smtp_port: props.account?.smtp_port ?? 465,
   smtp_security: props.account?.smtp_security ?? 'tls',
+  signature: props.account?.signature ?? '',
+  signature_in_replies: props.account?.signature_in_replies ?? true,
 })
 
 // Picking TLS / STARTTLS also moves the usual port (465 / 587).
@@ -143,6 +145,8 @@ async function submit() {
         'smtp_host',
         'smtp_port',
         'smtp_security',
+        'signature',
+        'signature_in_replies',
       ] as const) {
         if (form[key] !== a[key]) (changes as Record<string, unknown>)[key] = form[key]
       }
@@ -220,6 +224,28 @@ const colors: { value: AccountColor; label: string }[] = ACCOUNT_COLORS
           class="w-full"
         />
       </UFormField>
+
+      <UFormField
+        v-if="editing"
+        label="Signature"
+        hint="plain text"
+        help="Added to your new messages, below a line of two dashes (the usual signature line)."
+        class="field wide"
+      >
+        <UTextarea
+          v-model="form.signature"
+          :rows="3"
+          autoresize
+          :placeholder="`${form.sender_name || 'Maël Belliard'}\nAcme · +33 1 23 45 67 89`"
+          class="w-full"
+        />
+      </UFormField>
+      <USwitch
+        v-if="editing && form.signature?.trim()"
+        v-model="form.signature_in_replies"
+        label="Also in replies and forwards"
+        class="field wide"
+      />
 
       <UFormField label="Name in Havre" class="field">
         <UInput v-model="form.name" required placeholder="Work" class="w-full" @input="nameTouched = true" />

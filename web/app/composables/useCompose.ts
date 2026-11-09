@@ -31,6 +31,12 @@ export interface Draft {
   server_pending: boolean
   /** Why the last save to the server failed. */
   server_error: string | null
+  /** The signature as Havre put it (swapped when "From" changes). */
+  signature: string
+  /** When it goes (unix seconds): soon (undo send) or later (send later). `null`: a draft. */
+  send_at: number | null
+  send_state: 'waiting' | 'sending' | 'failed' | null
+  send_error: string | null
 }
 
 export type DraftChanges = Partial<Pick<Draft, 'account' | 'to' | 'cc' | 'bcc' | 'subject' | 'body'>>
@@ -89,7 +95,8 @@ export function closeDraft(id: number) {
 
 /** Not in the server's Drafts folder (yet, or it can't be). */
 export function onlyInHavre(d: Draft) {
-  return !d.server_saved_at || !!d.server_error
+  // Waiting to be sent: under "Scheduled" instead.
+  return (!d.server_saved_at || !!d.server_error) && d.send_at == null
 }
 
 export function fetchDraft(id: number) {
@@ -105,8 +112,51 @@ export async function discardDraft(id: number) {
   refreshNuxtData('drafts')
 }
 
-export function sendDraft(id: number) {
-  return $fetch<{ saved_to_sent: boolean; warning: string | null }>(`/api/drafts/${id}/send`, { method: 'POST' })
+export interface SendOutcome {
+  saved_to_sent: boolean
+  warning: string | null
+}
+/** "Send": goes after the undo delay (`outcome` is set when there's none); `at`: send later. */
+export function sendDraft(id: number, at?: number) {
+  return $fetch<{ send_at: number; outcome: SendOutcome | null }>(`/api/drafts/${id}/send`, {
+    method: 'POST',
+    body: at ? { at } : {},
+  })
+}
+/** Undo send, or "Don't send": a draft again. */
+export function unsendDraft(id: number) {
+  return $fetch<Draft>(`/api/drafts/${id}/unsend`, { method: 'POST' })
+}
+/** Messages waiting to be sent, and those that couldn't be. */
+export function useScheduled() {
+  return useFetch<Draft[]>('/api/mail/scheduled', { key: 'scheduled', lazy: true, server: false, default: () => [] })
+}
+export interface MailSettings {
+  undo_seconds: number
+}
+export function fetchMailSettings() {
+  return $fetch<MailSettings>('/api/mail/settings')
+}
+export function saveMailSettings(settings: MailSettings) {
+  return $fetch<MailSettings>('/api/mail/settings', { method: 'PUT', body: settings })
+}
+
+/** "Tomorrow morning", "Monday morning"…: the next such moment, in your time zone. */
+export function sendLaterChoices(now = new Date()) {
+  const at = (days: number, hour: number) => {
+    // `setDate` + `setHours` work in local time: right across a clock change too.
+    const d = new Date(now)
+    d.setDate(d.getDate() + days)
+    d.setHours(hour, 0, 0, 0)
+    return d
+  }
+  // The next Monday (a week later if today is Monday).
+  const toMonday = ((8 - now.getDay()) % 7) || 7
+  return [
+    { label: 'Tomorrow morning', at: at(1, 8) },
+    { label: 'Tomorrow afternoon', at: at(1, 13) },
+    { label: 'Monday morning', at: at(toMonday, 8) },
+  ]
 }
 
 export function attachFile(id: number, file: File) {

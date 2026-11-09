@@ -59,6 +59,10 @@ pub struct Account {
     pub can_tasks: bool,
     /// The sign-in allows contacts sync (Outlook contacts, Google Contacts).
     pub can_contacts: bool,
+    /// Added after a `-- ` line to new messages (plain text).
+    pub signature: String,
+    /// Replies and forwards get it too (above the quoted message).
+    pub signature_in_replies: bool,
 }
 
 /// What the user types to add an account.
@@ -101,6 +105,8 @@ pub struct AccountUpdate {
     pub smtp_host: Option<String>,
     pub smtp_port: Option<u16>,
     pub smtp_security: Option<String>,
+    pub signature: Option<String>,
+    pub signature_in_replies: Option<bool>,
 }
 
 impl AccountUpdate {
@@ -584,6 +590,8 @@ impl Database {
             can_calendar,
             can_tasks,
             can_contacts,
+            signature: r.get("signature"),
+            signature_in_replies: r.get("signature_in_replies"),
         }
     }
 
@@ -659,6 +667,12 @@ impl Database {
         }
         if let Some(v) = &update.sender_name {
             sql.push(", sender_name = ").push_bind(v.trim().to_owned());
+        }
+        if let Some(v) = &update.signature {
+            sql.push(", signature = ").push_bind(clean_signature(v)?);
+        }
+        if let Some(v) = update.signature_in_replies {
+            sql.push(", signature_in_replies = ").push_bind(v);
         }
         if update.smtp_host.is_some() {
             sql.push(", smtp_host = ").push_bind(clean_host(&update.smtp_host));
@@ -792,10 +806,28 @@ impl Database {
 
 /// The columns `account_from_row` reads.
 const ACCOUNT_COLUMNS: &str = "id, name, email, color, imap_host, imap_port, imap_user, auth, \
-                               smtp_host, smtp_port, smtp_security, oauth_scope, sender_name";
+                               smtp_host, smtp_port, smtp_security, oauth_scope, sender_name, signature, \
+                               signature_in_replies";
 
 fn clean_host(host: &Option<String>) -> Option<String> {
     host.as_deref().map(str::trim).filter(|h| !h.is_empty()).map(str::to_owned)
+}
+
+/// A signature: trimmed, line ends unified, and short enough to be one.
+fn clean_signature(text: &str) -> Result<String> {
+    let text = text.replace("\r\n", "\n");
+    // A "-- " line inside would end the signature early for other mail apps.
+    let text: String =
+        text.lines().filter(|l| l.trim_end() != "--").collect::<Vec<_>>().join("\n").trim().to_owned();
+    if text.chars().count() > 2000 {
+        return Err(Error::Config("Keep the signature under 2,000 characters.".into()));
+    }
+    Ok(text)
+}
+
+#[cfg(test)]
+pub(crate) fn clean_signature_for_tests(text: &str) -> Result<String> {
+    clean_signature(text)
 }
 
 fn clean_security(security: &Option<String>) -> Result<Option<String>> {
