@@ -28,14 +28,14 @@
 //! | GET    | /contacts?q=                                     | recipient suggestions             |
 //! | GET    | /drafts · POST /drafts `{account, kind, folder?, uid?}` | drafts · start one (reply…) |
 //! | POST   | /drafts/from-message `{account, folder, uid}`  | finish a draft from the Drafts folder |
-//! | GET/PATCH/DELETE | /drafts/{id}  `{to?, cc?, subject?, body?…}` | one draft (autosave; delete: also on the server) |
+//! | GET/PATCH/DELETE | /drafts/{id}  `{to?, subject?, body_html?, rich?…}` | one draft (autosave; delete: also on the server) |
 //! | POST   | /drafts/{id}/close                               | save it on the server now (window closed) |
 //! | POST   | /drafts/{id}/attachments?filename=  (raw body)   | attach a file                     |
 //! | DELETE | /drafts/{id}/attachments/{attachment}            | remove it                         |
 //! | POST   | /drafts/{id}/send `{at?}`                        | send after the undo delay, or at `at` (send later); answers when |
 //! | POST   | /drafts/{id}/unsend                              | undo send / don't send: a draft again |
 //! | GET    | /mail/scheduled                                  | messages waiting to be sent (and failed ones) |
-//! | GET/PUT | /mail/settings `{undo_seconds}`                 | Mail's settings                   |
+//! | GET/PUT | /mail/settings `{undo_seconds, compose_format}` | Mail's settings                   |
 //!
 //! The Agenda's routes are in `agenda.rs`; AI in `ai.rs`; MCP in `mcp.rs`; apps, people and the unread
 //! inbox (what the apps share) in `platform.rs`; Tasks, Notes and Files in `tasks.rs`, `notes.rs`, `files.rs`.

@@ -25,8 +25,10 @@ export interface Account {
   can_calendar: boolean
   /** The sign-in allows Tasks (Microsoft To Do, Google Tasks). */
   can_tasks: boolean
-  /** Added after a `-- ` line to new messages (plain text). */
+  /** Added after a `-- ` line to new messages: its plain text… */
   signature: string
+  /** …and formatted (clean HTML). */
+  signature_html: string
   /** Replies and forwards get it too (above the quote). */
   signature_in_replies: boolean
   status: SyncStatus
@@ -48,6 +50,7 @@ export interface AccountForm {
   smtp_security: 'tls' | 'starttls'
   /** Editing only (a new account sets it afterwards). */
   signature?: string
+  signature_html?: string
   signature_in_replies?: boolean
 }
 

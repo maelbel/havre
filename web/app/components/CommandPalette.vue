@@ -52,6 +52,8 @@ watch(open, (v) => {
 })
 
 function onGlobalKey(e: KeyboardEvent) {
+  // Already used by what has the focus (the mail editor: Ctrl+K is a link there).
+  if (e.defaultPrevented) return
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
     e.preventDefault()
     if (open.value) close()

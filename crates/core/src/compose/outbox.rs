@@ -48,6 +48,13 @@ const INTERRUPTED: &str = "Havre stopped while sending this message: it may have
 pub struct MailSettings {
     /// How long "Undo" stays possible after "Send" (0: off).
     pub undo_seconds: i64,
+    /// New messages: `rich` (formatted, the default) or `plain`.
+    #[serde(default = "rich")]
+    pub compose_format: String,
+}
+
+fn rich() -> String {
+    "rich".into()
 }
 
 /// What "Send" answers.
@@ -61,18 +68,23 @@ pub struct SendReply {
 
 impl Drafts {
     pub async fn mail_settings(&self) -> Result<MailSettings> {
-        let undo_seconds = sqlx::query_scalar("SELECT undo_seconds FROM mail_settings WHERE id = 1")
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(MailSettings { undo_seconds })
+        let (undo_seconds, compose_format) =
+            sqlx::query_as("SELECT undo_seconds, compose_format FROM mail_settings WHERE id = 1")
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(MailSettings { undo_seconds, compose_format })
     }
 
     pub async fn set_mail_settings(&self, settings: &MailSettings) -> Result<MailSettings> {
         if !UNDO_CHOICES.contains(&settings.undo_seconds) {
             return Err(Error::Config("Undo lasts 0, 5, 10, 20 or 30 seconds.".into()));
         }
-        sqlx::query("UPDATE mail_settings SET undo_seconds = ? WHERE id = 1")
+        if !matches!(settings.compose_format.as_str(), "rich" | "plain") {
+            return Err(Error::Config("Messages are written as rich text or plain text.".into()));
+        }
+        sqlx::query("UPDATE mail_settings SET undo_seconds = ?, compose_format = ? WHERE id = 1")
             .bind(settings.undo_seconds)
+            .bind(&settings.compose_format)
             .execute(&self.pool)
             .await?;
         self.mail_settings().await
@@ -381,11 +393,11 @@ mod tests {
 
         // Settings: only the offered delays.
         assert_eq!(drafts.mail_settings().await.unwrap().undo_seconds, 10);
-        assert!(drafts.set_mail_settings(&MailSettings { undo_seconds: 7 }).await.is_err());
-        assert_eq!(
-            drafts.set_mail_settings(&MailSettings { undo_seconds: 30 }).await.unwrap().undo_seconds,
-            30
-        );
+        let settings =
+            |undo_seconds: i64, format: &str| MailSettings { undo_seconds, compose_format: format.into() };
+        assert!(drafts.set_mail_settings(&settings(7, "rich")).await.is_err());
+        assert!(drafts.set_mail_settings(&settings(10, "fancy")).await.is_err());
+        assert_eq!(drafts.set_mail_settings(&settings(30, "rich")).await.unwrap().undo_seconds, 30);
 
         // A new message holding only its signature isn't worth a copy on the server.
         let update = crate::store::AccountUpdate { signature: Some("Maël".into()), ..Default::default() };

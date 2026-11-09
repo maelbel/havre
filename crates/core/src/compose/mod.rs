@@ -19,6 +19,7 @@
 //!   replies), swapped when "From" changes.
 //! - **Undo send, send later** (step 24): see [`outbox`].
 
+pub mod html;
 pub mod outbox;
 
 use std::{str::FromStr, time::Duration};
@@ -215,8 +216,11 @@ pub struct Draft {
     pub cc: String,
     pub bcc: String,
     pub subject: String,
-    /// Plain text. Replies start with the quoted original (`> …`).
+    /// Plain text. Replies start with the quoted original (`> …`). For a
+    /// formatted draft, made from `body_html` by Havre.
     pub body: String,
+    /// The formatted text (clean HTML); `None` for a plain-text draft.
+    pub body_html: Option<String>,
     pub attachments: Vec<DraftAttachment>,
     pub updated_at: i64,
     /// When its copy was last saved in the server's Drafts folder.
@@ -283,7 +287,13 @@ pub struct DraftUpdate {
     pub cc: Option<String>,
     pub bcc: Option<String>,
     pub subject: Option<String>,
+    /// Plain text (a plain-text draft).
     pub body: Option<String>,
+    /// Formatted text (a rich draft): cleaned, and its plain text made from it.
+    pub body_html: Option<String>,
+    /// Turn the draft into a rich one (`true`, its text as paragraphs) or a
+    /// plain one (`false`, its formatting dropped).
+    pub rich: Option<bool>,
 }
 
 /// The largest attachment total accepted (most servers refuse ~25 MB).
@@ -307,8 +317,12 @@ pub struct Prefill {
     pub cc: String,
     pub subject: String,
     pub body: String,
+    /// The same, formatted (replies and forwards: the original's HTML, cleaned).
+    pub body_html: Option<String>,
     pub in_reply_to: Option<String>,
     pub references: Option<String>,
+    /// A draft finished from another app: taken as it is (no signature added).
+    pub as_is: bool,
 }
 
 impl Drafts {
@@ -325,18 +339,22 @@ impl Drafts {
     ) -> Result<i64> {
         let now = now();
         // The account's signature, where it goes for this kind of message.
-        let (signature, in_replies): (String, bool) =
-            sqlx::query_as("SELECT signature, signature_in_replies FROM accounts WHERE id = ?")
-                .bind(account)
-                .fetch_optional(&self.pool)
-                .await?
-                .unwrap_or_default();
-        let signature = signature_for(kind, &signature, in_replies);
-        let body = with_signature(&prefill.body, &signature);
+        let (text, html, in_replies) = self.signature_of(account).await?;
+        let signature = if prefill.as_is { String::new() } else { signature_for(kind, &text, in_replies) };
+        let rich = self.mail_format_rich().await?;
+        let (body, body_html) = if rich {
+            // Two empty paragraphs to write in? One is enough in an editor.
+            let quote = prefill.body_html.clone().unwrap_or_else(|| html::from_text(&prefill.body));
+            let sig = if signature.is_empty() { String::new() } else { html::signature_block(&html) };
+            let body_html = if prefill.as_is { quote } else { format!("<p></p>{sig}{quote}") };
+            (html::to_text(&body_html), Some(body_html))
+        } else {
+            (with_signature(&prefill.body, &signature), None)
+        };
         Ok(sqlx::query_scalar(
             "INSERT INTO drafts (account_id, kind, to_addrs, cc_addrs, subject, body, in_reply_to, refs,
-                                 source_folder, source_uid, created_at, updated_at, signature)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                                 source_folder, source_uid, created_at, updated_at, signature, body_html)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(account)
         .bind(kind.as_str())
@@ -351,8 +369,31 @@ impl Drafts {
         .bind(now)
         .bind(now)
         .bind(&signature)
+        .bind(&body_html)
         .fetch_one(&self.pool)
         .await?)
+    }
+
+    /// An account's signature: plain text, formatted, and whether replies get it.
+    async fn signature_of(&self, account: i64) -> Result<(String, String, bool)> {
+        let row: Option<(String, String, bool)> = sqlx::query_as(
+            "SELECT signature, signature_html, signature_in_replies FROM accounts WHERE id = ?",
+        )
+        .bind(account)
+        .fetch_optional(&self.pool)
+        .await?;
+        let (text, html, in_replies) = row.unwrap_or_default();
+        // Written before rich text: its HTML is made from the text.
+        let html = if html.is_empty() && !text.is_empty() { html::from_text(&text) } else { html };
+        Ok((text, html, in_replies))
+    }
+
+    /// New messages are written formatted (the default) or as plain text.
+    async fn mail_format_rich(&self) -> Result<bool> {
+        let format: String = sqlx::query_scalar("SELECT compose_format FROM mail_settings WHERE id = 1")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(format != "plain")
     }
 
     pub async fn get(&self, id: i64) -> Result<Draft> {
@@ -377,24 +418,48 @@ impl Drafts {
     }
 
     pub async fn update(&self, id: i64, update: &DraftUpdate) -> Result<Draft> {
-        // "From" changes: the signature follows, unless you edited it.
         let mut body = update.body.clone();
-        let mut signature = None;
-        if let Some(account) = update.account {
-            let current = self.get(id).await?;
-            if current.account != account {
-                let (theirs, in_replies): (String, bool) =
-                    sqlx::query_as("SELECT signature, signature_in_replies FROM accounts WHERE id = ?")
-                        .bind(account)
-                        .fetch_optional(&self.pool)
-                        .await?
-                        .unwrap_or_default();
-                let new = signature_for(current.kind, &theirs, in_replies);
-                let text = body.as_deref().unwrap_or(&current.body);
-                let (swapped, kept) = swap_signature(text, current.kind, &current.signature, &new);
-                body = Some(swapped);
-                signature = Some(kept);
+        // Formatted text: cleaned (never trust what a page sends), its plain text made from it.
+        let mut body_html: Option<Option<String>> = update.body_html.as_deref().map(|h| Some(html::clean(h)));
+        let needs_current = update.account.is_some() || update.rich.is_some();
+        let current = if needs_current { Some(self.get(id).await?) } else { None };
+        // Rich or plain, from now on.
+        if let (Some(rich), Some(current)) = (update.rich, &current) {
+            match (rich, &current.body_html) {
+                (true, None) => {
+                    let text = body.as_deref().unwrap_or(&current.body);
+                    body_html = Some(Some(html::from_text(text)));
+                }
+                (false, Some(_)) => body_html = Some(None),
+                _ => {}
             }
+        }
+        // "From" changes: the signature follows, unless you edited it.
+        let mut signature = None;
+        if let (Some(account), Some(current)) = (update.account, &current)
+            && current.account != account
+        {
+            let (text, sig_html, in_replies) = self.signature_of(account).await?;
+            let new = signature_for(current.kind, &text, in_replies);
+            match body_html.clone().unwrap_or(current.body_html.clone()) {
+                Some(rich) => {
+                    let new_html = if new.is_empty() { String::new() } else { sig_html };
+                    let (swapped, kept) =
+                        swap_signature_html(&rich, current.kind, &current.signature, &new, &new_html);
+                    body_html = Some(Some(swapped));
+                    signature = Some(kept);
+                }
+                None => {
+                    let text = body.as_deref().unwrap_or(&current.body);
+                    let (swapped, kept) = swap_signature(text, current.kind, &current.signature, &new);
+                    body = Some(swapped);
+                    signature = Some(kept);
+                }
+            }
+        }
+        // A formatted draft's plain text always comes from its HTML.
+        if let Some(Some(h)) = &body_html {
+            body = Some(html::to_text(h));
         }
         // Each change counts (`version`): the server copy is behind until
         // it holds the newest one.
@@ -409,10 +474,15 @@ impl Drafts {
             ("body", &body),
             ("signature", &signature),
         ];
+        let body_html_set = body_html.is_some();
+        let body_html = body_html.flatten();
         for (column, value) in fields {
             if let Some(value) = value {
                 sql.push(format!(", {column} = ")).push_bind(value.clone());
             }
+        }
+        if body_html_set {
+            sql.push(", body_html = ").push_bind(body_html);
         }
         if let Some(account) = update.account {
             sql.push(", account_id = ").push_bind(account);
@@ -599,6 +669,7 @@ fn draft_from_row(r: &SqliteRow) -> Draft {
         bcc: r.get("bcc_addrs"),
         subject: r.get("subject"),
         body: r.get("body"),
+        body_html: r.get("body_html"),
         attachments: Vec::new(),
         updated_at: r.get("updated_at"),
         server_saved_at: r.get("server_saved_at"),
@@ -684,6 +755,31 @@ fn swap_signature(body: &str, kind: DraftKind, old: &str, new: &str) -> (String,
     (body.to_owned(), String::new())
 }
 
+/// [`swap_signature`] for a formatted draft: the `div data-signature` block
+/// is replaced (or removed), if its text is still the one Havre put in.
+fn swap_signature_html(
+    body: &str,
+    kind: DraftKind,
+    old: &str,
+    new_text: &str,
+    new_html: &str,
+) -> (String, String) {
+    if let Some((start, end)) = html::find_signature(body) {
+        let ours = !old.is_empty() && html::to_text(&body[start..end]) == format!("{SIGNATURE_LINE}{old}");
+        if !ours {
+            // You edited it (or it's not one Havre knows): yours now.
+            return (body.to_owned(), String::new());
+        }
+        let block = if new_text.is_empty() { String::new() } else { html::signature_block(new_html) };
+        return (format!("{}{block}{}", &body[..start], &body[end..]), new_text.to_owned());
+    }
+    // None before: a new message gets one at the end.
+    if !new_text.is_empty() && kind == DraftKind::New {
+        return (format!("{body}{}", html::signature_block(new_html)), new_text.to_owned());
+    }
+    (body.to_owned(), String::new())
+}
+
 // ---- Replies and forwards ------------------------------------------------------------
 
 /// Fills a reply or a forward from the original message. `own` are your
@@ -696,6 +792,13 @@ pub fn prefill(kind: DraftKind, raw: &[u8], own: &[String]) -> Prefill {
     let cc = message.cc().map(people).unwrap_or_default();
     let date = message.date().map(|d| d.to_rfc822()).unwrap_or_default();
     let text = message.body_text(0).map(|t| t.into_owned()).unwrap_or_default();
+    // The original, formatted (or its text as paragraphs), kept to the allowed
+    // tags. Its own signature block isn't one Havre could swap.
+    let original_html = match message.body_html(0) {
+        Some(h) => html::clean(&h),
+        _ => html::from_text(text.trim_end()),
+    }
+    .replace("<div data-signature=\"\">", "<div>");
     let message_id = message.message_id().map(|id| format!("<{id}>"));
     let mut references = ids(message.references());
     if let Some(id) = &message_id {
@@ -707,6 +810,14 @@ pub fn prefill(kind: DraftKind, raw: &[u8], own: &[String]) -> Prefill {
 
     match kind {
         DraftKind::Forward => Prefill {
+            body_html: Some(format!(
+                "<p>---------- Forwarded message ----------<br>From: {}<br>Date: {}<br>Subject: {}<br>To: {}{}</p>{original_html}",
+                html::escape(&join(&from)),
+                html::escape(&date),
+                html::escape(&subject),
+                html::escape(&join(&to)),
+                if cc.is_empty() { String::new() } else { format!("<br>Cc: {}", html::escape(&join(&cc))) },
+            )),
             subject: prefixed("Fwd: ", &subject, &["fwd:", "fw:", "tr:"]),
             body: format!(
                 "\n\n---------- Forwarded message ----------\nFrom: {}\nDate: {date}\nSubject: {subject}\nTo: {}\n{}\n{}",
@@ -757,8 +868,17 @@ pub fn prefill(kind: DraftKind, raw: &[u8], own: &[String]) -> Prefill {
                 } else {
                     format!("\n\nOn {date}, {sender_name} wrote:\n{quoted}")
                 },
+                body_html: Some(format!(
+                    "<p>{}</p><blockquote>{original_html}</blockquote>",
+                    html::escape(&if date.is_empty() {
+                        format!("{sender_name} wrote:")
+                    } else {
+                        format!("On {date}, {sender_name} wrote:")
+                    })
+                )),
                 in_reply_to: message_id,
                 references: (!references.is_empty()).then(|| references.join(" ")),
+                as_is: false,
             }
         }
         DraftKind::New => Prefill::default(),
@@ -904,7 +1024,11 @@ fn build(
         builder = builder.references(refs.clone());
     }
     let text = draft.body.replace("\r\n", "\n");
-    let html = text_to_html_signed(&text, &draft.signature);
+    let html = match &draft.body_html {
+        // A formatted draft: its own HTML (cleaned again: it may come from anywhere).
+        Some(rich) => html::for_sending(&html::clean(rich)),
+        None => text_to_html_signed(&text, &draft.signature),
+    };
     let alternative = MultiPart::alternative_plain_html(text.clone(), html);
     let message = if attachments.is_empty() {
         builder.multipart(alternative)
@@ -1241,6 +1365,9 @@ impl AccountManager {
             cc: addresses(message.cc()),
             subject: message.subject().unwrap_or_default().trim().to_owned(),
             body: message.body_text(0).map(|t| t.trim_end().to_owned()).unwrap_or_default(),
+            // Its formatting, kept to what Havre allows.
+            body_html: message.body_html(0).map(|h| html::clean(&h)),
+            as_is: true,
             in_reply_to: message.in_reply_to().and_then(|list| list.first()).map(|id| format!("<{id}>")),
             references: (!references.is_empty()).then(|| references.join(" ")),
         };
@@ -1412,6 +1539,9 @@ mod tests {
     async fn signatures_in_new_messages_replies_and_when_from_changes() {
         let (db, work, home) = two_accounts().await;
         let drafts = db.drafts();
+        // Plain-text messages here (rich ones: the next test).
+        let plain = outbox::MailSettings { undo_seconds: 10, compose_format: "plain".into() };
+        drafts.set_mail_settings(&plain).await.unwrap();
         // A new message: two empty lines to write in, then the signature.
         let id = drafts.insert(work, DraftKind::New, &Prefill::default(), None).await.unwrap();
         let draft = drafts.get(id).await.unwrap();
@@ -1434,6 +1564,102 @@ mod tests {
         db.update_account(work, &off).await.unwrap();
         let id = drafts.insert(work, DraftKind::Reply, &reply, None).await.unwrap();
         assert_eq!(drafts.get(id).await.unwrap().body, reply.body);
+    }
+
+    #[tokio::test]
+    async fn rich_drafts_signatures_and_replies() {
+        let (db, work, home) = two_accounts().await;
+        let drafts = db.drafts();
+        // A formatted signature for work.
+        let sig = crate::store::AccountUpdate {
+            signature_html: Some(
+                "<p>Maël <strong>Belliard</strong><br><a href=\"https://havre.app\">havre.app</a></p>".into(),
+            ),
+            ..Default::default()
+        };
+        let account = db.update_account(work, &sig).await.unwrap();
+        assert_eq!(
+            account.signature, "Maël Belliard\nhavre.app <https://havre.app>",
+            "its plain text, made from it"
+        );
+
+        // A new message: an empty paragraph, then the signature block.
+        let id = drafts.insert(work, DraftKind::New, &Prefill::default(), None).await.unwrap();
+        let draft = drafts.get(id).await.unwrap();
+        let html = draft.body_html.clone().unwrap();
+        assert!(html.starts_with("<p></p><div data-signature=\"\"><p>-- </p><p>Maël <strong>"), "{html}");
+        assert!(draft.is_empty(), "only the signature: nothing written");
+
+        // You write (the page sends HTML, maybe with things it shouldn't).
+        let written = format!("<p>Hello <em>Anna</em><script>x()</script></p>{}", &html[7..]);
+        let draft =
+            drafts.update(id, &DraftUpdate { body_html: Some(written), ..Default::default() }).await.unwrap();
+        assert!(!draft.body_html.as_deref().unwrap().contains("script"));
+        assert!(draft.body.starts_with("Hello Anna\n\n-- \nMaël Belliard"), "{}", draft.body);
+        // From home: the signature block follows.
+        let draft =
+            drafts.update(id, &DraftUpdate { account: Some(home), ..Default::default() }).await.unwrap();
+        assert_eq!(
+            draft.body_html.as_deref().unwrap(),
+            "<p>Hello <em>Anna</em></p><div data-signature=\"\"><p>-- </p><p>Maël</p></div>"
+        );
+        assert_eq!(draft.signature, "Maël");
+        // Edited by you: not swapped back.
+        let edited = "<p>Hi</p><div data-signature=\"\"><p>-- </p><p>Maël B.</p></div>";
+        drafts
+            .update(id, &DraftUpdate { body_html: Some(edited.into()), ..Default::default() })
+            .await
+            .unwrap();
+        let back =
+            drafts.update(id, &DraftUpdate { account: Some(work), ..Default::default() }).await.unwrap();
+        assert_eq!(back.body_html.as_deref(), Some(edited));
+
+        // Sending: the HTML part is the draft's, styled; the text part made from it.
+        assert!(build_message("", "me@work.org", &back, vec![]).is_err(), "no recipient yet");
+        let to = DraftUpdate { to: Some("anna@example.com".into()), ..Default::default() };
+        let ready = drafts.update(id, &to).await.unwrap();
+        let raw =
+            String::from_utf8(build_message("", "me@work.org", &ready, vec![]).unwrap().formatted()).unwrap();
+        assert!(raw.contains("text/plain") && raw.contains("text/html"), "{raw}");
+        assert!(raw.contains("color: #777"), "the signature in grey: {raw}");
+
+        // A reply quotes the original, formatted, in a quote.
+        let reply = prefill(DraftKind::Reply, ORIGINAL_HTML, &[]);
+        let quoted = reply.body_html.clone().unwrap();
+        assert!(
+            quoted.contains("wrote:</p><blockquote>") && quoted.contains("<strong>Friday</strong>"),
+            "{quoted}"
+        );
+        assert!(!quoted.contains("data-signature") && !quoted.contains("script"), "{quoted}");
+        let id = drafts.insert(work, DraftKind::Reply, &reply, None).await.unwrap();
+        let html = drafts.get(id).await.unwrap().body_html.unwrap();
+        let (sig, quote) = (html.find("data-signature").unwrap(), html.find("<blockquote>").unwrap());
+        assert!(sig < quote, "the signature above the quote");
+
+        // Plain ↔ rich on a draft.
+        let plain =
+            drafts.update(id, &DraftUpdate { rich: Some(false), ..Default::default() }).await.unwrap();
+        assert!(plain.body_html.is_none() && plain.body.contains("> "));
+        let again = drafts.update(id, &DraftUpdate { rich: Some(true), ..Default::default() }).await.unwrap();
+        assert!(again.body_html.unwrap().contains("<blockquote>"));
+    }
+
+    const ORIGINAL_HTML: &[u8] = b"From: Anna Martin <anna@example.com>\r\n\
+To: me@work.org\r\nSubject: Lunch\r\nDate: Mon, 2 Nov 2026 10:00:00 +0100\r\nMessage-ID: <x@example.com>\r\n\
+MIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+<html><body><p style=\"color:red\">Lunch on <strong>Friday</strong>?</p>\
+<div data-signature=\"\"><p>-- </p><p>Anna</p></div><script>x()</script></body></html>\r\n";
+
+    #[test]
+    fn swapping_html_signatures_from_the_editor() {
+        // The editor drops the space after "--" (HTML collapses it): still ours.
+        let body = "<p>Hi</p><div data-signature=\"\"><p>--</p><p>Maël</p></div><p></p>";
+        let (swapped, sig) = swap_signature_html(body, DraftKind::New, "Maël", "Other", "<p>Other</p>");
+        assert_eq!(swapped, "<p>Hi</p><div data-signature=\"\"><p>-- </p><p>Other</p></div><p></p>");
+        assert_eq!(sig, "Other");
+        // Edited inside the block: yours, left alone.
+        let edited = body.replace("Maël", "Maël B.");
+        assert_eq!(swap_signature_html(&edited, DraftKind::New, "Maël", "Other", "<p>Other</p>").0, edited);
     }
 
     #[test]
@@ -1512,6 +1738,7 @@ Are you free?\r\n> earlier\r\n";
             bcc: "secret@example.com".into(),
             subject: "Re: Lunch".into(),
             body: "Yes!\n\n> Are you free?".into(),
+            body_html: None,
             attachments: vec![],
             updated_at: 0,
             server_saved_at: None,

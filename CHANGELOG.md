@@ -8,6 +8,10 @@ All notable changes to Havre are listed here. The format follows
 
 ### Added
 
+- **Rich text in Mail**: bold, italic, underline, strikethrough, links, lists and quotes, with a toolbar and the
+  usual shortcuts (`Ctrl+B/I/U`, `Ctrl+K` for a link, `- ` for a list). Pasting keeps the formatting that makes
+  sense; replies quote the original with its formatting; signatures can have bold, italics and links. Recipients
+  get a plain-text version too. Prefer plain text? Settings › Your apps › Mail › *Write messages in*.
 - **Signatures**: one per account (Settings › Accounts), in new messages and above the quote in replies and
   forwards, swapped when you change *From*.
 - **Undo send**: *Sending… · Undo* for 10 seconds (Settings › Your apps › Mail: off, 5–30 s), done on the server.

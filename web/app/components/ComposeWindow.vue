@@ -8,7 +8,11 @@ const accounts = useAccounts()
 const toast = useToasts()
 
 const draft = ref<Draft | null>(null)
-const form = reactive({ account: 0, to: '', cc: '', bcc: '', subject: '', body: '' })
+const form = reactive({ account: 0, to: '', cc: '', bcc: '', subject: '', body: '', html: '' })
+/** A formatted draft (the rich text editor) or a plain one (a text box). */
+const rich = computed(() => draft.value?.body_html != null)
+const richRef = ref<{ editor: import('@tiptap/core').Editor | null } | null>(null)
+const richEditor = computed(() => richRef.value?.editor ?? null)
 const showCc = ref(false)
 const showBcc = ref(false)
 const loading = ref(false)
@@ -39,9 +43,13 @@ let saving: Promise<unknown> = Promise.resolve()
 
 function changes(): DraftChanges {
   const out: DraftChanges = {}
-  for (const key of ['to', 'cc', 'bcc', 'subject', 'body'] as const) {
+  for (const key of ['to', 'cc', 'bcc', 'subject'] as const) {
     if (form[key] !== saved[key]) out[key] = form[key]
   }
+  // The text: formatted (the server cleans it and makes its plain text), or plain.
+  if (rich.value) {
+    if (form.html !== saved.html) out.body_html = form.html
+  } else if (form.body !== saved.body) out.body = form.body
   if (form.account !== saved.account) out.account = form.account
   return out
 }
@@ -62,6 +70,10 @@ async function flush() {
       if (diff.account !== undefined && form.body === snapshot.body && d.body !== snapshot.body) {
         form.body = d.body
         snapshot.body = d.body
+      }
+      if (diff.account !== undefined && form.html === snapshot.html && d.body_html != null && d.body_html !== snapshot.html) {
+        form.html = d.body_html
+        snapshot.html = d.body_html
       }
       saved = snapshot
       status.value = 'saved'
@@ -121,10 +133,20 @@ watch(
     error.value = null
     confirmDiscard.value = false
     try {
-      const d = await fetchDraft(id)
+      let d = await fetchDraft(id)
+      // A plain draft (from before rich text) opens formatted, when that's how you write.
+      if (d.body_html == null && (await mailFormat()) === 'rich') d = await saveDraft(id, { rich: true })
       draft.value = d
       server.value = serverState(d)
-      Object.assign(form, { account: d.account, to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, body: d.body })
+      Object.assign(form, {
+        account: d.account,
+        to: d.to,
+        cc: d.cc,
+        bcc: d.bcc,
+        subject: d.subject,
+        body: d.body,
+        html: d.body_html ?? '',
+      })
       showCc.value = !!d.cc
       showBcc.value = !!d.bcc
       saved = { ...form }
@@ -133,7 +155,10 @@ watch(
       await nextTick()
       // New message or forward: start with the recipients. Reply: type above the quote.
       if (!d.to) toInput.value?.focus()
-      else if (bodyInput.value) {
+      else if (rich.value) {
+        // The editor is made just after: wait for it, then the cursor at the top.
+        setTimeout(() => richEditor.value?.commands.focus('start'), 50)
+      } else if (bodyInput.value) {
         bodyInput.value.focus()
         bodyInput.value.setSelectionRange(0, 0)
         bodyInput.value.scrollTop = 0
@@ -185,15 +210,18 @@ async function writeWithAi() {
   aiAbort = new AbortController()
   aiBusy.value = true
   error.value = null
-  const before = form.body
-  const quote = before.slice(quoteStart(before))
+  const before = rich.value ? form.html : form.body
+  // What stays below what the AI writes: the signature and the quoted message.
+  const tail = rich.value ? before.slice(richTailStart(before)) : before.slice(quoteStart(before))
+  const text = rich.value ? (richEditor.value?.getText({ blockSeparator: '\n\n' }) ?? draft.value.body) : before
   try {
     await streamAi(
       '/api/ai/draft',
-      { draft: draft.value.id, instruction: aiInstruction.value, body: before },
-      (text) => {
-        const { text: clean, warning } = splitWarning(text)
-        form.body = clean.trim() + (quote ? `\n\n${quote}` : '')
+      { draft: draft.value.id, instruction: aiInstruction.value, body: text },
+      (written) => {
+        const { text: clean, warning } = splitWarning(written)
+        if (rich.value) form.html = textToHtml(clean.trim()) + tail
+        else form.body = clean.trim() + (tail ? `\n\n${tail}` : '')
         if (warning) error.value = warning
       },
       aiAbort.signal,
@@ -203,8 +231,10 @@ async function writeWithAi() {
     aiInstruction.value = ''
     nextTick(() => bodyInput.value?.focus())
   } catch (err) {
-    if ((err as Error).name === 'AbortError') form.body = before
-    else error.value = (err as Error).message
+    if ((err as Error).name === 'AbortError') {
+      if (rich.value) form.html = before
+      else form.body = before
+    } else error.value = (err as Error).message
   } finally {
     aiBusy.value = false
   }
@@ -212,14 +242,30 @@ async function writeWithAi() {
 
 function undoAi() {
   if (aiUndo.value === null) return
-  form.body = aiUndo.value
+  if (rich.value) form.html = aiUndo.value
+  else form.body = aiUndo.value
   aiUndo.value = null
+}
+
+/** In formatted text: where the signature, or else the quote (with its "… wrote:" line), starts. */
+function richTailStart(html: string) {
+  const sig = html.indexOf('<div data-signature')
+  let quote = html.indexOf('<blockquote')
+  // The "On Mon, Anna wrote:" paragraph just before the quote goes with it.
+  if (quote > 0) {
+    const para = html.lastIndexOf('<p>', quote)
+    if (para >= 0 && /wrote:\s*<\/p>\s*$/.test(html.slice(para, quote))) quote = para
+  }
+  const forward = html.indexOf('<p>---------- Forwarded message')
+  const starts = [sig, quote, forward].filter((i) => i >= 0)
+  return starts.length ? Math.min(...starts) : html.length
 }
 // Typing after the AI wrote: the undo no longer applies.
 watch(
-  () => form.body,
+  () => [form.body, form.html],
   () => {
-    if (!aiBusy.value && aiUndo.value !== null && document.activeElement === bodyInput.value) aiUndo.value = null
+    const typing = document.activeElement === bodyInput.value || !!richEditor.value?.isFocused
+    if (!aiBusy.value && aiUndo.value !== null && typing) aiUndo.value = null
   },
 )
 
@@ -333,6 +379,14 @@ const scheduledLine = computed(() => {
 /** Closes the window; the draft stays (in "Drafts"). */
 /** The text you wrote: the body without the signature Havre put in. */
 function written() {
+  if (rich.value) {
+    // Formatted: the editor's text, outside the signature block.
+    let text = ''
+    richEditor.value?.state.doc.forEach((node) => {
+      if (node.type.name !== 'signature') text += node.textContent
+    })
+    return richEditor.value ? text : form.html.replace(/<[^>]+>/g, '')
+  }
   const sig = draft.value?.signature
   return sig ? form.body.replace(`-- \n${sig}`, '') : form.body
 }
@@ -556,7 +610,15 @@ const fromItems = computed(() =>
           <UButton color="primary" variant="link" size="sm" class="p-0" @click="undoAi">Undo</UButton>
         </p>
 
+        <LazyRichText
+          v-if="rich"
+          ref="richRef"
+          v-model="form.html"
+          placeholder="Write your message…"
+          class="text rich"
+        />
         <UTextarea
+          v-else
           ref="bodyRef"
           v-model="form.body"
           variant="none"
@@ -788,6 +850,7 @@ h2 {
   color: var(--danger);
   border-bottom: 1px solid var(--line);
 }
+/* The text fills the window's height (the rich editor scrolls inside). */
 .text {
   flex: 1;
   min-height: 0;

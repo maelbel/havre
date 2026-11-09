@@ -33,7 +33,7 @@ Each step teaches something and leaves the app working.
 - Later: several users, passkeys.
 - ✅ Compose, reply, reply all, forward with SMTP (`lettre`): password or OAuth2 (`XOAUTH2`), copy filed in Sent, `\Answered` flag.
 - ✅ Drafts saved as you type, attachments, recipient suggestions; SMTP settings and sender name per account.
-- Later: rich text editor, ~~signatures, undo send, send later~~ (step 24). (Drafts on the server: step 17.)
+- Later: ~~rich text editor~~ (step 25), ~~signatures, undo send, send later~~ (step 24). (Drafts on the server: step 17.)
 
 ## 4 · Agenda ✅
 - ✅ Day, week and month views; create, edit, move between calendars, delete; guests.
@@ -393,7 +393,27 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
   server (undo before the time, sent after it, *too late* to undo, send later, a failure with the server down,
   sending again); in Chromium the signature, *From* swap, the menu, the picker, *Scheduled*, *Don't send*, the
   settings, the night of a clock change (8:00 stays 8:00), dark, light, phone.
-- Later: rich text in messages and signatures, several signatures per account, aliases, follow-up reminders.
+- Later: ~~rich text in messages and signatures~~ (step 25), several signatures per account, aliases, follow-up
+  reminders.
 - *Learned:* a job queue in SQLite (a column as the schedule, a loop as the worker), "at most once" with an atomic
   claim and its affected-rows count, what to do after a crash in the middle of something that can't be undone,
   delays done on the server, local time for "tomorrow at 8" across a clock change, `trim` in SQLite.
+
+## 25 · Rich text in Mail ✅
+- ✅ The compose window's text is rich text (Nuxt UI's `UEditor`, on TipTap): bold, italic, underline,
+  strikethrough, links (`Ctrl+K`), lists, quotes, clear formatting; Markdown-like shortcuts while typing. The
+  editor only has what the server keeps, and loads only when a compose window or a signature opens.
+- ✅ Never trusting the browser: `compose/html.rs` cleans what it sends with `ammonia` and a short allowlist
+  (`https`, `http`, `mailto` links only). The HTML is the draft's source; its plain text is made from it by hand
+  (lists, `text <address>` links, `> ` quotes, the `-- ` line) for the text part, search, the AI and plain mode.
+- ✅ Replies and forwards quote the original's cleaned HTML (or its text as paragraphs) in a `<blockquote>`;
+  drafts from other apps keep their formatting. Signatures are formatted too (bold, italic, links), a block of
+  their own in the message (`<div data-signature>`), still swapped on *From*. *Write messages in*: rich or plain.
+- ✅ Tested: cleaning (scripts, events, styles, `javascript:` links), HTML → text (nested lists, quotes in quotes,
+  entities, a space between two tags), replies, signatures (inserted, swapped from the editor's HTML, edited, plain
+  mode); in Chromium the toolbar, the shortcuts, a link, pasting a styled page, a reply, the signature editor,
+  plain mode, a long message, dark, light, phone; the sent message's two parts read back from an SMTP server.
+- Later: images in messages, colours and fonts, tables, templates.
+- *Learned:* allowlist sanitizing on the server, walking HTML to write text, one source of truth with a derived
+  form, how an editor's schema limits what it can produce, lazy-loaded components, Vue's single-root rule for
+  `class` and scoped styles.

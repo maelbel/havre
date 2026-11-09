@@ -156,12 +156,16 @@ Prefill {
     cc: "",
     subject: "Re: Déjeuner jeudi ?",
     body: "\n\nOn Wed, 14 Oct 2026 09:42:00 +0200, Anaïs Leroy wrote:\n> Jeudi me va très bien, à midi ?\n> \n> Anaïs\n> \n> On Tue, 13 Oct 2026 at 18:00, Mael <mael@example.net> wrote:\n>> On déjeune ensemble jeudi ?\n",
+    body_html: Some(
+        "<p>On Wed, 14 Oct 2026 09:42:00 +0200, Anaïs Leroy wrote:</p><blockquote>Jeudi me va très bien, à midi ?<br><br>Anaïs<br><br>On Tue, 13 Oct 2026 at 18:00, Mael &lt;mael@example.net&gt; wrote:<br>&gt; On déjeune ensemble jeudi ?<br></blockquote>",
+    ),
     in_reply_to: Some(
         "<reply-2@example.org>",
     ),
     references: Some(
         "<root-0@example.net> <first-1@example.net> <reply-2@example.org>",
     ),
+    as_is: false,
 }
 --- prefill ReplyAll
 Prefill {
@@ -169,12 +173,16 @@ Prefill {
     cc: "\"Dupont, Jean\" <jean@example.com>, claire@example.org",
     subject: "Re: Déjeuner jeudi ?",
     body: "\n\nOn Wed, 14 Oct 2026 09:42:00 +0200, Anaïs Leroy wrote:\n> Jeudi me va très bien, à midi ?\n> \n> Anaïs\n> \n> On Tue, 13 Oct 2026 at 18:00, Mael <mael@example.net> wrote:\n>> On déjeune ensemble jeudi ?\n",
+    body_html: Some(
+        "<p>On Wed, 14 Oct 2026 09:42:00 +0200, Anaïs Leroy wrote:</p><blockquote>Jeudi me va très bien, à midi ?<br><br>Anaïs<br><br>On Tue, 13 Oct 2026 at 18:00, Mael &lt;mael@example.net&gt; wrote:<br>&gt; On déjeune ensemble jeudi ?<br></blockquote>",
+    ),
     in_reply_to: Some(
         "<reply-2@example.org>",
     ),
     references: Some(
         "<root-0@example.net> <first-1@example.net> <reply-2@example.org>",
     ),
+    as_is: false,
 }
 --- prefill Forward
 Prefill {
@@ -182,8 +190,12 @@ Prefill {
     cc: "",
     subject: "Fwd: Re: Déjeuner jeudi ?",
     body: "\n\n---------- Forwarded message ----------\nFrom: Anaïs Leroy <anais@example.org>\nDate: Wed, 14 Oct 2026 09:42:00 +0200\nSubject: Re: Déjeuner jeudi ?\nTo: Mael <mael@example.net>, \"Dupont, Jean\" <jean@example.com>\nCc: claire@example.org\n\nJeudi me va très bien, à midi ?\r\n\r\nAnaïs\r\n\r\nOn Tue, 13 Oct 2026 at 18:00, Mael <mael@example.net> wrote:\r\n> On déjeune ensemble jeudi ?",
+    body_html: Some(
+        "<p>---------- Forwarded message ----------<br>From: Anaïs Leroy &lt;anais@example.org&gt;<br>Date: Wed, 14 Oct 2026 09:42:00 +0200<br>Subject: Re: Déjeuner jeudi ?<br>To: Mael &lt;mael@example.net&gt;, &quot;Dupont, Jean&quot; &lt;jean@example.com&gt;<br>Cc: claire@example.org</p>Jeudi me va très bien, à midi ?<br><br>Anaïs<br><br>On Tue, 13 Oct 2026 at 18:00, Mael &lt;mael@example.net&gt; wrote:<br>&gt; On déjeune ensemble jeudi ?<br>",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- search text
 Jeudi me va très bien, à midi ? Anaïs
@@ -326,12 +338,16 @@ Prefill {
     cc: "",
     subject: "Re: [havre] CI passed on main",
     body: "\n\nOn Tue, 13 Oct 2026 07:05:00 +0000, Forgejo wrote:\n> All checks passed ✓ on commit 49fcbf4.\n> See https://forge.example/havre/actions/12\n",
+    body_html: Some(
+        "<p>On Tue, 13 Oct 2026 07:05:00 +0000, Forgejo wrote:</p><blockquote><p>All checks passed ✓</p>\n\n<a href=\"https://forge.example/havre/actions/12\" rel=\"noopener noreferrer\">See the run</a>\n</blockquote>",
+    ),
     in_reply_to: Some(
         "<ci-77@forge.example>",
     ),
     references: Some(
         "<ci-77@forge.example>",
     ),
+    as_is: false,
 }
 --- prefill ReplyAll
 Prefill {
@@ -339,12 +355,16 @@ Prefill {
     cc: "",
     subject: "Re: [havre] CI passed on main",
     body: "\n\nOn Tue, 13 Oct 2026 07:05:00 +0000, Forgejo wrote:\n> All checks passed ✓ on commit 49fcbf4.\n> See https://forge.example/havre/actions/12\n",
+    body_html: Some(
+        "<p>On Tue, 13 Oct 2026 07:05:00 +0000, Forgejo wrote:</p><blockquote><p>All checks passed ✓</p>\n\n<a href=\"https://forge.example/havre/actions/12\" rel=\"noopener noreferrer\">See the run</a>\n</blockquote>",
+    ),
     in_reply_to: Some(
         "<ci-77@forge.example>",
     ),
     references: Some(
         "<ci-77@forge.example>",
     ),
+    as_is: false,
 }
 --- prefill Forward
 Prefill {
@@ -352,8 +372,12 @@ Prefill {
     cc: "",
     subject: "Fwd: [havre] CI passed on main",
     body: "\n\n---------- Forwarded message ----------\nFrom: Forgejo <noreply@forge.example>\nDate: Tue, 13 Oct 2026 07:05:00 +0000\nSubject: [havre] CI passed on main\nTo: mael@example.net\n\nAll checks passed ✓ on commit 49fcbf4.\r\nSee https://forge.example/havre/actions/12",
+    body_html: Some(
+        "<p>---------- Forwarded message ----------<br>From: Forgejo &lt;noreply@forge.example&gt;<br>Date: Tue, 13 Oct 2026 07:05:00 +0000<br>Subject: [havre] CI passed on main<br>To: mael@example.net</p><p>All checks passed ✓</p>\n\n<a href=\"https://forge.example/havre/actions/12\" rel=\"noopener noreferrer\">See the run</a>\n",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- search text
 All checks passed ✓ on commit 49fcbf4. See https://forge.example/havre/actions/12
@@ -492,12 +516,16 @@ Prefill {
     cc: "",
     subject: "Re: Votre facture d'octobre",
     body: "\n\nOn Tue, 13 Oct 2026 03:00:00 +0200, OVHcloud wrote:\n> Votre factureMontant\u{a0}: 12,99\u{a0}€\n> Merci\u{a0}!\n",
+    body_html: Some(
+        "<p>On Tue, 13 Oct 2026 03:00:00 +0200, OVHcloud wrote:</p><blockquote>Votre facture<p>Montant&nbsp;: <b>12,99&nbsp;€</b></p><p>Merci&nbsp;!</p></blockquote>",
+    ),
     in_reply_to: Some(
         "<inv-oct@ovh.example>",
     ),
     references: Some(
         "<inv-oct@ovh.example>",
     ),
+    as_is: false,
 }
 --- prefill ReplyAll
 Prefill {
@@ -505,12 +533,16 @@ Prefill {
     cc: "",
     subject: "Re: Votre facture d'octobre",
     body: "\n\nOn Tue, 13 Oct 2026 03:00:00 +0200, OVHcloud wrote:\n> Votre factureMontant\u{a0}: 12,99\u{a0}€\n> Merci\u{a0}!\n",
+    body_html: Some(
+        "<p>On Tue, 13 Oct 2026 03:00:00 +0200, OVHcloud wrote:</p><blockquote>Votre facture<p>Montant&nbsp;: <b>12,99&nbsp;€</b></p><p>Merci&nbsp;!</p></blockquote>",
+    ),
     in_reply_to: Some(
         "<inv-oct@ovh.example>",
     ),
     references: Some(
         "<inv-oct@ovh.example>",
     ),
+    as_is: false,
 }
 --- prefill Forward
 Prefill {
@@ -518,8 +550,12 @@ Prefill {
     cc: "",
     subject: "Fwd: Votre facture d'octobre",
     body: "\n\n---------- Forwarded message ----------\nFrom: OVHcloud <facturation@ovh.example>\nDate: Tue, 13 Oct 2026 03:00:00 +0200\nSubject: Votre facture d'octobre\nTo: mael@example.net\n\nVotre factureMontant\u{a0}: 12,99\u{a0}€\nMerci\u{a0}!",
+    body_html: Some(
+        "<p>---------- Forwarded message ----------<br>From: OVHcloud &lt;facturation@ovh.example&gt;<br>Date: Tue, 13 Oct 2026 03:00:00 +0200<br>Subject: Votre facture d'octobre<br>To: mael@example.net</p>Votre facture<p>Montant&nbsp;: <b>12,99&nbsp;€</b></p><p>Merci&nbsp;!</p>",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- search text
 Votre factureMontant : 12,99 € Merci !
@@ -719,12 +755,16 @@ Prefill {
     cc: "",
     subject: "Re: Photos du week-end",
     body: "\n\nOn Tue, 13 Oct 2026 21:10:00 +0200, Sophie Martin wrote:\n> Voici le devis et une photo.\n",
+    body_html: Some(
+        "<p>On Tue, 13 Oct 2026 21:10:00 +0200, Sophie Martin wrote:</p><blockquote><p>Voici le devis et une photo&nbsp;:</p></blockquote>",
+    ),
     in_reply_to: Some(
         "<photos@example.org>",
     ),
     references: Some(
         "<photos@example.org>",
     ),
+    as_is: false,
 }
 --- prefill ReplyAll
 Prefill {
@@ -732,12 +772,16 @@ Prefill {
     cc: "",
     subject: "Re: Photos du week-end",
     body: "\n\nOn Tue, 13 Oct 2026 21:10:00 +0200, Sophie Martin wrote:\n> Voici le devis et une photo.\n",
+    body_html: Some(
+        "<p>On Tue, 13 Oct 2026 21:10:00 +0200, Sophie Martin wrote:</p><blockquote><p>Voici le devis et une photo&nbsp;:</p></blockquote>",
+    ),
     in_reply_to: Some(
         "<photos@example.org>",
     ),
     references: Some(
         "<photos@example.org>",
     ),
+    as_is: false,
 }
 --- prefill Forward
 Prefill {
@@ -745,8 +789,12 @@ Prefill {
     cc: "",
     subject: "Fwd: Photos du week-end",
     body: "\n\n---------- Forwarded message ----------\nFrom: Sophie Martin <sophie@example.org>\nDate: Tue, 13 Oct 2026 21:10:00 +0200\nSubject: Photos du week-end\nTo: mael@example.net\n\nVoici le devis et une photo.",
+    body_html: Some(
+        "<p>---------- Forwarded message ----------<br>From: Sophie Martin &lt;sophie@example.org&gt;<br>Date: Tue, 13 Oct 2026 21:10:00 +0200<br>Subject: Photos du week-end<br>To: mael@example.net</p><p>Voici le devis et une photo&nbsp;:</p>",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- search text
 Voici le devis et une photo.
@@ -928,12 +976,16 @@ Prefill {
     cc: "",
     subject: "Re: Invitation: Kick-off atelier Lyon",
     body: "\n\nOn Wed, 14 Oct 2026 08:00:00 +0200, Claire Dubois wrote:\n> Kick-off atelier Lyon, Tuesday 20 October 10:00.\n",
+    body_html: Some(
+        "<p>On Wed, 14 Oct 2026 08:00:00 +0200, Claire Dubois wrote:</p><blockquote>Kick-off atelier Lyon, Tuesday 20 October 10:00.<br></blockquote>",
+    ),
     in_reply_to: Some(
         "<invite-1@example.org>",
     ),
     references: Some(
         "<invite-1@example.org>",
     ),
+    as_is: false,
 }
 --- prefill ReplyAll
 Prefill {
@@ -941,12 +993,16 @@ Prefill {
     cc: "",
     subject: "Re: Invitation: Kick-off atelier Lyon",
     body: "\n\nOn Wed, 14 Oct 2026 08:00:00 +0200, Claire Dubois wrote:\n> Kick-off atelier Lyon, Tuesday 20 October 10:00.\n",
+    body_html: Some(
+        "<p>On Wed, 14 Oct 2026 08:00:00 +0200, Claire Dubois wrote:</p><blockquote>Kick-off atelier Lyon, Tuesday 20 October 10:00.<br></blockquote>",
+    ),
     in_reply_to: Some(
         "<invite-1@example.org>",
     ),
     references: Some(
         "<invite-1@example.org>",
     ),
+    as_is: false,
 }
 --- prefill Forward
 Prefill {
@@ -954,8 +1010,12 @@ Prefill {
     cc: "",
     subject: "Fwd: Invitation: Kick-off atelier Lyon",
     body: "\n\n---------- Forwarded message ----------\nFrom: Claire Dubois <claire@example.org>\nDate: Wed, 14 Oct 2026 08:00:00 +0200\nSubject: Invitation: Kick-off atelier Lyon\nTo: mael@example.net\n\nKick-off atelier Lyon, Tuesday 20 October 10:00.",
+    body_html: Some(
+        "<p>---------- Forwarded message ----------<br>From: Claire Dubois &lt;claire@example.org&gt;<br>Date: Wed, 14 Oct 2026 08:00:00 +0200<br>Subject: Invitation: Kick-off atelier Lyon<br>To: mael@example.net</p>Kick-off atelier Lyon, Tuesday 20 October 10:00.<br>",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- search text
 Kick-off atelier Lyon, Tuesday 20 October 10:00.
@@ -1110,12 +1170,16 @@ Prefill {
     cc: "",
     subject: "Re: Accepted: Kick-off atelier Lyon",
     body: "\n\nOn Wed, 14 Oct 2026 10:00:00 +0200, Thomas Renard wrote:\n",
+    body_html: Some(
+        "<p>On Wed, 14 Oct 2026 10:00:00 +0200, Thomas Renard wrote:</p><blockquote></blockquote>",
+    ),
     in_reply_to: Some(
         "<accept-1@example.com>",
     ),
     references: Some(
         "<accept-1@example.com>",
     ),
+    as_is: false,
 }
 --- prefill ReplyAll
 Prefill {
@@ -1123,12 +1187,16 @@ Prefill {
     cc: "claire@example.org",
     subject: "Re: Accepted: Kick-off atelier Lyon",
     body: "\n\nOn Wed, 14 Oct 2026 10:00:00 +0200, Thomas Renard wrote:\n",
+    body_html: Some(
+        "<p>On Wed, 14 Oct 2026 10:00:00 +0200, Thomas Renard wrote:</p><blockquote></blockquote>",
+    ),
     in_reply_to: Some(
         "<accept-1@example.com>",
     ),
     references: Some(
         "<accept-1@example.com>",
     ),
+    as_is: false,
 }
 --- prefill Forward
 Prefill {
@@ -1136,8 +1204,12 @@ Prefill {
     cc: "",
     subject: "Fwd: Accepted: Kick-off atelier Lyon",
     body: "\n\n---------- Forwarded message ----------\nFrom: Thomas Renard <thomas@example.com>\nDate: Wed, 14 Oct 2026 10:00:00 +0200\nSubject: Accepted: Kick-off atelier Lyon\nTo: claire@example.org\n\n",
+    body_html: Some(
+        "<p>---------- Forwarded message ----------<br>From: Thomas Renard &lt;thomas@example.com&gt;<br>Date: Wed, 14 Oct 2026 10:00:00 +0200<br>Subject: Accepted: Kick-off atelier Lyon<br>To: claire@example.org</p>",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- search text
 
@@ -1301,12 +1373,16 @@ Prefill {
     cc: "",
     subject: "Re: Réunion équipe",
     body: "\n\nOn Mon, 12 Oct 2026 16:30:00 +0200, Renée François wrote:\n> Réunion d'équipe lundi à 10h.\n> -- \n> Renée\n",
+    body_html: Some(
+        "<p>On Mon, 12 Oct 2026 16:30:00 +0200, Renée François wrote:</p><blockquote>Réunion d'équipe lundi à 10h.<br>-- <br>Renée<br></blockquote>",
+    ),
     in_reply_to: Some(
         "<groups@example.fr>",
     ),
     references: Some(
         "<only-one@example.fr> <groups@example.fr>",
     ),
+    as_is: false,
 }
 --- prefill ReplyAll
 Prefill {
@@ -1314,12 +1390,16 @@ Prefill {
     cc: "a@example.fr, B. Bernard <b@example.fr>, solo@example.fr",
     subject: "Re: Réunion équipe",
     body: "\n\nOn Mon, 12 Oct 2026 16:30:00 +0200, Renée François wrote:\n> Réunion d'équipe lundi à 10h.\n> -- \n> Renée\n",
+    body_html: Some(
+        "<p>On Mon, 12 Oct 2026 16:30:00 +0200, Renée François wrote:</p><blockquote>Réunion d'équipe lundi à 10h.<br>-- <br>Renée<br></blockquote>",
+    ),
     in_reply_to: Some(
         "<groups@example.fr>",
     ),
     references: Some(
         "<only-one@example.fr> <groups@example.fr>",
     ),
+    as_is: false,
 }
 --- prefill Forward
 Prefill {
@@ -1327,8 +1407,12 @@ Prefill {
     cc: "",
     subject: "Fwd: Réunion équipe",
     body: "\n\n---------- Forwarded message ----------\nFrom: Renée François <renee@example.fr>\nDate: Mon, 12 Oct 2026 16:30:00 +0200\nSubject: Réunion équipe\nTo: a@example.fr, B. Bernard <b@example.fr>, solo@example.fr\n\nRéunion d'équipe lundi à 10h.\r\n-- \r\nRenée",
+    body_html: Some(
+        "<p>---------- Forwarded message ----------<br>From: Renée François &lt;renee@example.fr&gt;<br>Date: Mon, 12 Oct 2026 16:30:00 +0200<br>Subject: Réunion équipe<br>To: a@example.fr, B. Bernard &lt;b@example.fr&gt;, solo@example.fr</p>Réunion d'équipe lundi à 10h.<br>-- <br>Renée<br>",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- search text
 Réunion d'équipe lundi à 10h. -- Renée
@@ -1415,8 +1499,12 @@ Prefill {
     cc: "",
     subject: "Re: no date, no sender",
     body: "\n\n wrote:\n> just some text without a content type\n> and a line with invalid UTF-8: �� caf�\n",
+    body_html: Some(
+        "<p> wrote:</p><blockquote>just some text without a content type<br>and a line with invalid UTF-8: �� caf�</blockquote>",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- prefill ReplyAll
 Prefill {
@@ -1424,8 +1512,12 @@ Prefill {
     cc: "",
     subject: "Re: no date, no sender",
     body: "\n\n wrote:\n> just some text without a content type\n> and a line with invalid UTF-8: �� caf�\n",
+    body_html: Some(
+        "<p> wrote:</p><blockquote>just some text without a content type<br>and a line with invalid UTF-8: �� caf�</blockquote>",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- prefill Forward
 Prefill {
@@ -1433,8 +1525,12 @@ Prefill {
     cc: "",
     subject: "Fwd: no date, no sender",
     body: "\n\n---------- Forwarded message ----------\nFrom: \nDate: \nSubject: no date, no sender\nTo: \n\njust some text without a content type\r\nand a line with invalid UTF-8: �� caf�",
+    body_html: Some(
+        "<p>---------- Forwarded message ----------<br>From: <br>Date: <br>Subject: no date, no sender<br>To: </p>just some text without a content type<br>and a line with invalid UTF-8: �� caf�",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- search text
 just some text without a content type and a line with invalid UTF-8: �� caf�
@@ -1594,12 +1690,16 @@ Prefill {
     cc: "",
     subject: "Re: Fwd: Devis maintenance Q4",
     body: "\n\nOn Tue, 13 Oct 2026 11:00:00 +0200, Julien Morel wrote:\n> Pour info.\n> \n> ---------- Forwarded message ----------\n> From: Thomas <thomas@example.com>\n",
+    body_html: Some(
+        "<p>On Tue, 13 Oct 2026 11:00:00 +0200, Julien Morel wrote:</p><blockquote>Pour info.<br><br>---------- Forwarded message ----------<br>From: Thomas &lt;thomas@example.com&gt;<br></blockquote>",
+    ),
     in_reply_to: Some(
         "<fwd-1@example.com>",
     ),
     references: Some(
         "<fwd-1@example.com>",
     ),
+    as_is: false,
 }
 --- prefill ReplyAll
 Prefill {
@@ -1607,12 +1707,16 @@ Prefill {
     cc: "",
     subject: "Re: Fwd: Devis maintenance Q4",
     body: "\n\nOn Tue, 13 Oct 2026 11:00:00 +0200, Julien Morel wrote:\n> Pour info.\n> \n> ---------- Forwarded message ----------\n> From: Thomas <thomas@example.com>\n",
+    body_html: Some(
+        "<p>On Tue, 13 Oct 2026 11:00:00 +0200, Julien Morel wrote:</p><blockquote>Pour info.<br><br>---------- Forwarded message ----------<br>From: Thomas &lt;thomas@example.com&gt;<br></blockquote>",
+    ),
     in_reply_to: Some(
         "<fwd-1@example.com>",
     ),
     references: Some(
         "<fwd-1@example.com>",
     ),
+    as_is: false,
 }
 --- prefill Forward
 Prefill {
@@ -1620,8 +1724,12 @@ Prefill {
     cc: "",
     subject: "Fwd: Devis maintenance Q4",
     body: "\n\n---------- Forwarded message ----------\nFrom: Julien Morel <julien@example.com>\nDate: Tue, 13 Oct 2026 11:00:00 +0200\nSubject: Fwd: Devis maintenance Q4\nTo: mael@example.net\n\nPour info.\r\n\r\n---------- Forwarded message ----------\r\nFrom: Thomas <thomas@example.com>",
+    body_html: Some(
+        "<p>---------- Forwarded message ----------<br>From: Julien Morel &lt;julien@example.com&gt;<br>Date: Tue, 13 Oct 2026 11:00:00 +0200<br>Subject: Fwd: Devis maintenance Q4<br>To: mael@example.net</p>Pour info.<br><br>---------- Forwarded message ----------<br>From: Thomas &lt;thomas@example.com&gt;<br>",
+    ),
     in_reply_to: None,
     references: None,
+    as_is: false,
 }
 --- search text
 Pour info. ---------- Forwarded message ---------- From: Thomas <thomas@example.com>

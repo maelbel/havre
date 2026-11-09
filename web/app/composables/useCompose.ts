@@ -31,6 +31,8 @@ export interface Draft {
   server_pending: boolean
   /** Why the last save to the server failed. */
   server_error: string | null
+  /** The formatted text (clean HTML); `null` for a plain-text draft. */
+  body_html: string | null
   /** The signature as Havre put it (swapped when "From" changes). */
   signature: string
   /** When it goes (unix seconds): soon (undo send) or later (send later). `null`: a draft. */
@@ -39,7 +41,12 @@ export interface Draft {
   send_error: string | null
 }
 
-export type DraftChanges = Partial<Pick<Draft, 'account' | 'to' | 'cc' | 'bcc' | 'subject' | 'body'>>
+export type DraftChanges = Partial<Pick<Draft, 'account' | 'to' | 'cc' | 'bcc' | 'subject' | 'body'>> & {
+  /** Formatted text: the server cleans it and makes its plain text. */
+  body_html?: string
+  /** Make the draft formatted (`true`) or plain text (`false`). */
+  rich?: boolean
+}
 
 export interface Contact {
   name: string | null
@@ -133,6 +140,37 @@ export function useScheduled() {
 }
 export interface MailSettings {
   undo_seconds: number
+  /** How new messages are written. */
+  compose_format: 'rich' | 'plain'
+}
+/** How new messages are written (asked once per page). */
+let format: Promise<'rich' | 'plain'> | null = null
+export function mailFormat() {
+  format ??= fetchMailSettings()
+    .then((s) => s.compose_format)
+    .catch(() => 'rich' as const)
+  return format
+}
+/** After Settings changed it. */
+export function forgetMailFormat() {
+  format = null
+}
+
+/** Text as paragraphs of HTML (what the AI writes): `- ` lines become a list. */
+export function textToHtml(text: string) {
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return text
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/)
+    .filter((block) => block.trim())
+    .map((block) => {
+      const lines = block.split('\n')
+      if (lines.every((l) => /^\s*[-*] /.test(l))) {
+        return `<ul>${lines.map((l) => `<li><p>${esc(l.replace(/^\s*[-*] /, ''))}</p></li>`).join('')}</ul>`
+      }
+      return `<p>${lines.map(esc).join('<br>')}</p>`
+    })
+    .join('')
 }
 export function fetchMailSettings() {
   return $fetch<MailSettings>('/api/mail/settings')
