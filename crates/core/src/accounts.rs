@@ -162,6 +162,7 @@ impl AccountManager {
         tokio::spawn(snooze_loop(Arc::downgrade(&manager)));
         // Saves drafts to their account's Drafts folder as they change.
         tokio::spawn(crate::compose::drafts_loop(Arc::downgrade(&manager)));
+        tokio::spawn(crate::compose::outbox::outbox_loop(Arc::downgrade(&manager)));
         Ok(manager)
     }
 

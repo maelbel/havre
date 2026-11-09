@@ -32,7 +32,10 @@
 //! | POST   | /drafts/{id}/close                               | save it on the server now (window closed) |
 //! | POST   | /drafts/{id}/attachments?filename=  (raw body)   | attach a file                     |
 //! | DELETE | /drafts/{id}/attachments/{attachment}            | remove it                         |
-//! | POST   | /drafts/{id}/send                                | send, file in Sent, delete draft  |
+//! | POST   | /drafts/{id}/send `{at?}`                        | send after the undo delay, or at `at` (send later); answers when |
+//! | POST   | /drafts/{id}/unsend                              | undo send / don't send: a draft again |
+//! | GET    | /mail/scheduled                                  | messages waiting to be sent (and failed ones) |
+//! | GET/PUT | /mail/settings `{undo_seconds}`                 | Mail's settings                   |
 //!
 //! The Agenda's routes are in `agenda.rs`; AI in `ai.rs`; MCP in `mcp.rs`; apps, people and the unread
 //! inbox (what the apps share) in `platform.rs`; Tasks, Notes and Files in `tasks.rs`, `notes.rs`, `files.rs`.
@@ -61,7 +64,10 @@ use axum::{
 use futures::{Stream, StreamExt};
 use havre_core::{
     accounts::{AccountView, OAuthRequest, SignInStart, SignInState},
-    compose::{self, Draft, DraftAttachment, DraftUpdate, NewDraft, SendOutcome},
+    compose::{
+        self, Draft, DraftAttachment, DraftUpdate, NewDraft,
+        outbox::{MailSettings, SendReply},
+    },
     mail::{ActionOutcome, AttachmentData, ListQuery, MessageDetail, MessagePage, RenderOptions},
     oauth::{self, Provider},
     store::{Account, AccountUpdate, Contact, FolderInfo, NewAccount},
@@ -103,6 +109,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/drafts/{id}/attachments/{attachment}", delete(remove_attachment))
         .route("/drafts/{id}/send", post(send_draft))
+        .route("/drafts/{id}/unsend", post(unsend_draft))
+        .route("/mail/scheduled", get(scheduled))
+        .route("/mail/settings", get(mail_settings).put(set_mail_settings))
         .merge(auth::protected_routes())
         .merge(crate::agenda::routes())
         .merge(crate::tasks::routes())
@@ -353,12 +362,40 @@ async fn remove_attachment(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize, Default)]
+struct SendAt {
+    /// Send later: when (unix seconds). Missing: after the undo delay.
+    #[serde(default)]
+    at: Option<i64>,
+}
+
 /// `POST /api/drafts/{id}/send`
 async fn send_draft(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<Json<SendOutcome>, ApiError> {
-    Ok(Json(state.mail.send_draft(id).await?))
+    Json(body): Json<SendAt>,
+) -> Result<Json<SendReply>, ApiError> {
+    Ok(Json(state.mail.manager()?.send_draft_at(id, body.at).await?))
+}
+
+/// `POST /api/drafts/{id}/unsend` — Undo, or "Don't send".
+async fn unsend_draft(State(state): State<AppState>, Path(id): Path<i64>) -> Result<Json<Draft>, ApiError> {
+    Ok(Json(state.mail.manager()?.unsend(id).await?))
+}
+
+async fn scheduled(State(state): State<AppState>) -> Result<Json<Vec<Draft>>, ApiError> {
+    Ok(Json(state.mail.drafts()?.scheduled().await?))
+}
+
+async fn mail_settings(State(state): State<AppState>) -> Result<Json<MailSettings>, ApiError> {
+    Ok(Json(state.mail.drafts()?.mail_settings().await?))
+}
+
+async fn set_mail_settings(
+    State(state): State<AppState>,
+    Json(settings): Json<MailSettings>,
+) -> Result<Json<MailSettings>, ApiError> {
+    Ok(Json(state.mail.drafts()?.set_mail_settings(&settings).await?))
 }
 
 // ---- Mail -------------------------------------------------------------------------
