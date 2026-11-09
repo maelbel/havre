@@ -255,7 +255,7 @@ const items = computed<Item[]>(() => {
       id: `p:${p.email}`,
       group: 'People',
       label: personName(p),
-      hint: p.name ? p.email : undefined,
+      hint: p.emails.length ? (p.name ? p.email : undefined) : p.phones[0]?.number,
       icon: 'people',
       run: go(`/people/${encodeURIComponent(p.email)}`),
     })

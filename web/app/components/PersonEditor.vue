@@ -30,7 +30,13 @@ const months = [{ label: 'Month', value: 0 }].concat(
   })),
 )
 const days = [{ label: 'Day', value: 0 }].concat(Array.from({ length: 31 }, (_, i) => ({ label: String(i + 1), value: i + 1 })))
-const labels = ['mobile', 'work', 'home', 'other'].map((l) => ({ label: l, value: l }))
+// Havre's labels, plus any an address book gave ("main", "fax"…).
+const labels = computed(() =>
+  [...new Set(['mobile', 'work', 'home', 'other', ...form.phones.map((p) => p.label).filter(Boolean)])].map((l) => ({
+    label: l,
+    value: l,
+  })),
+)
 
 /** `YYYY-MM-DD`, `--MM-DD`, null (no birthday), or an error to show. */
 const birthday = computed<{ value: string | null } | { error: string }>(() => {
@@ -79,7 +85,11 @@ async function save() {
   <UModal
     :open="true"
     :title="`About ${personName(person)}`"
-    description="Only you see this. Leave anything empty."
+    :description="
+      person.books.length
+        ? `Changes also go to ${person.books.join(' and ')}. Leave anything empty.`
+        : 'Only you see this. Leave anything empty.'
+    "
     @update:open="(open) => !open && emit('cancel')"
   >
     <template #body>

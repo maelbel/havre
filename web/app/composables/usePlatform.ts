@@ -124,7 +124,7 @@ export function appSettingsPath(app: Pick<HavreApp, 'id'>) {
 // ---- People -------------------------------------------------------------------
 
 export interface PersonEntry {
-  /** The main address. */
+  /** The main address, or `~42` (their contact) for someone without one: the page's key. */
   email: string
   /** Every address of this person, the main one first. */
   emails: string[]
@@ -147,6 +147,9 @@ export interface PersonEntry {
   waiting_since: number | null
   /** `YYYY-MM-DD`, or `--MM-DD` without the year. */
   birthday: string | null
+  /** An address book has their photo (`personPhoto`). */
+  photo: boolean
+  phones: Phone[]
 }
 
 export interface Phone {
@@ -166,8 +169,12 @@ export interface MessageRef {
 }
 
 export interface PersonDetail extends PersonEntry {
-  phones: Phone[]
   note: string
+  /** The address books they're in. */
+  books: string[]
+  /** The address book that last changed their details, and when. */
+  updated_from: string | null
+  updated_from_at: number | null
   /** What you said (`null`: guessed from the address). */
   kind: 'person' | 'automated' | null
   last_from: number | null
@@ -228,6 +235,65 @@ export function removePersonAddress(email: string, other: string) {
   })
 }
 
+/** Someone new, by name; the address is optional. */
+export function createPerson(name: string, email?: string) {
+  return $fetch<PersonDetail>('/api/people', { method: 'POST', body: { name, email: email || null } })
+}
+/** A `.vcf` file into Havre only (nothing is sent to your address books). */
+export function importPeople(text: string) {
+  return $fetch<{ added: number; updated: number; skipped: number }>('/api/people/import', {
+    method: 'POST',
+    body: text,
+    headers: { 'content-type': 'text/vcard' },
+  })
+}
+export const PEOPLE_EXPORT = '/api/people/export.vcf'
+export function personPhoto(p: { email: string }) {
+  return `/api/people/${encodeURIComponent(p.email)}/photo`
+}
+/** Someone without an address: no mail, no meetings to show. */
+export function noAddress(p: { emails: string[] }) {
+  return p.emails.length === 0
+}
+
+// ---- Contacts sync (Settings › People) ----------------------------------------------
+
+export interface ContactBook {
+  id: number
+  source: 'google' | 'microsoft' | 'carddav'
+  name: string
+  read_only: boolean
+  synced_at: number | null
+  error: string | null
+  contacts: number
+}
+export interface ContactSource {
+  key: string
+  kind: 'google' | 'microsoft' | 'caldav'
+  name: string
+  enabled: boolean
+  /** The sign-in allows contacts (`false`: reconnect the account). */
+  allowed: boolean
+  account: number | null
+  books: ContactBook[]
+}
+export interface ContactSettings {
+  sources: ContactSource[]
+  default_book: number | null
+}
+export function fetchContactSettings() {
+  return $fetch<ContactSettings>('/api/contacts/settings')
+}
+export function setContactSource(key: string, enabled: boolean) {
+  return $fetch<ContactSettings>(`/api/contacts/sources/${encodeURIComponent(key)}`, { method: 'PUT', body: { enabled } })
+}
+export function setDefaultBook(book: number | null) {
+  return $fetch<ContactSettings>('/api/contacts/default', { method: 'PUT', body: { book } })
+}
+export function syncContacts() {
+  return $fetch<ContactSettings>('/api/contacts/sync', { method: 'POST' })
+}
+
 export interface PeopleToday {
   birthdays: { person: PersonEntry; date: string; days: number; turns: number | null }[]
   keep_in_touch: PersonEntry[]
@@ -247,6 +313,12 @@ export function ago(t: number | null | undefined, now = Date.now()): string {
   if (s < 60 * 86_400) return `${Math.floor(s / (7 * 86_400))} wk`
   if (s < 365 * 86_400) return `${Math.floor(s / (30 * 86_400))} mo`
   return `${Math.floor(s / (365 * 86_400))} y`
+}
+
+/** "3 d ago", or "just now". */
+export function agoText(t: number | null | undefined) {
+  const a = ago(t)
+  return a === 'now' ? 'just now' : `${a} ago`
 }
 
 /** Days until the next birthday (0: today), or null. 29 February: the 28th in other years. */
@@ -273,8 +345,11 @@ export function birthdayLabel(birthday: string): string {
   return m[1] === '-' ? day : `${day} ${m[1]}`
 }
 
-export function personName(p: { name: string; email: string }) {
-  return p.name || p.email
+export function personName(p: { name: string; email: string; phones?: { number: string }[] }) {
+  if (p.name) return p.name
+  // Someone without a name nor an address: their number.
+  if (p.email.startsWith('~')) return p.phones?.[0]?.number ?? 'Someone'
+  return p.email
 }
 
 /** "Claire Dubois <claire@x.fr>" → the address. */

@@ -5,9 +5,11 @@ import type { NoteSummary } from '~/composables/useNotes'
 import type { Task } from '~/composables/useTasks'
 
 // People: everyone you write to or meet, built from Mail (senders and
-// recipients) and the Agenda (guests). Nothing to fill in, but you can add
-// details, favourites, and merge someone's addresses. /people/<email> opens
-// one person: their details, where things stand, mail and meetings.
+// recipients) and the Agenda (guests), plus your address books when you sync
+// them (Settings › People). Nothing to fill in, but you can add details,
+// favourites, and merge someone's addresses. /people/<email> opens one
+// person: their details, where things stand, mail and meetings; someone
+// without an address is /people/~42 (their contact).
 const route = useRoute()
 const toast = useToasts()
 const email = computed(() => ((route.params.email as string) || '').toLowerCase() || null)
@@ -65,8 +67,63 @@ const birthdaySoon = (p: PersonEntry) => {
   const d = daysToBirthday(p.birthday)
   return d != null && d <= 7 ? d : null
 }
-/** Under the name: their company and role, else their address. */
-const subline = (p: PersonEntry) => [p.company, p.role].filter(Boolean).join(' · ') || (p.name ? p.email : counts(p))
+/** Under the name: their company and role, else their address (or number). */
+const subline = (p: PersonEntry) =>
+  [p.company, p.role].filter(Boolean).join(' · ') ||
+  (noAddress(p) ? (p.name ? (p.phones[0]?.number ?? '') : '') : p.name ? p.email : counts(p))
+
+// An address book changed something: refresh what's on screen (once for a burst).
+let refresh: ReturnType<typeof setTimeout> | undefined
+useMailEvents((event) => {
+  if (event.type !== 'people') return
+  clearTimeout(refresh)
+  refresh = setTimeout(async () => {
+    search()
+    if (email.value && !editing.value && !merging.value) {
+      detail.value = await fetchPerson(email.value).catch(() => detail.value)
+    }
+  }, 500)
+})
+onBeforeUnmount(() => clearTimeout(refresh))
+
+// ---- Someone new, .vcf files ------------------------------------------------------
+const adding = ref(false)
+const newPerson = reactive({ name: '', email: '' })
+async function addPerson() {
+  try {
+    const p = await createPerson(newPerson.name.trim(), newPerson.email.trim())
+    adding.value = false
+    newPerson.name = ''
+    newPerson.email = ''
+    search()
+    // The page is made again for the new address: say "edit" in it.
+    await navigateTo({ path: `/people/${encodeURIComponent(p.email)}`, query: { edit: '1' } })
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+const vcf = ref<HTMLInputElement | null>(null)
+async function importFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const picked = input.files?.[0]
+  input.value = ''
+  if (!picked) return
+  try {
+    const r = await importPeople(await picked.text())
+    toast.show(`${picked.name}: ${r.added} added, ${r.updated} completed${r.skipped ? `, ${r.skipped} skipped` : ''}`)
+    search()
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+const listMenu = [
+  [
+    { label: 'New person…', icon: 'i-havre-plus', onSelect: () => (adding.value = true) },
+    { label: 'Import a .vcf file…', icon: 'i-havre-upload', onSelect: () => vcf.value?.click() },
+    { label: 'Export as .vcf', icon: 'i-havre-download', onSelect: () => window.open(PEOPLE_EXPORT, '_blank') },
+  ],
+  [{ label: 'Sync with your address books…', icon: 'i-havre-settings', to: '/settings/apps/people' }],
+]
 
 // ---- One person ------------------------------------------------------------------
 
@@ -86,6 +143,11 @@ watch(
         return
       }
       detail.value = found
+      // Just created (?edit=1): straight to their details.
+      if (route.query.edit) {
+        editing.value = true
+        await navigateTo({ path: route.path }, { replace: true })
+      }
     } catch (err) {
       detailError.value = apiErrorMessage(err)
     }
@@ -135,15 +197,23 @@ const moreItems = computed(() => {
   const d = detail.value
   if (!d) return []
   const items: { label: string; icon?: string; onSelect: () => void }[][] = [
-    [{ label: 'Merge with another address…', icon: 'i-havre-merge', onSelect: () => (merging.value = true) }],
+    [
+      {
+        label: noAddress(d) ? 'Add an address…' : 'Merge with another address…',
+        icon: 'i-havre-merge',
+        onSelect: () => (merging.value = true),
+      },
+    ],
   ]
   const others = d.emails.filter((e) => e !== d.email)
   if (others.length) items.push(others.map((o) => ({ label: `Separate ${o}`, icon: 'i-havre-close', onSelect: () => separate(o) })))
-  items.push([
-    d.automated
-      ? { label: 'This is a person', icon: 'i-havre-people', onSelect: () => setKind('person') }
-      : { label: 'Not a person (newsletter, robot)', icon: 'i-havre-archive', onSelect: () => setKind('automated') },
-  ])
+  if (!noAddress(d)) {
+    items.push([
+      d.automated
+        ? { label: 'This is a person', icon: 'i-havre-people', onSelect: () => setKind('person') }
+        : { label: 'Not a person (newsletter, robot)', icon: 'i-havre-archive', onSelect: () => setKind('automated') },
+    ])
+  }
   return items
 })
 
@@ -224,11 +294,23 @@ async function noteAbout() {
   }
 }
 
-const firstName = computed(() => (detail.value?.name || detail.value?.email || '').split(/[\s@]/)[0])
+const firstName = computed(() => (detail.value ? personName(detail.value) : '').split(/[\s@]/)[0])
+/** Where their details come from, and the last change an address book made. */
+const fromBooks = computed(() => {
+  const d = detail.value
+  if (!d?.books.length) return ''
+  let text = `In ${d.books.join(' · ')}`
+  if (d.updated_from && d.updated_from_at) {
+    // "updated from Google Contacts" only says something when there are several books.
+    const from = d.books.length > 1 ? ` from ${d.updated_from}` : ''
+    text += ` · updated${from} ${agoText(d.updated_from_at)}`
+  }
+  return text
+})
 
 useHead({ title: () => (detail.value ? `${personName(detail.value)} · People · Havre` : 'People · Havre') })
 
-const canWrite = computed(() => accounts.data.value.find((a) => a.can_send))
+const canWrite = computed(() => (detail.value && noAddress(detail.value) ? undefined : accounts.data.value.find((a) => a.can_send)))
 
 // ---- Phones: chips pick which list shows ----------------------------------------
 const phone = useIsPhone()
@@ -239,11 +321,11 @@ watch(email, () => (only.value = 'all'))
 const chips = computed(() => {
   const d = detail.value
   if (!d) return []
-  const list: { id: Only; label: string }[] = [
-    { id: 'all', label: 'Everything' },
-    { id: 'mail', label: `Mail · ${d.recent_messages.length}` },
-    { id: 'meet', label: `Meetings · ${d.upcoming.length + d.past.length}` },
-  ]
+  const list: { id: Only; label: string }[] = [{ id: 'all', label: 'Everything' }]
+  if (!noAddress(d)) {
+    list.push({ id: 'mail', label: `Mail · ${d.recent_messages.length}` })
+    list.push({ id: 'meet', label: `Meetings · ${d.upcoming.length + d.past.length}` })
+  }
   if (d.files.length) list.push({ id: 'files', label: `Files · ${d.files.length}` })
   if (tasksOn.value) list.push({ id: 'tasks', label: `Tasks · ${personTasks.value.length}` })
   if (notesOn.value) list.push({ id: 'notes', label: `Notes · ${personNotes.value.length}` })
@@ -284,8 +366,15 @@ const splitPanes: SplitPaneSpec[] = [
     <aside class="list" aria-label="People">
       <PhoneHeader title="People" />
       <div class="list-head">
-        <h1 class="serif">People</h1>
-        <p class="faint small">From your mail and your meetings.</p>
+        <div class="title-row">
+          <h1 class="serif">People</h1>
+          <UButton color="neutral" variant="ghost" icon="i-havre-plus" square aria-label="New person" @click="adding = true" />
+          <UDropdownMenu :items="listMenu">
+            <UButton color="neutral" variant="ghost" icon="i-havre-ellipsis" square aria-label="People options" />
+          </UDropdownMenu>
+          <input ref="vcf" type="file" accept=".vcf,text/vcard,text/x-vcard" class="sr-only" aria-hidden="true" tabindex="-1" @change="importFile" />
+        </div>
+        <p class="faint small">From your mail, your meetings and your address books.</p>
         <UInput
           v-model="query"
           type="search"
@@ -316,8 +405,8 @@ const splitPanes: SplitPaneSpec[] = [
       </div>
       <ul>
         <li v-for="p in people" :key="p.email">
-          <NuxtLink :to="`/people/${encodeURIComponent(p.email)}`" class="row" :class="{ on: p.emails.includes(email ?? '') }">
-            <span class="avatar" :style="{ background: personColor(p.email) }">{{ initials(personName(p)) }}</span>
+          <NuxtLink :to="`/people/${encodeURIComponent(p.email)}`" class="row" :class="{ on: p.email === email || p.emails.includes(email ?? '') }">
+            <PersonAvatar :person="p" />
             <span class="who">
               <span class="name">
                 {{ personName(p) }}
@@ -360,6 +449,7 @@ const splitPanes: SplitPaneSpec[] = [
           <template #actions>
             <UButton v-if="canWrite" color="neutral" variant="ghost" size="lg" square icon="i-havre-pen" :aria-label="`Write to ${firstName}`" @click="write" />
             <UButton
+              v-if="!noAddress(detail)"
               color="neutral"
               variant="ghost"
               size="lg"
@@ -371,16 +461,21 @@ const splitPanes: SplitPaneSpec[] = [
           </template>
         </PhoneHeader>
         <header class="card-head">
-          <span class="avatar big" :style="{ background: personColor(detail.email) }">{{ initials(personName(detail)) }}</span>
+          <PersonAvatar :person="detail" :size="64" />
           <div class="id">
             <h2 class="serif">{{ personName(detail) }}</h2>
             <p v-if="detail.company || detail.role" class="work">{{ [detail.role, detail.company].filter(Boolean).join(' · ') }}</p>
-            <p class="faint addresses">
+            <p v-if="detail.emails.length" class="faint addresses">
               <span v-for="(e, i) in detail.emails" :key="e">{{ e }}<template v-if="i < detail.emails.length - 1">,&nbsp;</template></span>
             </p>
-            <p class="faint small">
+            <p v-else class="faint">
+              No email address ·
+              <UButton color="neutral" variant="link" size="sm" class="p-0" @click="merging = true">Add one</UButton>
+            </p>
+            <p v-if="!noAddress(detail)" class="faint small">
               {{ counts(detail) || 'Nothing in common yet.' }}<template v-if="detail.automated"> · newsletter or robot</template>
             </p>
+            <p v-if="fromBooks" class="faint small books">{{ fromBooks }}</p>
           </div>
           <div class="head-actions">
             <UButton v-if="canWrite" icon="i-havre-pen" type="button" class="desk" @click="write">Write</UButton>
@@ -443,8 +538,8 @@ const splitPanes: SplitPaneSpec[] = [
             <UButton v-if="waitingMail" size="xs" :to="messageLink(waitingMail)">Open the email</UButton>
           </div>
           <ul class="stand">
-            <li v-if="detail.last_from"><span class="k">Last email from {{ firstName }}</span><span class="v">{{ ago(detail.last_from) }} ago</span></li>
-            <li v-if="detail.last_to"><span class="k">You last wrote</span><span class="v">{{ ago(detail.last_to) }} ago</span></li>
+            <li v-if="detail.last_from"><span class="k">Last email from {{ firstName }}</span><span class="v">{{ agoText(detail.last_from) }}</span></li>
+            <li v-if="detail.last_to"><span class="k">You last wrote</span><span class="v">{{ agoText(detail.last_to) }}</span></li>
             <li v-if="detail.last_meeting"><span class="k">Last meeting</span><span class="v">{{ dayLabel(detail.last_meeting) }}</span></li>
             <li v-if="detail.next_meeting"><span class="k">Next meeting</span><span class="v">{{ dayLabel(detail.next_meeting) }}</span></li>
           </ul>
@@ -467,8 +562,8 @@ const splitPanes: SplitPaneSpec[] = [
           </UButton>
         </div>
 
-        <div class="cols">
-          <section aria-labelledby="p-mail">
+        <div class="cols" :class="{ solo: noAddress(detail) }">
+          <section v-if="!noAddress(detail)" aria-labelledby="p-mail">
             <div v-show="shows('mail')">
             <h3 id="p-mail" class="ph">Recent mail</h3>
             <p v-if="!detail.recent_messages.length" class="empty">No mail from {{ detail.name || 'them' }}.</p>
@@ -542,7 +637,7 @@ const splitPanes: SplitPaneSpec[] = [
                 <HIcon name="plus" :size="14" />Note about {{ firstName }}
               </button>
             </div>
-            <div v-show="shows('meet')">
+            <div v-if="!noAddress(detail)" v-show="shows('meet')">
             <h3 id="p-meet" class="ph" :class="{ later: tasksOn || notesOn }">Upcoming meetings</h3>
             <p v-if="!detail.upcoming.length" class="empty">None planned.</p>
             <ul>
@@ -568,10 +663,28 @@ const splitPanes: SplitPaneSpec[] = [
           </section>
         </div>
       </template>
+      <UModal v-model:open="adding" title="New person" description="A name is enough: add their phone and the rest next.">
+        <template #body>
+          <form id="new-person" class="new-person" @submit.prevent="addPerson">
+            <UFormField label="Name">
+              <UInput v-model="newPerson.name" autofocus class="w-full" />
+            </UFormField>
+            <UFormField label="Email address" help="Optional">
+              <UInput v-model="newPerson.email" type="email" class="w-full" />
+            </UFormField>
+          </form>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2 w-full">
+            <UButton color="neutral" variant="outline" @click="adding = false">Cancel</UButton>
+            <UButton type="submit" form="new-person" :disabled="!newPerson.name.trim() && !newPerson.email.trim()">Add</UButton>
+          </div>
+        </template>
+      </UModal>
       <PersonEditor v-if="editing && detail" :person="detail" @saved="changed" @cancel="editing = false" />
       <PersonMerge v-if="merging && detail" :person="detail" @merged="changed" @cancel="merging = false" />
-      <p v-else-if="detailError" class="empty center">{{ detailError }}</p>
-      <div v-else-if="!email" class="empty center">
+      <p v-if="!detail && detailError" class="empty center">{{ detailError }}</p>
+      <div v-else-if="!detail && !email" class="empty center">
         <HIcon name="people" :size="28" />
         <p>Pick someone to see your mail and meetings with them.</p>
       </div>
@@ -582,6 +695,22 @@ const splitPanes: SplitPaneSpec[] = [
 </template>
 
 <style scoped>
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.title-row h1 {
+  flex: 1;
+}
+.books {
+  margin-top: 2px;
+}
+.new-person {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .tools {
   display: flex;
   gap: 6px;
@@ -702,7 +831,7 @@ const splitPanes: SplitPaneSpec[] = [
   margin-top: 10px;
 }
 .touch {
-  margin: 18px 0 26px;
+  margin: 18px 0 0;
 }
 .waiting-box {
   display: flex;
@@ -883,6 +1012,12 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 28px;
+  margin-top: 26px;
+}
+/* Someone without an address: only tasks and notes, one column. */
+.cols.solo {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 560px;
 }
 .ph {
   margin: 0 0 8px;
@@ -1004,6 +1139,11 @@ h2 {
   .desk,
   .list-head h1 {
     display: none;
+  }
+  /* The phone header has the title: the buttons go to the right. */
+  .title-row {
+    justify-content: flex-end;
+    margin-top: -8px;
   }
   .chips {
     display: flex;

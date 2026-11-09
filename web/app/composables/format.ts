@@ -15,12 +15,17 @@ export function shortDate(iso: string | null | undefined, now = new Date()): str
   return d.toLocaleDateString([], { day: 'numeric', month: 'short' })
 }
 
-/** "Claire Dubois" → "CD", "thomas@x.fr" → "T". */
+/** "Claire Dubois" → "CD", "thomas@x.fr" → "T", "Marc (plumber)" → "MP". */
 export function initials(label: string): string {
-  const words = label.replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean)
-  return words
+  // The first letter (or digit) of each word: brackets and quotes don't count.
+  const firsts = label
+    .replace(/@.*/, '')
+    .split(/[\s._-]+/)
+    .map((w) => w.match(/[\p{L}\p{N}]/u)?.[0])
+    .filter((c): c is string => !!c)
+  return firsts
     .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
+    .map((c) => c.toUpperCase())
     .join('')
 }
 

@@ -134,6 +134,7 @@ export type MailEvent = { account: number } & (
   | { type: 'accounts' }
   | { type: 'agenda' }
   | { type: 'tasks' }
+  | { type: 'people' }
   | { type: 'reminder'; task: number; title: string }
   | {
       type: 'event_reminder'

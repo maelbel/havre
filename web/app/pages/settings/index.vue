@@ -19,8 +19,9 @@ const tasksOn = useTasksEnabled()
 const needsReconnect = (a: Account) =>
   a.status.state === 'error' || !a.can_send || !a.can_calendar || (tasksOn.value && !a.can_tasks)
 
-// OAuth2 sign-in again, for an account whose sign-in expired.
-const reconnecting = ref<number | null>(null)
+// OAuth2 sign-in again, for an account whose sign-in expired (or to allow
+// something new: Settings › People links here with `?reconnect=<id>`).
+const reconnecting = ref<number | null>(route.query.reconnect ? Number(route.query.reconnect) : null)
 async function onReconnected(account: { name: string }) {
   reconnecting.value = null
   await accounts.refresh()
