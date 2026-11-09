@@ -764,7 +764,18 @@ impl Session<'_> {
                 Ok(people
                     .iter()
                     .map(|p| {
-                        format!("{} <{}> ({} emails, {} meetings)", p.name, p.email, p.messages, p.meetings)
+                        // "Claire Dubois <claire@acme.fr> — Acme, Ops lead (12 emails, 3 meetings)"
+                        let work = [p.company.as_str(), p.role.as_str()]
+                            .into_iter()
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let work = if work.is_empty() { String::new() } else { format!(" — {work}") };
+                        let robot = if p.automated { ", automated sender" } else { "" };
+                        format!(
+                            "{} <{}>{work} ({} emails, {} meetings{robot})",
+                            p.name, p.email, p.messages, p.meetings
+                        )
                     })
                     .collect::<Vec<_>>()
                     .join("\n"))
