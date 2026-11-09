@@ -12,6 +12,11 @@ All notable changes to Havre are listed here. The format follows
   it starts. **Stop** cancels a question (nothing is kept); closing the page or the palette does too, and the
   model stops working. Works with Ollama, OpenAI-compatible APIs, Anthropic and Claude Code.
 - The assistant can prepare **an addition to a note** and **ticking a task**, shown before you confirm.
+- **Install Havre on your phone** (Add to Home Screen): its own icon, full screen, a “can't be reached” page
+  offline. Nothing of your mail is stored on the device.
+- **Push notifications** (Settings › Notifications): new mail and task reminders on your phone or computer, even
+  when Havre is closed; with or without the sender and subject; nothing while Havre is open in front. Encrypted
+  on your server (Web Push), so the phone's push service can't read them. Needs HTTPS.
 
 ## [0.2.0] - 2026-11-08
 

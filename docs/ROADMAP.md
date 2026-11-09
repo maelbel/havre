@@ -301,3 +301,21 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
   `tokio::join!` and `async move` blocks, an unbounded channel and an `AtomicBool` shared between tasks,
   cancelling by dropping a `Receiver`; on the web, `ReadableStream`, `AbortController`, and why a click's default
   action can still run after its handler changed the button (`preventDefault`).
+
+## 20 · Havre on your phone ✅
+- ✅ Installable web app: `manifest.webmanifest`, icons (any, maskable, Apple touch) drawn from Havre's icon,
+  theme colours for both themes, a hand-written service worker (`sw.js`) that caches nothing but an offline page.
+- ✅ Web Push written by Havre (`push/crypto.rs`): RFC 8291 encryption (P-256 ECDH, HKDF from HMAC, AES-128-GCM)
+  checked against the RFC's own example, VAPID (RFC 8292) as an ES256 JWT; the VAPID key made on first use and
+  kept encrypted with `Secrets`. New dependencies: `p256`, `aes-gcm` (RustCrypto).
+- ✅ What's pushed: task reminders (when the server rings them), new mail in an inbox (unread, from the last day,
+  not snoozed, newer than a per-inbox mark set at startup, so a first sync never floods); more than three at
+  once make one notification; the sender and subject can be left out.
+- ✅ Settings › Notifications: turn on (permission, subscribe), send a test, what to send, devices with Remove; a
+  device where Havre is open in front gets nothing (the page says so every 30 s); 404/410 from the push service
+  removes the device.
+- ✅ Tested with a pretend push service (headers, decrypting what it received, 410), and in Chromium (manifest,
+  service worker, its push and click handlers).
+- Later: notification buttons (Archive, Mark as read), agenda reminders, new invitations.
+- *Learned:* elliptic-curve Diffie–Hellman, HKDF, AES-GCM and ECDSA in practice, JWTs, testing against an RFC's
+  example; `OnceCell`; service workers, the Push and Notifications APIs, web app manifests.

@@ -62,8 +62,18 @@ export default defineNuxtConfig({
         // fills the screen, and CSS keeps clear of them with `env(safe-area-*)`.
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
         { name: 'color-scheme', content: 'dark light' },
+        // Installed on a phone (web/public/manifest.webmanifest): the colour of the bars around it.
+        { name: 'theme-color', content: '#0e0f11', media: '(prefers-color-scheme: dark)' },
+        { name: 'theme-color', content: '#e9e4da', media: '(prefers-color-scheme: light)' },
+        { name: 'apple-mobile-web-app-title', content: 'Havre' },
+        { name: 'mobile-web-app-capable', content: 'yes' },
       ],
-      link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+      link: [
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        // `use-credentials`: behind a sign-in proxy (Authentik…), the manifest needs your session cookie too.
+        { rel: 'manifest', href: '/manifest.webmanifest', crossorigin: 'use-credentials' },
+        { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
+      ],
     },
   },
 

@@ -56,6 +56,7 @@ pub mod mcp;
 pub mod notes;
 pub mod oauth;
 pub mod people;
+pub mod push;
 pub mod secrets;
 pub mod store;
 pub mod sync;

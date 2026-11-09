@@ -111,6 +111,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(crate::platform::routes())
         .merge(crate::organize::routes())
         .merge(crate::backups::routes())
+        .merge(crate::push::routes())
         .merge(crate::ai::routes())
         .merge(crate::mcp::routes())
         .route_layer(middleware::from_fn_with_state(state, auth::require_session));

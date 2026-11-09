@@ -8,6 +8,7 @@ const sections = computed(() => [
   { to: '/settings', label: 'Accounts', exact: true, icon: 'mail' as IconName },
   { to: '/settings/calendars', label: 'Calendars', icon: 'calendar' as IconName },
   ...(auth.value?.enabled ? [{ to: '/settings/security', label: 'Security', icon: 'shield' as IconName }] : []),
+  { to: '/settings/notifications', label: 'Notifications', icon: 'bell' as IconName },
   { to: '/settings/backups', label: 'Backups', icon: 'archive' as IconName },
   { to: '/settings/connections', label: 'Connections (MCP)', icon: 'command' as IconName },
 ])

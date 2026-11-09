@@ -78,6 +78,15 @@ If Havre is reachable from outside your home network, put it behind HTTPS (a rev
 Traefik) and set `HAVRE_PUBLIC_URL` to the `https://` address: session cookies are then marked `Secure`, and the
 OAuth2 redirect addresses are right.
 
+**Phones and notifications** need HTTPS too: browsers only install web apps and allow push notifications on an
+`https://` address (or `localhost`). Two more things:
+- The server sends notifications to the phones' push services, so it needs to reach them over HTTPS (outgoing
+  port 443): `fcm.googleapis.com` (Chrome, Android), `*.push.apple.com` (Safari), `updates.push.services.mozilla.com`
+  (Firefox).
+- Behind a sign-in proxy (Authentik, Authelia…), `/manifest.webmanifest`, `/sw.js` and the icons are fetched with
+  your session cookie, like the rest of the page: nothing to open up. If you exempt paths from the proxy, leave
+  these protected or public; both work.
+
 ## Backups and restore
 
 Settings › Backups. Every night (03:00 by default) Havre copies its database

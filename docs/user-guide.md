@@ -401,6 +401,37 @@ Up to 720 px wide, Havre shows one screen at a time:
   Appearance); each opens on its own screen with *‹ Settings* to go back.
 - On phones with a notch or a home bar, Havre keeps clear of them.
 
+**Install it like an app**: in Chrome on Android, ⋮ › *Add to Home screen*
+(or *Install app*); on an iPhone or iPad, Safari's Share button › *Add to Home
+Screen*. Havre then opens full screen from its icon, without the browser's
+bars. Nothing of your mail is stored on the phone: offline, it shows “Havre
+can't be reached” until you're connected again.
+
+### Notifications
+
+**Settings › Notifications** sends new mail and task reminders to your phone
+or computer, even when Havre is closed:
+
+1. On the device, open Settings › Notifications and press **Turn on
+   notifications**; the browser asks for permission. On an iPhone or iPad,
+   open Havre from its Home Screen icon first (iOS 16.4 or later): Safari
+   only allows notifications for installed web apps.
+2. **Send a test** checks it works.
+
+*What to send* applies to every device: **new mail** in your inboxes (unread
+mail that just arrived; more than three at once make one notification), with
+or without **the sender and subject** (off: just “New email”, for a lock
+screen others can see), and **task reminders**. A device where Havre is open
+and in front gets nothing: the page shows its own toast. Tapping a
+notification opens the email or the task.
+
+Notifications travel through the device's push service (Google's for Chrome
+and Android, Apple's for Safari, Mozilla's for Firefox), **encrypted on your
+server**: the service only carries them and can't read them. *Devices* lists
+each phone or browser that gets them, with **Remove**; one that no longer
+accepts them is removed by itself. Havre Desktop shows its own notifications
+and doesn't need this.
+
 ## Ctrl+K
 
 **Ctrl+K** (⌘K on a Mac), or the search button in the dock (on a phone, at
