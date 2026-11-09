@@ -15,6 +15,11 @@
 //!   version replaces the previous one, found by the draft's own
 //!   `Message-ID`. Havre's copy stays the reference: if the server fails,
 //!   nothing is lost and Havre tries again later.
+//! - **Signatures** (step 24): each account's, put in new drafts (and
+//!   replies), swapped when "From" changes.
+//! - **Undo send, send later** (step 24): see [`outbox`].
+
+pub mod outbox;
 
 use std::{str::FromStr, time::Duration};
 
@@ -220,6 +225,13 @@ pub struct Draft {
     pub server_pending: bool,
     /// Why the last save to the server failed.
     pub server_error: Option<String>,
+    /// The signature as it was put in (to swap it when "From" changes).
+    pub signature: String,
+    /// When it will be sent: soon (undo send) or later (send later).
+    pub send_at: Option<i64>,
+    /// `waiting`, `sending` or `failed` (with `send_error`), when `send_at` is set.
+    pub send_state: Option<String>,
+    pub send_error: Option<String>,
     #[serde(skip)]
     in_reply_to: Option<String>,
     #[serde(skip)]
@@ -231,9 +243,15 @@ pub struct Draft {
 }
 
 impl Draft {
-    /// Nothing written yet.
+    /// Nothing written yet (the signature Havre put in doesn't count).
     fn is_empty(&self) -> bool {
-        [&self.to, &self.cc, &self.bcc, &self.subject, &self.body].iter().all(|f| f.trim().is_empty())
+        let body = match find_signature(&self.body, &self.signature) {
+            Some(at) => {
+                format!("{}{}", &self.body[..at], &self.body[at + signature_block(&self.signature).len()..])
+            }
+            None => self.body.clone(),
+        };
+        [&self.to, &self.cc, &self.bcc, &self.subject, &body].iter().all(|f| f.trim().is_empty())
             && self.attachments.is_empty()
     }
 }
@@ -306,23 +324,33 @@ impl Drafts {
         source: Option<(&str, u32)>,
     ) -> Result<i64> {
         let now = now();
+        // The account's signature, where it goes for this kind of message.
+        let (signature, in_replies): (String, bool) =
+            sqlx::query_as("SELECT signature, signature_in_replies FROM accounts WHERE id = ?")
+                .bind(account)
+                .fetch_optional(&self.pool)
+                .await?
+                .unwrap_or_default();
+        let signature = signature_for(kind, &signature, in_replies);
+        let body = with_signature(&prefill.body, &signature);
         Ok(sqlx::query_scalar(
             "INSERT INTO drafts (account_id, kind, to_addrs, cc_addrs, subject, body, in_reply_to, refs,
-                                 source_folder, source_uid, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                                 source_folder, source_uid, created_at, updated_at, signature)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(account)
         .bind(kind.as_str())
         .bind(&prefill.to)
         .bind(&prefill.cc)
         .bind(&prefill.subject)
-        .bind(&prefill.body)
+        .bind(&body)
         .bind(&prefill.in_reply_to)
         .bind(&prefill.references)
         .bind(source.map(|s| s.0))
         .bind(source.map(|s| s.1 as i64))
         .bind(now)
         .bind(now)
+        .bind(&signature)
         .fetch_one(&self.pool)
         .await?)
     }
@@ -349,6 +377,25 @@ impl Drafts {
     }
 
     pub async fn update(&self, id: i64, update: &DraftUpdate) -> Result<Draft> {
+        // "From" changes: the signature follows, unless you edited it.
+        let mut body = update.body.clone();
+        let mut signature = None;
+        if let Some(account) = update.account {
+            let current = self.get(id).await?;
+            if current.account != account {
+                let (theirs, in_replies): (String, bool) =
+                    sqlx::query_as("SELECT signature, signature_in_replies FROM accounts WHERE id = ?")
+                        .bind(account)
+                        .fetch_optional(&self.pool)
+                        .await?
+                        .unwrap_or_default();
+                let new = signature_for(current.kind, &theirs, in_replies);
+                let text = body.as_deref().unwrap_or(&current.body);
+                let (swapped, kept) = swap_signature(text, current.kind, &current.signature, &new);
+                body = Some(swapped);
+                signature = Some(kept);
+            }
+        }
         // Each change counts (`version`): the server copy is behind until
         // it holds the newest one.
         let mut sql =
@@ -359,7 +406,8 @@ impl Drafts {
             ("cc_addrs", &update.cc),
             ("bcc_addrs", &update.bcc),
             ("subject", &update.subject),
-            ("body", &update.body),
+            ("body", &body),
+            ("signature", &signature),
         ];
         for (column, value) in fields {
             if let Some(value) = value {
@@ -447,7 +495,13 @@ impl Drafts {
             "SELECT id FROM drafts
              WHERE (server_version IS NULL OR server_version <> version OR server_account <> account_id)
                AND updated_at <= ? AND (server_tried_at IS NULL OR server_tried_at <= ?)
-               AND (to_addrs <> '' OR cc_addrs <> '' OR bcc_addrs <> '' OR trim(subject) <> '' OR trim(body) <> ''
+               -- Waiting to be sent: kept out of the Drafts folder (see `outbox`).
+               AND send_at IS NULL
+               AND (to_addrs <> '' OR cc_addrs <> '' OR bcc_addrs <> '' OR trim(subject) <> ''
+                    -- Only the signature Havre put in isn't something written. (`trim`'s
+                    -- second argument: what to strip, here line breaks and tabs too.)
+                    OR (trim(body, ' ' || char(9, 10, 13)) <> ''
+                        AND trim(body, ' ' || char(9, 10, 13)) <> '-- ' || char(10) || signature)
                     OR EXISTS (SELECT 1 FROM draft_attachments a WHERE a.draft_id = drafts.id))
              ORDER BY updated_at LIMIT 20",
         )
@@ -550,11 +604,84 @@ fn draft_from_row(r: &SqliteRow) -> Draft {
         server_saved_at: r.get("server_saved_at"),
         server_pending: server.saved_version != Some(server.version) || server.account != Some(account),
         server_error: r.get("server_error"),
+        signature: r.get("signature"),
+        send_at: r.get("send_at"),
+        send_state: r.get("send_state"),
+        send_error: r.get("send_error"),
         in_reply_to: r.get("in_reply_to"),
         references: r.get("refs"),
         source,
         server,
     }
+}
+
+// ---- Signatures ----------------------------------------------------------------------
+
+/// The line before a signature (RFC 3676: "dash dash space"). Mail apps
+/// recognise it, fold the signature away, and leave it out of quotes.
+const SIGNATURE_LINE: &str = "-- \n";
+
+/// The account's signature, if this kind of message gets it.
+fn signature_for(kind: DraftKind, signature: &str, in_replies: bool) -> String {
+    match kind {
+        DraftKind::New => signature.to_owned(),
+        _ if in_replies => signature.to_owned(),
+        _ => String::new(),
+    }
+}
+
+/// The signature block, as it sits in a body.
+fn signature_block(signature: &str) -> String {
+    format!("{SIGNATURE_LINE}{signature}")
+}
+
+/// Where the signature block is in a body, as Havre put it: whole, ending
+/// with the text or a line ("Maël B." isn't "Maël").
+fn find_signature(body: &str, signature: &str) -> Option<usize> {
+    if signature.is_empty() {
+        return None;
+    }
+    let block = signature_block(signature);
+    body.match_indices(&block)
+        .map(|(at, _)| at)
+        .find(|at| matches!(body[at + block.len()..].chars().next(), None | Some('\n')))
+}
+
+/// A new body with the signature: after two empty lines (where you'll
+/// write), and above the quoted message of a reply or a forward.
+fn with_signature(body: &str, signature: &str) -> String {
+    if signature.is_empty() {
+        return body.to_owned();
+    }
+    // `body` is empty (a new message) or starts with "\n\nOn … wrote:" (a reply).
+    format!("\n\n{}{body}", signature_block(signature))
+}
+
+/// "From" changed: the old signature block is replaced by the new one (or
+/// removed), if it's still as Havre put it. Returns the body and the
+/// signature it now has (empty: none Havre knows of, so nothing to swap
+/// next time).
+fn swap_signature(body: &str, kind: DraftKind, old: &str, new: &str) -> (String, String) {
+    if !old.is_empty() {
+        let block = signature_block(old);
+        let Some(at) = find_signature(body, old) else {
+            // You edited it: it's yours now.
+            return (body.to_owned(), String::new());
+        };
+        let swapped = if new.is_empty() {
+            // The block and the empty lines before it go.
+            format!("{}{}", body[..at].trim_end_matches('\n'), &body[at + block.len()..])
+        } else {
+            format!("{}{}{}", &body[..at], signature_block(new), &body[at + block.len()..])
+        };
+        return (swapped, new.to_owned());
+    }
+    // No signature before: a new message gets one at the end (a reply's
+    // place, above the quote, can't be told reliably once you've written).
+    if !new.is_empty() && kind == DraftKind::New && !body.contains(SIGNATURE_LINE) {
+        return (format!("{}\n\n{}", body.trim_end(), signature_block(new)), new.to_owned());
+    }
+    (body.to_owned(), String::new())
 }
 
 // ---- Replies and forwards ------------------------------------------------------------
@@ -777,7 +904,8 @@ fn build(
         builder = builder.references(refs.clone());
     }
     let text = draft.body.replace("\r\n", "\n");
-    let alternative = MultiPart::alternative_plain_html(text.clone(), text_to_html(&text));
+    let html = text_to_html_signed(&text, &draft.signature);
+    let alternative = MultiPart::alternative_plain_html(text.clone(), html);
     let message = if attachments.is_empty() {
         builder.multipart(alternative)
     } else {
@@ -795,9 +923,32 @@ fn build(
 /// The HTML version of a plain-text body: paragraphs, line breaks, links
 /// left as text, and `> quoted` lines as blockquotes.
 pub fn text_to_html(text: &str) -> String {
+    text_to_html_signed(text, "")
+}
+
+/// [`text_to_html`], with the signature (when it's still in the text) in
+/// grey and a little smaller, as mail apps show them.
+pub fn text_to_html_signed(text: &str, signature: &str) -> String {
     let mut html = String::from(
         "<!doctype html><html><body><div style=\"font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5\">",
     );
+    let block = signature_block(signature);
+    match find_signature(text, signature) {
+        Some(at) => {
+            lines_to_html(&text[..at], &mut html);
+            html.push_str("<div style=\"color: #777; font-size: 13px\">");
+            lines_to_html(&block, &mut html);
+            html.push_str("</div>");
+            lines_to_html(&text[at + block.len()..], &mut html);
+        }
+        None => lines_to_html(text, &mut html),
+    }
+    html.push_str("</div></body></html>");
+    html
+}
+
+/// One part of the body, line by line (its blockquotes closed at its end).
+fn lines_to_html(text: &str, html: &mut String) {
     let mut depth = 0;
     for line in text.lines() {
         let level = line.chars().take_while(|c| *c == '>').count();
@@ -816,8 +967,6 @@ pub fn text_to_html(text: &str) -> String {
     for _ in 0..depth {
         html.push_str("</blockquote>");
     }
-    html.push_str("</div></body></html>");
-    html
 }
 
 fn escape(text: &str) -> String {
@@ -971,7 +1120,8 @@ impl AccountManager {
         let _one_at_a_time = self.drafts_lock.lock().await;
         let drafts = self.drafts();
         let draft = drafts.get(id).await?;
-        if !draft.server_pending || draft.is_empty() {
+        // Waiting to be sent: kept out of the Drafts folder (see `outbox`).
+        if !draft.server_pending || draft.is_empty() || draft.send_at.is_some() {
             return Ok(draft);
         }
         match self.write_server_copy(&draft).await {
@@ -1229,6 +1379,90 @@ pub(crate) async fn drafts_loop(manager: std::sync::Weak<AccountManager>) {
 mod tests {
     use super::*;
 
+    async fn two_accounts() -> (crate::store::Database, i64, i64) {
+        let db = crate::store::Database::in_memory().await.unwrap();
+        let mut ids = Vec::new();
+        for (email, signature) in [("me@work.org", "Maël Belliard\nAcme · +33 1 23"), ("me@home.org", "Maël")]
+        {
+            let account = db
+                .insert_account(&crate::store::NewAccount {
+                    name: email.into(),
+                    email: email.into(),
+                    imap_host: "mail.example.org".into(),
+                    imap_port: 993,
+                    imap_user: email.into(),
+                    color: "work".into(),
+                    password: "x".into(),
+                    sender_name: String::new(),
+                    smtp_host: None,
+                    smtp_port: None,
+                    smtp_security: None,
+                })
+                .await
+                .unwrap();
+            let update =
+                crate::store::AccountUpdate { signature: Some(signature.into()), ..Default::default() };
+            db.update_account(account.id, &update).await.unwrap();
+            ids.push(account.id);
+        }
+        (db, ids[0], ids[1])
+    }
+
+    #[tokio::test]
+    async fn signatures_in_new_messages_replies_and_when_from_changes() {
+        let (db, work, home) = two_accounts().await;
+        let drafts = db.drafts();
+        // A new message: two empty lines to write in, then the signature.
+        let id = drafts.insert(work, DraftKind::New, &Prefill::default(), None).await.unwrap();
+        let draft = drafts.get(id).await.unwrap();
+        assert_eq!(draft.body, "\n\n-- \nMaël Belliard\nAcme · +33 1 23");
+        // You write, then switch to the other account: its signature replaces this one.
+        let body = format!("Hello Anna,{}", draft.body);
+        drafts.update(id, &DraftUpdate { body: Some(body), ..Default::default() }).await.unwrap();
+        let moved =
+            drafts.update(id, &DraftUpdate { account: Some(home), ..Default::default() }).await.unwrap();
+        assert_eq!(moved.body, "Hello Anna,\n\n-- \nMaël");
+        assert_eq!(moved.signature, "Maël");
+
+        // A reply: above the quote.
+        let reply = Prefill { body: "\n\nOn Mon, Anna wrote:\n> Hi\n".into(), ..Prefill::default() };
+        let id = drafts.insert(work, DraftKind::Reply, &reply, None).await.unwrap();
+        let body = drafts.get(id).await.unwrap().body;
+        assert!(body.starts_with("\n\n-- \nMaël Belliard\nAcme · +33 1 23\n\nOn Mon, Anna wrote:"), "{body}");
+        // Not in replies when you said so.
+        let off = crate::store::AccountUpdate { signature_in_replies: Some(false), ..Default::default() };
+        db.update_account(work, &off).await.unwrap();
+        let id = drafts.insert(work, DraftKind::Reply, &reply, None).await.unwrap();
+        assert_eq!(drafts.get(id).await.unwrap().body, reply.body);
+    }
+
+    #[test]
+    fn swapping_and_showing_signatures() {
+        // Edited by you: left alone (and no longer Havre's to swap).
+        let edited = "Hi\n\n-- \nMaël B.";
+        assert_eq!(
+            swap_signature(edited, DraftKind::New, "Maël", "Other"),
+            (edited.to_owned(), String::new())
+        );
+        // To an account without one: the block goes, the quote stays.
+        let reply = "Thanks!\n\n-- \nMaël\n\nOn Mon, Anna wrote:\n> Hi";
+        assert_eq!(
+            swap_signature(reply, DraftKind::Reply, "Maël", "").0,
+            "Thanks!\n\nOn Mon, Anna wrote:\n> Hi"
+        );
+        // From none to one: a new message gets it at the end, a reply doesn't.
+        assert_eq!(swap_signature("Hi", DraftKind::New, "", "Maël").0, "Hi\n\n-- \nMaël");
+        assert_eq!(swap_signature("Hi\n> q", DraftKind::Reply, "", "Maël").0, "Hi\n> q");
+
+        // The HTML version: the signature in grey, the quote still a blockquote.
+        let html = text_to_html_signed(reply, "Maël");
+        assert!(html.contains("<div style=\"color: #777; font-size: 13px\">-- <br>Maël<br></div>"), "{html}");
+        assert!(html.contains("<blockquote"));
+        assert!(!text_to_html(reply).contains("#777"));
+        // A signature can't hold its own "-- " line.
+        assert_eq!(crate::store::clean_signature_for_tests("A\n-- \nB  ").unwrap(), "A\nB");
+    }
+
     const ORIGINAL: &[u8] = b"From: Anna Martin <anna@example.com>\r\n\
 To: mael@example.org, Bob <bob@example.com>\r\n\
 Cc: carol@example.com\r\n\
@@ -1283,6 +1517,10 @@ Are you free?\r\n> earlier\r\n";
             server_saved_at: None,
             server_pending: true,
             server_error: None,
+            signature: String::new(),
+            send_at: None,
+            send_state: None,
+            send_error: None,
             in_reply_to: Some("<abc@example.com>".into()),
             references: Some("<abc@example.com>".into()),
             source: None,
