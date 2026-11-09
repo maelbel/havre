@@ -339,3 +339,20 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
   (`VALARM`, `TRIGGER`), `Option<Option<T>>` for "missing / null / value"; pointer capture, long-press and
   blocking a scroll with a non-passive `touchmove`, a click's default action after a handler, keyboard
   alternatives to dragging.
+
+## 22 · People: your details, a better list, keeping in touch ✅
+- ✅ Your details for a person (`contacts`): name, company, role, phones, a birthday with or without a year, a
+  note, favourite, and *person / automated* when Havre guessed wrong. One person, several addresses
+  (`contact_emails`): merge, separate.
+- ✅ `messages.recipients` (To and Cc), filled for new mail and, in the background, for mail already there: the
+  people you write to count, and "last email you sent", "waiting for your reply" can be told.
+- ✅ The list: sort (recent, frequent, A–Z), filters (everyone, favourites, waiting, newsletters & robots), by
+  company (yours, else the domain; not public mail domains), rows with last contact and marks.
+- ✅ A person's page: details, ★, Edit, ⋯ (merge, separate, not a person), keeping in touch. Today: birthdays in
+  the week, two favourites gone quiet for 30 days.
+- ✅ Tested: sightings both ways and meetings, your names first, merging, robots by pattern and by choice,
+  waiting (and not after you replied, after 30 days, or from robots), birthdays (Feb 29), recipients from headers;
+  in Chromium the list, editing, merging, Today, a phone, dark and light.
+- Next: step 23, contacts sync (Google, Microsoft, CardDAV) and `.vcf` import.
+- *Learned:* one person with several addresses (a join table, a unique address), grouping in Rust after one SQL
+  pass, backfilling a new column without blocking the app, dates without a year.
