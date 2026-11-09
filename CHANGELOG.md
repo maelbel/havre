@@ -8,6 +8,13 @@ All notable changes to Havre are listed here. The format follows
 
 ### Added
 
+- **Contacts sync**: People in step with Google Contacts, Outlook contacts and CardDAV address books (iCloud,
+  Nextcloud, Fastmail…), both ways and field by field, with photos (Settings › Your apps › People). Nothing is
+  ever deleted from an address book. Microsoft and Google accounts reconnect once to allow it.
+- **People without an email address** (from your address books, or added with *New person*): their details,
+  phones, tasks and notes; giving them an address later keeps all of it. Search finds phone numbers too.
+- **.vcf files**: import into Havre (filling only what's missing), and export everyone with details.
+
 - **Event reminders**: a *Reminder* in the event editor, a default for new events (Settings › Calendars), synced
   with Microsoft 365, Google, CalDAV and Havre's calendar. When it's time: a toast, a Havre Desktop notification
   and a push to your phone (*Event reminders* in Settings › Notifications). All-day reminders ring at 9:00 your

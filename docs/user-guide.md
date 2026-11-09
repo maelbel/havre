@@ -270,9 +270,9 @@ month, `n` new event, `Esc` close.
   two favourites you haven't written to or met in 30 days (and no meeting
   with them in the coming week).
 - **People:** everyone who wrote to you, everyone you write to and everyone
-  you meet, without an address book to fill in. The same list suggests
-  recipients when writing and guests when creating an event (with the names
-  you gave).
+  you meet, without an address book to fill in — and, when you sync them,
+  everyone in your address books. The same list suggests recipients when
+  writing and guests when creating an event (with the names you gave).
 
 ### The People list
 
@@ -304,6 +304,40 @@ month, `n` new event, `Esc` close.
   the email*.
 - Below: your recent mail and meetings with them, the files you shared, and
   your tasks and notes about them when those apps are in the dock.
+- **Someone without an email address** (a plumber, family, from your phone's
+  address book, or added with **+** next to *People*): their page has their
+  details, phones to call, and your tasks and notes about them. **Add one**
+  (or *⋯ › Add an address…*) gives them an address: their page moves to it,
+  with their tasks and notes.
+
+### Your address books
+
+*Settings › Your apps › People* keeps People in step with **Google
+Contacts**, **Outlook contacts** (your main Contacts folder) and the address
+books of your **CalDAV** servers (iCloud, Nextcloud, Fastmail…). Switch each
+account on; it's off until you do.
+
+- Their people come into People with their details and **photos**; someone
+  with several addresses is one person. The same person in two address books
+  (Google and iCloud) is one person too, and a person's page says where they
+  are: *In Google Contacts (Work) · iCloud*.
+- **Both ways, field by field**, every 15 minutes (and *Sync now*): a detail
+  changed in the address book comes into Havre; one you change in Havre goes
+  to every address book they're in. Changed on both sides, the address book
+  wins, and the page says *updated from …*.
+- **When you edit someone in no address book, save to**: *Havre only* (the
+  default), or one of your address books, where Havre then creates them.
+- Havre **never deletes** anything from an address book. Someone deleted
+  there leaves People too, unless you made them a favourite; switching an
+  account off removes the people that only came from it. Merging or
+  separating people in Havre doesn't change your address books.
+- Outlook keeps one mobile, two work and two home numbers: more than that
+  stay in Havre. Birthdays without a year work everywhere.
+- **⋯ next to People › Import a .vcf file** (exported from a phone, Outlook,
+  Apple Contacts, Google…): the people go into Havre only, matched to those
+  already there by address (or by name, for someone without one); it fills
+  what's missing and never replaces your details. **Export as .vcf** gives
+  everyone with details, in one file.
 
 ## Tasks
 

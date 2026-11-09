@@ -122,7 +122,9 @@ Read in this order — each file is short and commented:
 9. `crates/core/src/people/` — SQL over JSON (`json_each`, a `UNION` of
    sightings) then grouping in Rust (`HashMap`, `Entry`); one person with
    several addresses (`contacts.rs`, a join table); `Option<Option<T>>` for
-   optional updates. `crates/core/src/apps.rs` — `const` data
+   optional updates. `people/vcard.rs` — a small reader and writer for a
+   line-based format; `people/books.rs` — a three-way merge, field by field;
+   `people/sync.rs` — a sync loop with tokens, ETags and `If-Match`. `crates/core/src/apps.rs` — `const` data
    (manifests) plus stored choices. `crates/core/src/invitations.rs` — two
    modules (Mail, Agenda) working together. `crates/core/src/notes/markdown.rs`
    — a small hand-written reader: `&str` slicing by bytes, `strip_prefix`,
