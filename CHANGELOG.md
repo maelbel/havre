@@ -6,6 +6,11 @@ All notable changes to Havre are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-09
+
+Mail grows up (rich text, signatures, undo send, send later), People syncs with your address books, and the
+Agenda gets reminders and dragging.
+
 ### Added
 
 - **Rich text in Mail**: bold, italic, underline, strikethrough, links, lists and quotes, with a toolbar and the
@@ -38,6 +43,10 @@ All notable changes to Havre are listed here. The format follows
   *Favourites* and *Waiting for you*, and sets **newsletters & robots** apart. A person's page says where things
   stand (last email each way, last and next meeting, *Waiting for your reply since …*), and **Today** shows
   birthdays and favourites you haven't talked to in a month. People now include those you write to.
+
+### Fixed
+
+- On a phone or tablet, opening a message in Mail took two taps: one tap is enough again.
 
 ## [0.3.0] - 2026-11-09
 
@@ -136,7 +145,8 @@ The first release.
 - Email HTML sanitised and sandboxed; the assistant only proposes changes, confirmed by the user.
 - The web UI loads nothing from other servers.
 
-[Unreleased]: https://github.com/maelbel/havre/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/maelbel/havre/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/maelbel/havre/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/maelbel/havre/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/maelbel/havre/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/maelbel/havre/releases/tag/v0.1.0
