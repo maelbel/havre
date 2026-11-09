@@ -285,6 +285,7 @@ impl Ai {
         conversation: Option<i64>,
         question: &str,
         local: LocalTime,
+        live: Option<super::assistant::Live>,
     ) -> Result<Conversation> {
         if question.trim().is_empty() {
             return Err(Error::Config("Ask something first.".into()));
@@ -294,7 +295,7 @@ impl Ai {
             None => Vec::new(),
         };
         turns.push(Turn { role: "user".into(), text: question.trim().to_owned() });
-        let answer = self.ask(&turns, local).await?;
+        let answer = self.ask_live(&turns, local, live).await?;
         let value = serde_json::to_value(&answer).map_err(|e| Error::Ai(e.to_string()))?;
         let id = save_exchange(&self.pool, conversation, question, &answer.text, &value).await?;
         get(&self.pool, id).await
