@@ -8,6 +8,13 @@ All notable changes to Havre are listed here. The format follows
 
 ### Added
 
+- **Signatures**: one per account (Settings › Accounts), in new messages and above the quote in replies and
+  forwards, swapped when you change *From*.
+- **Undo send**: *Sending… · Undo* for 10 seconds (Settings › Your apps › Mail: off, 5–30 s), done on the server.
+- **Send later**: tomorrow morning or afternoon, Monday morning, or a date and time you pick; **Scheduled** in the
+  mail sidebar (change, send now, don't send). A message that can't go stays there with the reason, and you're
+  told (push too). Never sent twice.
+
 - **Contacts sync**: People in step with Google Contacts, Outlook contacts and CardDAV address books (iCloud,
   Nextcloud, Fastmail…), both ways and field by field, with photos (Settings › Your apps › People). Nothing is
   ever deleted from an address book. Microsoft and Google accounts reconnect once to allow it.

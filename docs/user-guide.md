@@ -134,6 +134,32 @@ and folders are listed directly.
 - A copy is filed in the account's Sent folder (Gmail and Microsoft 365 do
   it themselves).
 
+### Signatures, undo send, send later
+
+- **Signature**: Settings › Accounts › *Edit*, one per account (plain text).
+  New messages start with it, below a `-- ` line (the separator other mail
+  apps recognise); replies and forwards get it **above the quoted message**
+  unless you switch off *Also in replies and forwards*. Changing *From* swaps
+  it for the other account's, unless you edited it. Recipients see it in grey.
+- **Undo send**: after *Send*, a toast says *Sending…* with **Undo** for 10
+  seconds; *Undo* opens the message again as it was. The delay is in
+  Settings › Your apps › Mail (*Off*, 5, 10, 20 or 30 seconds). It happens
+  on the server: closing the page during those seconds still sends.
+- **Send later**: the arrow next to *Send* offers *Tomorrow morning* (8:00),
+  *Tomorrow afternoon* (13:00), *Monday morning* (8:00) and *Pick a date and
+  time…*, in your time zone. Havre sends it at that time, even if no page is
+  open.
+- **Scheduled**, in the mail sidebar, lists them: open one to change it (it
+  stays scheduled), *Send now*, or *Don't send* (a draft again). While
+  scheduled, a message isn't in the server's Drafts folder, so your phone's
+  mail app can't send it a second time.
+- If it can't go at its time (the server is down, the password changed), it
+  stays in *Scheduled* with the reason, and you're told (and get a push on
+  your phone if you use them). If Havre was off at that time, it goes as soon
+  as Havre starts, and says it was late. If Havre stopped in the very middle
+  of sending, it doesn't guess: the message says it *may have gone* — look in
+  Sent, then send it again or delete it.
+
 ### Keyboard and search
 
 Keyboard in the web UI:

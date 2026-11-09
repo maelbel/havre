@@ -115,8 +115,9 @@ Read in this order — each file is short and commented:
    WebDAV + XML (`caldav.rs`), iCalendar and repeating events (`ics.rs`),
    recurrence rules and time zones (`repeat.rs`: enums with `serde`, `let`-chains,
    wall-clock time across daylight saving with `chrono-tz`).
-   `crates/core/src/compose.rs` — building MIME messages and sending them
-   with `lettre`; drafts; `impl` blocks spread over modules.
+   `crates/core/src/compose/` — building MIME messages and sending them
+   with `lettre`; drafts; `impl` blocks spread over modules; `outbox.rs`, a
+   small job queue in SQLite where an atomic claim makes "never twice" hold.
    `crates/core/src/oauth.rs` — OAuth 2.0 with `reqwest` (HTTP + JSON), a
    trait implementation (`Authenticator`), caching a token behind a `Mutex`.
 9. `crates/core/src/people/` — SQL over JSON (`json_each`, a `UNION` of
