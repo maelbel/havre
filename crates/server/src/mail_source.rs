@@ -62,6 +62,7 @@ impl MailSource {
                         can_tasks: false,
                         can_contacts: false,
                         signature: String::new(),
+                        signature_html: String::new(),
                         signature_in_replies: true,
                     },
                     status: idle_status(),

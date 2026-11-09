@@ -59,8 +59,10 @@ pub struct Account {
     pub can_tasks: bool,
     /// The sign-in allows contacts sync (Outlook contacts, Google Contacts).
     pub can_contacts: bool,
-    /// Added after a `-- ` line to new messages (plain text).
+    /// Added after a `-- ` line to new messages: its plain text…
     pub signature: String,
+    /// …and formatted (clean HTML; made from the text for older signatures).
+    pub signature_html: String,
     /// Replies and forwards get it too (above the quoted message).
     pub signature_in_replies: bool,
 }
@@ -105,7 +107,10 @@ pub struct AccountUpdate {
     pub smtp_host: Option<String>,
     pub smtp_port: Option<u16>,
     pub smtp_security: Option<String>,
+    /// Plain text (its HTML is made from it)…
     pub signature: Option<String>,
+    /// …or formatted (its plain text is made from it). Sending both: the HTML wins.
+    pub signature_html: Option<String>,
     pub signature_in_replies: Option<bool>,
 }
 
@@ -591,6 +596,16 @@ impl Database {
             can_tasks,
             can_contacts,
             signature: r.get("signature"),
+            signature_html: {
+                // Signatures written before rich text: their HTML is made from the text.
+                let html: String = r.get("signature_html");
+                let text: String = r.get("signature");
+                if html.is_empty() && !text.is_empty() {
+                    crate::compose::html::from_text(&text)
+                } else {
+                    html
+                }
+            },
             signature_in_replies: r.get("signature_in_replies"),
         }
     }
@@ -668,8 +683,23 @@ impl Database {
         if let Some(v) = &update.sender_name {
             sql.push(", sender_name = ").push_bind(v.trim().to_owned());
         }
-        if let Some(v) = &update.signature {
-            sql.push(", signature = ").push_bind(clean_signature(v)?);
+        // The signature, kept in both forms: formatted, and its plain text.
+        let signature = match (&update.signature_html, &update.signature) {
+            (Some(html), _) => {
+                let html = crate::compose::html::clean(html);
+                let text = clean_signature(&crate::compose::html::to_text(&html))?;
+                // Nothing left but empty paragraphs: no signature.
+                Some(if text.is_empty() { (String::new(), String::new()) } else { (html, text) })
+            }
+            (None, Some(text)) => {
+                let text = clean_signature(text)?;
+                Some((crate::compose::html::from_text(&text), text))
+            }
+            (None, None) => None,
+        };
+        if let Some((html, text)) = signature {
+            sql.push(", signature = ").push_bind(text);
+            sql.push(", signature_html = ").push_bind(html);
         }
         if let Some(v) = update.signature_in_replies {
             sql.push(", signature_in_replies = ").push_bind(v);
@@ -807,7 +837,7 @@ impl Database {
 /// The columns `account_from_row` reads.
 const ACCOUNT_COLUMNS: &str = "id, name, email, color, imap_host, imap_port, imap_user, auth, \
                                smtp_host, smtp_port, smtp_security, oauth_scope, sender_name, signature, \
-                               signature_in_replies";
+                               signature_html, signature_in_replies";
 
 fn clean_host(host: &Option<String>) -> Option<String> {
     host.as_deref().map(str::trim).filter(|h| !h.is_empty()).map(str::to_owned)
