@@ -135,6 +135,15 @@ export type MailEvent = { account: number } & (
   | { type: 'agenda' }
   | { type: 'tasks' }
   | { type: 'reminder'; task: number; title: string }
+  | {
+      type: 'event_reminder'
+      event: number
+      title: string
+      start: number
+      all_day: boolean
+      location: string
+      join_url: string | null
+    }
 )
 
 /**

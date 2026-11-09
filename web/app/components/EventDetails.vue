@@ -146,6 +146,7 @@ function fileKindLabel(name: string, mime: string) {
         <span><HIcon name="clock" :size="15" /> {{ when }}</span>
         <span v-if="repeats"><HIcon name="repeat" :size="15" /> {{ repeats }}</span>
         <span v-if="place"><HIcon name="pin" :size="15" /> {{ place }}</span>
+        <span v-if="event.reminder != null"><HIcon name="bell" :size="15" /> {{ reminderLabel(event.reminder, event.all_day) }}</span>
       </div>
       <div v-if="event.join_url || !event.read_only" class="acts">
         <UButton

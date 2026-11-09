@@ -48,6 +48,39 @@ const form = reactive({
   description: props.event?.description ?? '',
   guests: props.event?.attendees.map((a) => a.email).join(', ') ?? props.guests?.join(', ') ?? '',
   repeat: (props.event?.repeat ? structuredClone(toRaw(props.event.repeat)) : null) as Repeat | null,
+  // `-1` stands for "no reminder" in the select (a select can't hold null).
+  reminder: props.event ? (props.event.reminder ?? -1) : -1,
+})
+
+// A new event starts with your default reminder (Settings › Calendars).
+const defaults = ref<{ timed: number | null; allDay: number | null } | null>(null)
+onMounted(async () => {
+  if (props.event) return
+  try {
+    const s = await fetchAgendaSettings()
+    defaults.value = { timed: s.default_reminder, allDay: s.default_all_day_reminder }
+    form.reminder = (form.allDay ? s.default_all_day_reminder : s.default_reminder) ?? -1
+  } catch {
+    /* keep "no reminder" */
+  }
+})
+// Switching All day changes the kind of reminder: offer that kind's default.
+watch(
+  () => form.allDay,
+  (allDay) => {
+    if (props.event?.all_day === allDay) form.reminder = props.event.reminder ?? -1
+    else if (defaults.value) form.reminder = (allDay ? defaults.value.allDay : defaults.value.timed) ?? -1
+    else form.reminder = -1
+  },
+)
+const reminderItems = computed(() => {
+  const list = form.allDay ? ALL_DAY_REMINDERS : REMINDERS
+  const items = [{ label: 'No reminder', value: -1 }, ...list]
+  // A reminder set in another app that isn't in the list: shown as it is.
+  if (form.reminder >= 0 && !items.some((i) => i.value === form.reminder)) {
+    items.push({ label: reminderLabel(form.reminder, form.allDay), value: form.reminder })
+  }
+  return items
 })
 
 /** An occurrence of a series whose rule was made in another app: Havre keeps that rule. */
@@ -111,6 +144,7 @@ function input(): EventInput | string {
       : [],
     repeat: repeatToSend(form.repeat),
     time_zone: browserTimeZone(),
+    reminder: form.reminder < 0 ? null : form.reminder,
   }
 }
 
@@ -241,6 +275,12 @@ const calendarItems = computed(() =>
             Repeats in a way set in another app. Change the rule there; here you can change this event or all of them.
           </p>
           <RepeatEditor v-else v-model="form.repeat" :start="firstDay" :all-day="form.allDay" />
+        </UFormField>
+
+        <UFormField label="Reminder" orientation="horizontal" class="row">
+          <USelect v-model="form.reminder" :items="reminderItems" aria-label="Reminder" class="w-full sm:w-64">
+            <template #leading><HIcon name="bell" :size="14" /></template>
+          </USelect>
         </UFormField>
 
         <UFormField label="Where" orientation="horizontal" class="row">
