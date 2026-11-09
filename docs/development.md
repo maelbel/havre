@@ -117,7 +117,10 @@ Read in this order — each file is short and commented:
    wall-clock time across daylight saving with `chrono-tz`).
    `crates/core/src/compose/` — building MIME messages and sending them
    with `lettre`; drafts; `impl` blocks spread over modules; `outbox.rs`, a
-   small job queue in SQLite where an atomic claim makes "never twice" hold.
+   small job queue in SQLite where an atomic claim makes "never twice" hold;
+   `html.rs`, cleaning HTML from the browser with an allowlist (`ammonia`) and
+   writing its plain text with a small hand-written tokenizer (an `enum` of
+   tokens, a writer struct that tracks lines, quotes and blank lines).
    `crates/core/src/oauth.rs` — OAuth 2.0 with `reqwest` (HTTP + JSON), a
    trait implementation (`Authenticator`), caching a token behind a `Mutex`.
 9. `crates/core/src/people/` — SQL over JSON (`json_each`, a `UNION` of

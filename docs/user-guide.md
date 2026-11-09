@@ -119,7 +119,8 @@ and folders are listed directly.
   where it is saved.
 - A draft started in another app is in the Drafts folder: open it and click
   **Edit draft** to finish it in Havre (recipients, subject, text and
-  attachments come with it; formatting becomes plain text).
+  attachments come with it; formatting keeps what Havre's editor knows, see
+  below).
 - **Unsent**, in the mail sidebar, lists the drafts that aren't on the server:
   not yet (just written), or not possible (the account has no Drafts folder,
   or the server didn't answer — Havre tries again every few minutes). Your
@@ -134,13 +135,39 @@ and folders are listed directly.
 - A copy is filed in the account's Sent folder (Gmail and Microsoft 365 do
   it themselves).
 
+### Formatting
+
+The text is **rich text**, with a toolbar above it: **bold**, *italic*,
+underline, strikethrough, **links**, bulleted and numbered **lists**,
+**quotes**, and *clear formatting*.
+
+- Keys: `Ctrl`/`⌘` + `B`, `I`, `U`; `Ctrl`/`⌘` + `K` for a link. While
+  typing, `- ` or `* ` starts a list, `1. ` a numbered one, `> ` a quote;
+  `Enter` on an empty list item ends the list.
+- **Links**: select the text, `Ctrl`/`⌘` + `K` (or the link button), type or
+  paste the address (`https://…`, or an email address). With nothing
+  selected, the address itself becomes the link. Pasting an address makes it
+  a link; pasting one over selected text links that text.
+- **Pasting** from a web page or a document keeps paragraphs, bold, italics,
+  links and lists; colours, fonts, sizes, headings, tables and images become
+  plain text (or go).
+- **Replies and forwards** quote the original with a bar on the left, keeping
+  its paragraphs, bold, links and lists. You write above it.
+- Recipients get both versions: the formatted one and a **plain text** one
+  Havre makes from it (lists as `- `, links as `text <address>`, quotes as
+  `> `), for mail apps that only read text.
+- Prefer plain text? Settings › Your apps › Mail › *Write messages in* ›
+  **Plain text** (a draft already in rich text stays so).
+
 ### Signatures, undo send, send later
 
-- **Signature**: Settings › Accounts › *Edit*, one per account (plain text).
-  New messages start with it, below a `-- ` line (the separator other mail
+- **Signature**: Settings › Accounts › *Edit*, one per account, with bold,
+  italics and links (`Ctrl`/`⌘` + `K`). New messages start with it, below a
+  `-- ` line (the separator other mail
   apps recognise); replies and forwards get it **above the quoted message**
   unless you switch off *Also in replies and forwards*. Changing *From* swaps
-  it for the other account's, unless you edited it. Recipients see it in grey.
+  it for the other account's, unless you edited it. In the message it's a
+  block of its own, which you can still edit. Recipients see it in grey.
 - **Undo send**: after *Send*, a toast says *Sending…* with **Undo** for 10
   seconds; *Undo* opens the message again as it was. The delay is in
   Settings › Your apps › Mail (*Off*, 5, 10, 20 or 30 seconds). It happens
