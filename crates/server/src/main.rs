@@ -9,6 +9,7 @@ mod ai;
 mod api;
 mod auth;
 mod backups;
+mod contacts;
 mod files;
 mod mail_source;
 mod mcp;
@@ -23,7 +24,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use axum::Router;
 use havre_core::{
     accounts::AccountManager, agenda::Agenda, ai::Ai, auth::Auth, backup::Backups, config::ImapConfig,
-    push::Push, secrets::Secrets, store::Database, tasks::Tasks,
+    people::sync::ContactSync, push::Push, secrets::Secrets, store::Database, tasks::Tasks,
 };
 use mail_source::MailSource;
 use tokio::sync::watch;
@@ -44,6 +45,8 @@ pub struct AppState {
     pub agenda: Option<Arc<Agenda>>,
     /// Tasks (`None` in demo mode).
     pub tasks: Option<Arc<Tasks>>,
+    /// Contacts sync with your address books (`None` in demo mode).
+    pub contacts: Option<Arc<ContactSync>>,
     /// AI, off until turned on in Settings (`None` in demo mode).
     pub ai: Option<Arc<Ai>>,
     /// Nightly backups (`None` in demo mode).
@@ -100,9 +103,9 @@ async fn main() -> anyhow::Result<()> {
 
     // `HAVRE_DEMO=1` serves sample mail; otherwise use the IMAP account.
     let demo = matches!(std::env::var("HAVRE_DEMO").as_deref(), Ok("1" | "true"));
-    let (mail, login, agenda, tasks, ai, backups, push) = if demo {
+    let (mail, login, agenda, tasks, contacts, ai, backups, push) = if demo {
         tracing::info!("demo mode: serving sample mail");
-        (MailSource::demo(), None, None, None, None, None, None)
+        (MailSource::demo(), None, None, None, None, None, None, None)
     } else {
         let secrets = Secrets::load_or_create(&data_dir)?;
         let db = Database::open(&data_dir.join("havre.db"), secrets.clone()).await?;
@@ -138,6 +141,8 @@ async fn main() -> anyhow::Result<()> {
         let agenda = Agenda::start(manager.database().clone(), manager.sender());
         // Tasks: the same, plus reminders.
         let tasks = Tasks::start(manager.database().clone(), manager.sender());
+        // Contacts: off until switched on for an account (Settings › People).
+        let contacts = ContactSync::start(manager.database().clone(), manager.sender());
         // AI: does nothing until turned on in Settings › AI.
         let ai = Ai::start(Arc::clone(&manager), Arc::clone(&agenda));
         // Push notifications: listens to the same channel (new mail, reminders).
@@ -147,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
             Some(login),
             Some(agenda),
             Some(tasks),
+            Some(contacts),
             Some(ai),
             Some(backups),
             Some(push),
@@ -165,6 +171,7 @@ async fn main() -> anyhow::Result<()> {
         auth: login,
         agenda,
         tasks,
+        contacts,
         ai,
         backups,
         push,

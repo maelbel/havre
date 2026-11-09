@@ -764,7 +764,7 @@ impl Session<'_> {
                 Ok(people
                     .iter()
                     .map(|p| {
-                        // "Claire Dubois <claire@acme.fr> — Acme, Ops lead (12 emails, 3 meetings)"
+                        // "Claire Dubois <claire@acme.fr> — Acme, Ops lead — phone: mobile 06… (12 emails, 3 meetings)"
                         let work = [p.company.as_str(), p.role.as_str()]
                             .into_iter()
                             .filter(|s| !s.is_empty())
@@ -772,9 +772,26 @@ impl Session<'_> {
                             .join(", ");
                         let work = if work.is_empty() { String::new() } else { format!(" — {work}") };
                         let robot = if p.automated { ", automated sender" } else { "" };
+                        let phones = p
+                            .phones
+                            .iter()
+                            .map(|ph| {
+                                if ph.label.is_empty() {
+                                    ph.number.clone()
+                                } else {
+                                    format!("{} {}", ph.label, ph.number)
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let phones =
+                            if phones.is_empty() { String::new() } else { format!(" — phone: {phones}") };
+                        // Someone without an address can't be written to or invited: say so.
+                        let address =
+                            if p.emails.is_empty() { "no email address".to_owned() } else { p.email.clone() };
                         format!(
-                            "{} <{}>{work} ({} emails, {} meetings{robot})",
-                            p.name, p.email, p.messages, p.meetings
+                            "{} <{address}>{work}{phones} ({} emails, {} meetings{robot})",
+                            p.name, p.messages, p.meetings
                         )
                     })
                     .collect::<Vec<_>>()
