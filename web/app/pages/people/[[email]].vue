@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type { SplitPaneSpec } from '~/composables/useSplit'
-import type { PersonEntry, PersonDetail } from '~/composables/usePlatform'
+import type { PeopleFilter, PeopleSort, PersonEntry, PersonDetail } from '~/composables/usePlatform'
 import type { NoteSummary } from '~/composables/useNotes'
 import type { Task } from '~/composables/useTasks'
 
-// People: everyone you write to or meet, built from Mail (senders) and
-// the Agenda (guests, organizers). Nothing to fill in. /people/<email>
-// opens one person: recent mail and meetings, side by side.
+// People: everyone you write to or meet, built from Mail (senders and
+// recipients) and the Agenda (guests). Nothing to fill in, but you can add
+// details, favourites, and merge someone's addresses. /people/<email> opens
+// one person: their details, where things stand, mail and meetings.
 const route = useRoute()
 const toast = useToasts()
 const email = computed(() => ((route.params.email as string) || '').toLowerCase() || null)
@@ -17,14 +18,34 @@ const accountMap = computed(() => new Map(accounts.data.value.map((a) => [a.id, 
 // ---- The list ------------------------------------------------------------------
 
 const query = ref('')
+const sort = ref<PeopleSort>('recent')
+const filter = ref<PeopleFilter>('everyone')
+const company = ref<string | null>(null)
 const people = ref<PersonEntry[]>([])
 const listLoading = ref(true)
+const sorts = [
+  { label: 'Recent', value: 'recent' },
+  { label: 'Frequent', value: 'frequent' },
+  { label: 'A–Z', value: 'name' },
+]
+const filters: { id: PeopleFilter; label: string; icon?: string }[] = [
+  { id: 'everyone', label: 'Everyone' },
+  { id: 'favorites', label: 'Favourites', icon: 'i-havre-star' },
+  { id: 'waiting', label: 'Waiting for you', icon: 'i-havre-reply' },
+  { id: 'automated', label: 'Newsletters & robots' },
+]
+// The companies, for the "By company" menu (loaded once).
+const companies = ref<{ label: string; value: string | null }[]>([{ label: 'Any company', value: null }])
+onMounted(async () => {
+  const list = await fetchCompanies().catch(() => [])
+  companies.value = [{ label: 'Any company', value: null }, ...list.map((c) => ({ label: `${c.name} · ${c.people}`, value: c.name }))]
+})
 let seq = 0
 async function search() {
   const mine = ++seq
   listLoading.value = true
   try {
-    const found = await searchPeople(query.value.trim())
+    const found = await listPeople({ q: query.value.trim(), sort: sort.value, filter: filter.value, company: company.value })
     if (mine === seq) people.value = found
   } catch (err) {
     if (mine === seq) toast.show(apiErrorMessage(err), { tone: 'error' })
@@ -37,7 +58,15 @@ watch(query, () => {
   clearTimeout(timer)
   timer = setTimeout(search, 150)
 })
+watch([sort, filter, company], search)
 onMounted(search)
+/** A row's marks: waiting for you, birthday this week. */
+const birthdaySoon = (p: PersonEntry) => {
+  const d = daysToBirthday(p.birthday)
+  return d != null && d <= 7 ? d : null
+}
+/** Under the name: their company and role, else their address. */
+const subline = (p: PersonEntry) => [p.company, p.role].filter(Boolean).join(' · ') || (p.name ? p.email : counts(p))
 
 // ---- One person ------------------------------------------------------------------
 
@@ -50,13 +79,85 @@ watch(
     detailError.value = null
     if (!e) return
     try {
-      detail.value = await fetchPerson(e)
+      const found = await fetchPerson(e)
+      // Opened by another of their addresses: show their main one in the address.
+      if (found.email !== e && found.emails.includes(e)) {
+        await navigateTo(`/people/${encodeURIComponent(found.email)}`, { replace: true })
+        return
+      }
+      detail.value = found
     } catch (err) {
       detailError.value = apiErrorMessage(err)
     }
   },
   { immediate: true },
 )
+
+// ---- Your details: edit, favourite, merge, robot ------------------------------------
+const editing = ref(false)
+const merging = ref(false)
+/** After a change: the page shows it, the list too. */
+async function changed(p: PersonDetail) {
+  detail.value = p
+  editing.value = false
+  merging.value = false
+  if (p.email !== email.value) await navigateTo(`/people/${encodeURIComponent(p.email)}`, { replace: true })
+  search()
+}
+async function toggleFavorite() {
+  if (!detail.value) return
+  try {
+    await changed(await updatePerson(detail.value.email, { favorite: !detail.value.favorite }))
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+async function setKind(kind: 'person' | 'automated') {
+  if (!detail.value) return
+  try {
+    const p = await updatePerson(detail.value.email, { kind })
+    await changed(p)
+    toast.show(kind === 'automated' ? `${personName(p)} is now under Newsletters & robots` : `${personName(p)} is a person again`)
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+async function separate(other: string) {
+  if (!detail.value) return
+  try {
+    await changed(await removePersonAddress(detail.value.email, other))
+    toast.show(`${other} is someone else again`)
+  } catch (err) {
+    toast.show(apiErrorMessage(err), { tone: 'error' })
+  }
+}
+const moreItems = computed(() => {
+  const d = detail.value
+  if (!d) return []
+  const items: { label: string; icon?: string; onSelect: () => void }[][] = [
+    [{ label: 'Merge with another address…', icon: 'i-havre-merge', onSelect: () => (merging.value = true) }],
+  ]
+  const others = d.emails.filter((e) => e !== d.email)
+  if (others.length) items.push(others.map((o) => ({ label: `Separate ${o}`, icon: 'i-havre-close', onSelect: () => separate(o) })))
+  items.push([
+    d.automated
+      ? { label: 'This is a person', icon: 'i-havre-people', onSelect: () => setKind('person') }
+      : { label: 'Not a person (newsletter, robot)', icon: 'i-havre-archive', onSelect: () => setKind('automated') },
+  ])
+  return items
+})
+
+/** "Waiting for your reply since Tuesday": their latest email, to answer. */
+const waitingMail = computed(() => detail.value?.recent_messages.find((m) => m.from) ?? detail.value?.recent_messages[0])
+function since(t: number) {
+  const d = new Date(t * 1000)
+  const days = Math.floor((Date.now() - d.getTime()) / 86_400_000)
+  if (days < 1) return 'today'
+  if (days < 2) return 'yesterday'
+  if (days < 7) return d.toLocaleDateString([], { weekday: 'long' })
+  return d.toLocaleDateString([], { day: 'numeric', month: 'long' })
+}
+const dayLabel = (t: number) => new Date(t * 1000).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
 
 // ---- Tasks with this person (when the Tasks app is in the dock) ---------------------
 const tasksOn = useTasksEnabled()
@@ -189,24 +290,65 @@ const splitPanes: SplitPaneSpec[] = [
           v-model="query"
           type="search"
           icon="i-havre-search"
-          placeholder="Search people"
+          placeholder="Name, address or company"
           aria-label="Search people"
           class="search"
         />
+        <div class="tools">
+          <USelect v-model="sort" :items="sorts" size="sm" aria-label="Sort people" class="w-28" />
+          <USelect v-model="company" :items="companies" size="sm" aria-label="Filter by company" class="flex-1 min-w-0" />
+        </div>
+        <div class="filters" role="tablist" aria-label="Show">
+          <UButton
+            v-for="f in filters"
+            :key="f.id"
+            role="tab"
+            :aria-selected="filter === f.id"
+            :color="filter === f.id ? 'primary' : 'neutral'"
+            :variant="filter === f.id ? 'soft' : 'ghost'"
+            :icon="f.icon"
+            size="xs"
+            @click="filter = f.id"
+          >
+            {{ f.label }}
+          </UButton>
+        </div>
       </div>
       <ul>
         <li v-for="p in people" :key="p.email">
-          <NuxtLink :to="`/people/${encodeURIComponent(p.email)}`" class="row" :class="{ on: p.email === email }">
+          <NuxtLink :to="`/people/${encodeURIComponent(p.email)}`" class="row" :class="{ on: p.emails.includes(email ?? '') }">
             <span class="avatar" :style="{ background: personColor(p.email) }">{{ initials(personName(p)) }}</span>
             <span class="who">
-              <span class="name">{{ personName(p) }}</span>
-              <span class="sub">{{ p.name ? p.email : counts(p) }}</span>
+              <span class="name">
+                {{ personName(p) }}
+                <HIcon v-if="p.favorite" name="starFilled" :size="12" class="fav" /><span v-if="p.favorite" class="sr-only">, favourite</span>
+              </span>
+              <span class="sub">{{ subline(p) }}</span>
+            </span>
+            <span class="meta">
+              <span v-if="p.last_contact" class="ago">{{ ago(p.last_contact) }}</span>
+              <span class="marks">
+                <span v-if="p.waiting_since" class="mark waiting" title="Waiting for your reply"><HIcon name="reply" :size="11" /><span class="sr-only">Waiting for your reply</span></span>
+                <span v-if="birthdaySoon(p) != null" class="mark bday" :title="birthdaySoon(p) === 0 ? 'Birthday today' : `Birthday in ${birthdaySoon(p)} days`">
+                  <HIcon name="cake" :size="11" /><span class="sr-only">Birthday soon</span>
+                </span>
+              </span>
             </span>
           </NuxtLink>
         </li>
       </ul>
       <p v-if="!listLoading && !people.length" class="empty">
-        {{ query ? 'Nobody matches.' : 'People appear here as your mail and calendars sync.' }}
+        {{
+          query || company
+            ? 'Nobody matches.'
+            : filter === 'favorites'
+              ? 'No favourites yet: open someone and press ★.'
+              : filter === 'waiting'
+                ? 'Nobody is waiting for your reply.'
+                : filter === 'automated'
+                  ? 'No newsletters or robots.'
+                  : 'People appear here as your mail and calendars sync.'
+        }}
       </p>
     </aside>
     </template>
@@ -232,11 +374,81 @@ const splitPanes: SplitPaneSpec[] = [
           <span class="avatar big" :style="{ background: personColor(detail.email) }">{{ initials(personName(detail)) }}</span>
           <div class="id">
             <h2 class="serif">{{ personName(detail) }}</h2>
-            <p class="faint">{{ detail.email }}</p>
-            <p class="faint small">{{ counts(detail) || 'Nothing in common yet.' }}</p>
+            <p v-if="detail.company || detail.role" class="work">{{ [detail.role, detail.company].filter(Boolean).join(' · ') }}</p>
+            <p class="faint addresses">
+              <span v-for="(e, i) in detail.emails" :key="e">{{ e }}<template v-if="i < detail.emails.length - 1">,&nbsp;</template></span>
+            </p>
+            <p class="faint small">
+              {{ counts(detail) || 'Nothing in common yet.' }}<template v-if="detail.automated"> · newsletter or robot</template>
+            </p>
           </div>
-          <UButton v-if="canWrite" icon="i-havre-pen" type="button" class="desk" @click="write">Write</UButton>
+          <div class="head-actions">
+            <UButton v-if="canWrite" icon="i-havre-pen" type="button" class="desk" @click="write">Write</UButton>
+            <UButton
+              color="neutral"
+              :variant="detail.favorite ? 'soft' : 'ghost'"
+              :icon="detail.favorite ? 'i-havre-star-filled' : 'i-havre-star'"
+              square
+              :class="{ 'is-fav': detail.favorite }"
+              :aria-label="detail.favorite ? 'Remove from favourites' : 'Add to favourites'"
+              :aria-pressed="detail.favorite"
+              @click="toggleFavorite"
+            />
+            <UButton color="neutral" variant="ghost" icon="i-havre-pen" square :aria-label="`Edit ${firstName}'s details`" class="edit" @click="editing = true" />
+            <UDropdownMenu :items="moreItems">
+              <UButton color="neutral" variant="ghost" icon="i-havre-ellipsis" square aria-label="More" />
+            </UDropdownMenu>
+          </div>
         </header>
+
+        <!-- What you know: phones, birthday, note (when there's any). -->
+        <dl v-if="detail.phones.length || detail.birthday || detail.note" class="facts">
+          <div v-if="detail.phones.length">
+            <dt><HIcon name="phone" :size="14" /><span class="sr-only">Phones</span></dt>
+            <dd>
+              <a v-for="ph in detail.phones" :key="ph.number" :href="`tel:${ph.number.replace(/[^+\d]/g, '')}`" class="tel">
+                {{ ph.number }}<span v-if="ph.label" class="faint ph-label">{{ ph.label }}</span>
+              </a>
+            </dd>
+          </div>
+          <div v-if="detail.birthday">
+            <dt><HIcon name="cake" :size="14" /><span class="sr-only">Birthday</span></dt>
+            <dd>
+              {{ birthdayLabel(detail.birthday) }}
+              <span v-if="birthdaySoon(detail) != null" class="soon">{{ birthdaySoon(detail) === 0 ? 'today!' : `in ${birthdaySoon(detail)} days` }}</span>
+            </dd>
+          </div>
+          <div v-if="detail.note">
+            <dt><HIcon name="note" :size="14" /><span class="sr-only">Note</span></dt>
+            <dd class="note">{{ detail.note }}</dd>
+          </div>
+        </dl>
+        <UButton
+          v-else-if="!detail.automated"
+          color="neutral"
+          variant="link"
+          size="sm"
+          icon="i-havre-plus"
+          class="add-details"
+          @click="editing = true"
+        >
+          Add a phone, birthday, note…
+        </UButton>
+
+        <!-- Keeping in touch: where things stand. -->
+        <section v-if="!detail.automated && (detail.last_from || detail.last_to || detail.last_meeting || detail.next_meeting)" class="touch" aria-label="Keeping in touch">
+          <div v-if="detail.waiting_since" class="waiting-box">
+            <HIcon name="reply" :size="15" />
+            <span>Waiting for your reply since {{ since(detail.waiting_since) }}</span>
+            <UButton v-if="waitingMail" size="xs" :to="messageLink(waitingMail)">Open the email</UButton>
+          </div>
+          <ul class="stand">
+            <li v-if="detail.last_from"><span class="k">Last email from {{ firstName }}</span><span class="v">{{ ago(detail.last_from) }} ago</span></li>
+            <li v-if="detail.last_to"><span class="k">You last wrote</span><span class="v">{{ ago(detail.last_to) }} ago</span></li>
+            <li v-if="detail.last_meeting"><span class="k">Last meeting</span><span class="v">{{ dayLabel(detail.last_meeting) }}</span></li>
+            <li v-if="detail.next_meeting"><span class="k">Next meeting</span><span class="v">{{ dayLabel(detail.next_meeting) }}</span></li>
+          </ul>
+        </section>
 
         <!-- Phones: one list at a time, picked with these chips. -->
         <div v-if="phone" class="chips" role="tablist" aria-label="With them">
@@ -356,6 +568,8 @@ const splitPanes: SplitPaneSpec[] = [
           </section>
         </div>
       </template>
+      <PersonEditor v-if="editing && detail" :person="detail" @saved="changed" @cancel="editing = false" />
+      <PersonMerge v-if="merging && detail" :person="detail" @merged="changed" @cancel="merging = false" />
       <p v-else-if="detailError" class="empty center">{{ detailError }}</p>
       <div v-else-if="!email" class="empty center">
         <HIcon name="people" :size="28" />
@@ -368,6 +582,170 @@ const splitPanes: SplitPaneSpec[] = [
 </template>
 
 <style scoped>
+.tools {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 8px -4px 0;
+}
+.fav {
+  color: var(--accent);
+  vertical-align: -1px;
+  margin-left: 3px;
+}
+.meta {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.ago {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+.marks {
+  display: flex;
+  gap: 4px;
+}
+.mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+.mark.waiting {
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+}
+.mark.bday {
+  color: var(--c-personal);
+  background: color-mix(in oklab, var(--c-personal) 18%, transparent);
+}
+.work {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+/* Each address stays whole; a very long one may still wrap anywhere. */
+.addresses span {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  align-self: flex-start;
+}
+.is-fav {
+  color: var(--accent);
+}
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--raise);
+}
+.facts > div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+.facts dt {
+  flex: none;
+  color: var(--faint);
+  transform: translateY(2px);
+}
+.facts dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 14px;
+}
+.facts .note {
+  white-space: pre-line;
+  color: var(--muted);
+}
+.tel {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text);
+  text-decoration: none;
+}
+.ph-label {
+  font-size: 12.5px;
+}
+.tel:hover {
+  color: var(--accent);
+}
+.soon {
+  color: var(--c-personal);
+  font-size: 13px;
+}
+.add-details {
+  margin-top: 10px;
+}
+.touch {
+  margin: 18px 0 26px;
+}
+.waiting-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in oklab, var(--accent) 45%, var(--line));
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  color: var(--text);
+  font-size: 13.5px;
+}
+.waiting-box > span {
+  flex: 1;
+}
+.waiting-box :deep(svg) {
+  color: var(--accent);
+}
+.stand {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.stand li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.stand .k {
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--faint);
+}
+.stand .v {
+  font-size: 14px;
+}
 .to-files {
   display: inline-block;
   margin-top: 8px;
@@ -459,6 +837,7 @@ ul {
   font-size: 22px;
 }
 .who {
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;

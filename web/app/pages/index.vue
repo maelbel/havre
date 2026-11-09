@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { AgendaEvent, Calendar, Response } from '~/composables/useAgenda'
-import type { Related, UnreadMessage } from '~/composables/usePlatform'
+import type { PeopleToday, Related, UnreadMessage } from '~/composables/usePlatform'
 import type { NoteSummary } from '~/composables/useNotes'
 import type { Task } from '~/composables/useTasks'
 
@@ -34,6 +34,8 @@ const pending = ref<AgendaEvent[]>([])
 const unread = ref<{ total: number; messages: UnreadMessage[] }>({ total: 0, messages: [] })
 const related = ref<Record<number, Related>>({})
 const loaded = ref(false)
+// Birthdays this week, and favourites you haven't talked to in a while.
+const people = ref<PeopleToday>({ birthdays: [], keep_in_touch: [] })
 
 async function load() {
   // A week ahead: tomorrow's list, and conflicts for invitations.
@@ -44,6 +46,9 @@ async function load() {
   if (e.status === 'fulfilled') events.value = e.value
   if (p.status === 'fulfilled') pending.value = p.value
   if (u.status === 'fulfilled') unread.value = u.value
+  fetchPeopleToday()
+    .then((t) => (people.value = t))
+    .catch(() => {})
   await Promise.all([loadTasks(), loadNotes()])
   loaded.value = true
   loadRelated()
@@ -372,6 +377,26 @@ const briefTime = computed(() =>
           <NuxtLink :to="{ path: '/agenda', query: { view: 'week' } }" class="more">Open the week →</NuxtLink>
         </div>
 
+        <div v-if="people.birthdays.length || people.keep_in_touch.length" class="box">
+          <div class="box-head">
+            <span class="strong">People</span>
+          </div>
+          <NuxtLink v-for="b in people.birthdays" :key="b.person.email" :to="`/people/${encodeURIComponent(b.person.email)}`" class="tline">
+            <span class="pi"><HIcon name="cake" :size="14" /></span>
+            <span>
+              {{ personName(b.person) }}<span class="faint">
+                · {{ b.days === 0 ? 'birthday today' : b.days === 1 ? 'birthday tomorrow' : `birthday in ${b.days} days` }}<template v-if="b.turns"> ({{ b.turns }})</template></span
+              >
+            </span>
+          </NuxtLink>
+          <NuxtLink v-for="p in people.keep_in_touch" :key="p.email" :to="`/people/${encodeURIComponent(p.email)}`" class="tline">
+            <span class="pi"><HIcon name="star" :size="14" /></span>
+            <span>
+              {{ personName(p) }}<span class="faint"> · last talked {{ p.last_contact ? `${ago(p.last_contact)} ago` : 'a while ago' }}</span>
+            </span>
+          </NuxtLink>
+        </div>
+
         <div v-if="ai.enabled" class="box quiet">
           <div class="strong row-i">
             <HIcon :name="ai.local ? 'lock' : 'sparkle'" :size="15" />
@@ -687,6 +712,11 @@ h1 {
   flex: 0 0 44px;
   font-size: 12px;
   color: var(--faint);
+}
+.pi {
+  flex: none;
+  color: var(--faint);
+  transform: translateY(2px);
 }
 .row-i {
   display: flex;
