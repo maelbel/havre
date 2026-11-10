@@ -59,6 +59,17 @@ watch(
 
 const files = computed(() => props.message?.attachments.filter((a) => !a.inline) ?? [])
 
+// Previews (PDFs, text, audio, video, images): tapping such an attachment
+// opens it; the others download as before.
+const previewed = ref<{ url: string; name: string; mime: string; size: number } | null>(null)
+function canPreview(a: { filename: string; mime: string; size: number }) {
+  return previewKind(a.filename, a.mime, a.size) !== 'none'
+}
+function fileOf(a: { index: number; filename: string; mime: string; size: number }) {
+  const m = props.message!
+  return { url: attachmentUrl(props.account, m.folder, m.uid, a.index), name: a.filename, mime: a.mime, size: a.size }
+}
+
 // With the Files app: another version of an attachment came in another
 // email ("devis.pdf" then "devis-v2.pdf"): say so, with a link to compare.
 const filesOn = useFilesEnabled()
@@ -405,19 +416,36 @@ function kind(mime: string, filename: string) {
           <HIcon name="paperclip" :size="13" /> {{ files.length }} attachment{{ files.length > 1 ? 's' : '' }}
         </div>
         <div class="file-list">
-          <a
-            v-for="a in files"
-            :key="a.index"
-            class="file"
-            :href="attachmentUrl(account, message.folder, message.uid, a.index)"
-            :download="a.filename"
-          >
-            <span class="kind mono">{{ kind(a.mime, a.filename) }}</span>
-            <span class="fname">{{ a.filename }}</span>
-            <span class="faint small">{{ size(a.size) }}</span>
-            <HIcon name="download" :size="15" />
-          </a>
+          <template v-for="a in files" :key="a.index">
+            <div v-if="canPreview(a)" class="file previewable">
+              <button type="button" class="open" :aria-label="`Preview ${a.filename}`" @click="previewed = fileOf(a)">
+                <span class="kind mono">{{ kind(a.mime, a.filename) }}</span>
+                <span class="fname">{{ a.filename }}</span>
+                <span class="faint small">{{ size(a.size) }}</span>
+              </button>
+              <a
+                class="get"
+                :href="attachmentUrl(account, message.folder, message.uid, a.index)"
+                :download="a.filename"
+                :aria-label="`Download ${a.filename}`"
+              >
+                <HIcon name="download" :size="15" />
+              </a>
+            </div>
+            <a
+              v-else
+              class="file"
+              :href="attachmentUrl(account, message.folder, message.uid, a.index)"
+              :download="a.filename"
+            >
+              <span class="kind mono">{{ kind(a.mime, a.filename) }}</span>
+              <span class="fname">{{ a.filename }}</span>
+              <span class="faint small">{{ size(a.size) }}</span>
+              <HIcon name="download" :size="15" />
+            </a>
+          </template>
         </div>
+        <FilePreviewModal :file="previewed" @close="previewed = null" />
         <p v-for="h in versionHints" :key="h.key" class="version-hint">
           <span class="hint-text">{{ h.text }}</span>
           <NuxtLink :to="filesPageLink(h.key)">Compare in Files →</NuxtLink>
@@ -667,6 +695,32 @@ function kind(mime: string, filename: string) {
   font-size: 13px;
 }
 .file:hover {
+  background: var(--hover);
+}
+/* A file with a preview: the name opens it, the arrow downloads it. */
+.file.previewable {
+  padding: 0;
+  gap: 0;
+}
+.file.previewable:hover {
+  background: none;
+}
+.open,
+.get {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  min-width: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.get {
+  padding: 8px 10px;
+  border-left: 1px solid var(--line2);
+}
+.open:hover,
+.get:hover {
   background: var(--hover);
 }
 .kind {

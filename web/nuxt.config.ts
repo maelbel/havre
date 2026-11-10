@@ -80,6 +80,14 @@ export default defineNuxtConfig({
   // In development, `pnpm dev` runs on :3000 and forwards /api to the Rust
   // server on :8080 (and /mcp, for AI apps), so both behave like one site.
   nitro: {
+    // pdf.js's extra files (fonts a PDF doesn't carry, image decoders,
+    // character maps), served by Havre so a PDF preview fetches nothing from
+    // elsewhere. Only loaded when a PDF needs them.
+    publicAssets: ['standard_fonts', 'wasm', 'cmaps'].map((dir) => ({
+      dir: `node_modules/pdfjs-dist/${dir}`,
+      baseURL: `/pdfjs/${dir}`,
+      maxAge: 60 * 60 * 24 * 30,
+    })),
     devProxy: {
       '/api': { target: 'http://127.0.0.1:8080/api', changeOrigin: true },
       '/mcp': { target: 'http://127.0.0.1:8080/mcp', changeOrigin: true },

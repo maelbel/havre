@@ -213,8 +213,8 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - ✅ In the other apps: *All files from …* in People, *An earlier version came … · Compare in Files* under an email's
   attachments, a Files section in Ctrl+K. Without the app, none of it shows and nothing is read in the background.
 - Later: the assistant finding files (a `search_files` tool), files from Agenda invitations, attaching a file from
-  Files when writing an email, previewing files (PDFs, text, audio and video) in Files and under an email's
-  attachments.
+  Files when writing an email, ~~previewing files (PDFs, text, audio and video) in Files and under an email's
+  attachments~~ (step 27).
 - *Learned:* SQL over JSON with `json_each` (one row per attachment), a partial index (`WHERE files IS NOT NULL`),
   grouping in Rust with a `HashMap` keyed by a tuple, `LIMIT -1` in SQLite, background work that only keeps what it
   needs.
@@ -440,3 +440,22 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - Later: buttons on Havre Desktop's notifications, replying from a notification, choosing the buttons.
 - *Learned:* notification actions and `notificationclick`, a small action API that never trusts its payload, `serde`
   tagged enums, matching on a pair, "once for every device" with a table, a notification replacing another (tags).
+
+## 27 · File previews ✅
+- ✅ A preview window for attachments, in Mail (tap an attachment; the arrow downloads it) and Files (the pane shows
+  the first page or the start of a text; *Open* shows it larger): PDFs (pages drawn as you scroll, page counter, zoom,
+  *Fit width*), text (UTF-8, else Latin-1; the first 1 MB), audio and video players, images. Full screen on a phone.
+- ✅ Nothing changed on the server: attachments are still forced downloads with a sandbox header. The page fetches the
+  bytes and shows them itself (Vue's escaping, `blob:` URLs released on close, pdf.js on a canvas). HTML and SVG are
+  never previewed; above 25 MB, download only.
+- ✅ New dependency: `pdfjs-dist` (Mozilla's reader), its legacy build (the modern one needs JavaScript features some
+  browsers lack), lazy-loaded with its worker; its fonts, decoders and character maps served by Havre. Its optional
+  native canvas (`@napi-rs/canvas`, for Node only) is skipped (`ignoredOptionalDependencies`).
+- ✅ Tested: which files get a preview (Node's test runner, `pnpm test`, now in CI); in Chromium, a five-page PDF (drawn,
+  counter, zoom, scrolling to the end), a PDF with JavaScript (nothing ran), UTF-8 and Latin-1 text with a `<script>`
+  line shown as text, an MP3 sent as `octet-stream`, a WebM video, HTML and `.docx` download only, the `blob:` released,
+  pdf.js loaded only when a PDF opens and only from Havre, the Files pane and window, phone, dark and light.
+- Later: Word, Excel and PowerPoint previews, searching in a PDF, previews of your own attachments when writing.
+- *Learned:* why strangers' files never get your origin, `fetch` + `TextDecoder` + `Blob` + object URLs, Web Workers,
+  `IntersectionObserver` for drawing on demand, sizing placeholders so scrolling lands right, lazy components and
+  dynamic `import()`, polyfilled "legacy" builds.
