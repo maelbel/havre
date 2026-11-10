@@ -18,7 +18,7 @@ use axum::{
 use havre_core::files::{FileItem, FileList, FileQuery, FileStore, FilesProgress};
 use serde::Deserialize;
 
-use crate::{AppState, api::ApiError};
+use crate::{AppState, api::ApiError, auth::CurrentUser};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -29,16 +29,20 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// Files are read from the database's copy of your mail (not in demo mode).
-fn store(state: &AppState) -> Result<FileStore, ApiError> {
+fn store(state: &AppState, user: havre_core::users::UserId) -> Result<FileStore, ApiError> {
     state
         .mail
         .manager()
-        .map(|m| m.database().files())
+        .map(|m| m.database().files(user))
         .map_err(|_| ApiError::BadRequest("Files aren't available in demo mode.".into()))
 }
 
-async fn list(State(state): State<AppState>, Query(q): Query<FileQuery>) -> Result<Json<FileList>, ApiError> {
-    Ok(Json(store(&state)?.list(&q).await?))
+async fn list(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Query(q): Query<FileQuery>,
+) -> Result<Json<FileList>, ApiError> {
+    Ok(Json(store(&state, user)?.list(&q).await?))
 }
 
 #[derive(Deserialize)]
@@ -50,13 +54,17 @@ struct Message {
 
 async fn in_message(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(m): Query<Message>,
 ) -> Result<Json<Vec<FileItem>>, ApiError> {
-    Ok(Json(store(&state)?.in_message(m.account, &m.folder, m.uid).await?))
+    Ok(Json(store(&state, user)?.in_message(m.account, &m.folder, m.uid).await?))
 }
 
-async fn progress(State(state): State<AppState>) -> Result<Json<FilesProgress>, ApiError> {
-    Ok(Json(store(&state)?.progress().await?))
+async fn progress(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<FilesProgress>, ApiError> {
+    Ok(Json(store(&state, user)?.progress().await?))
 }
 
 #[derive(Deserialize)]
@@ -66,9 +74,10 @@ struct Settings {
 
 async fn settings(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(s): Json<Settings>,
 ) -> Result<Json<FilesProgress>, ApiError> {
-    let files = store(&state)?;
+    let files = store(&state, user)?;
     files.set_depth(s.depth).await?;
     Ok(Json(files.progress().await?))
 }

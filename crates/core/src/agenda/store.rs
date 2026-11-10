@@ -4,12 +4,16 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
 use super::{Attendee, COLORS, Calendar, Event, RemoteCalendar, RemoteEvent, Repeat, SeriesRule};
-use crate::{Error, Result, secrets::Secrets};
+use crate::{Error, Result, secrets::Secrets, users::UserId};
 
 #[derive(Clone)]
+/// One user's calendars and events. Made with a [`UserId`]
+/// (`db.agenda(user)`): every query below asks for that user's calendars,
+/// and events are reached through their calendar.
 pub struct AgendaStore {
     pub(super) pool: SqlitePool,
     secrets: Secrets,
+    pub(super) user: UserId,
 }
 
 /// A calendar plus what syncing needs.
@@ -100,22 +104,43 @@ fn some<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<Op
 }
 
 impl AgendaStore {
-    pub(crate) fn new(pool: SqlitePool, secrets: Secrets) -> Self {
-        Self { pool, secrets }
+    pub(crate) fn new(pool: SqlitePool, secrets: Secrets, user: UserId) -> Self {
+        Self { pool, secrets, user }
+    }
+
+    pub fn user(&self) -> UserId {
+        self.user
     }
 
     // ---- Settings -----------------------------------------------------------------
 
     pub async fn settings(&self) -> Result<AgendaSettings> {
-        let r =
-            sqlx::query("SELECT default_reminder, default_all_day_reminder, time_zone FROM agenda_settings")
-                .fetch_one(&self.pool)
-                .await?;
-        Ok(AgendaSettings {
-            default_reminder: r.get("default_reminder"),
-            default_all_day_reminder: r.get("default_all_day_reminder"),
-            time_zone: r.get("time_zone"),
+        let row = sqlx::query(
+            "SELECT default_reminder, default_all_day_reminder, time_zone FROM agenda_settings WHERE user_id = ?",
+        )
+        .bind(self.user.0)
+        .fetch_optional(&self.pool)
+        .await?;
+        // No row yet (a new user): the defaults, as the table would give them.
+        Ok(match row {
+            Some(r) => AgendaSettings {
+                default_reminder: r.get("default_reminder"),
+                default_all_day_reminder: r.get("default_all_day_reminder"),
+                time_zone: r.get("time_zone"),
+            },
+            None => {
+                AgendaSettings { default_reminder: Some(10), default_all_day_reminder: None, time_zone: None }
+            }
         })
+    }
+
+    /// Makes sure the user has a settings row, so an `UPDATE` has something to change.
+    async fn settings_row(&self) -> Result<()> {
+        sqlx::query("INSERT OR IGNORE INTO agenda_settings (user_id) VALUES (?)")
+            .bind(self.user.0)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn update_settings(&self, u: &AgendaSettingsUpdate) -> Result<AgendaSettings> {
@@ -124,16 +149,19 @@ impl AgendaStore {
                 return Err(Error::Config("A reminder is between the start and four weeks before.".into()));
             }
         }
+        self.settings_row().await?;
         // Each field only when it was sent (`Some`), even to clear it (`Some(None)`).
         if let Some(minutes) = u.default_reminder {
-            sqlx::query("UPDATE agenda_settings SET default_reminder = ?")
+            sqlx::query("UPDATE agenda_settings SET default_reminder = ? WHERE user_id = ?")
                 .bind(minutes)
+                .bind(self.user.0)
                 .execute(&self.pool)
                 .await?;
         }
         if let Some(minutes) = u.default_all_day_reminder {
-            sqlx::query("UPDATE agenda_settings SET default_all_day_reminder = ?")
+            sqlx::query("UPDATE agenda_settings SET default_all_day_reminder = ? WHERE user_id = ?")
                 .bind(minutes)
+                .bind(self.user.0)
                 .execute(&self.pool)
                 .await?;
         }
@@ -143,11 +171,14 @@ impl AgendaStore {
     /// Remembers the browser's time zone (when it's one Havre knows).
     pub async fn set_time_zone(&self, zone: &str) -> Result<()> {
         if zone.parse::<chrono_tz::Tz>().is_ok() {
-            sqlx::query("UPDATE agenda_settings SET time_zone = ? WHERE time_zone IS NOT ?")
-                .bind(zone)
-                .bind(zone)
-                .execute(&self.pool)
-                .await?;
+            self.settings_row().await?;
+            sqlx::query(
+                "UPDATE agenda_settings SET time_zone = ?1 WHERE user_id = ?2 AND time_zone IS NOT ?1",
+            )
+            .bind(zone)
+            .bind(self.user.0)
+            .execute(&self.pool)
+            .await?;
         }
         Ok(())
     }
@@ -160,17 +191,20 @@ impl AgendaStore {
 
     pub(crate) async fn calendar_rows(&self) -> Result<Vec<CalendarRow>> {
         let rows = sqlx::query(sql!(
-            "SELECT {CALENDAR_COLUMNS} FROM calendars
+            "SELECT {CALENDAR_COLUMNS} FROM calendars WHERE user_id = ?
              ORDER BY source = 'local' DESC, account_id, caldav_id, is_default DESC, name COLLATE NOCASE"
         ))
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.iter().map(calendar_from_row).collect())
     }
 
     pub(crate) async fn calendar_row(&self, id: i64) -> Result<CalendarRow> {
-        let row = sqlx::query(sql!("SELECT {CALENDAR_COLUMNS} FROM calendars WHERE id = ?"))
+        // Another user's calendar is "not found", like one that doesn't exist.
+        let row = sqlx::query(sql!("SELECT {CALENDAR_COLUMNS} FROM calendars WHERE id = ? AND user_id = ?"))
             .bind(id)
+            .bind(self.user.0)
             .fetch_optional(&self.pool)
             .await?
             .ok_or_else(|| Error::NotFound(format!("calendar {id}")))?;
@@ -186,16 +220,19 @@ impl AgendaStore {
         remotes: &[RemoteCalendar],
     ) -> Result<()> {
         let existing: Vec<(i64, String)> = sqlx::query_as(
-            "SELECT id, remote_id FROM calendars WHERE account_id IS ? AND caldav_id IS ? AND source = ?",
+            "SELECT id, remote_id FROM calendars
+             WHERE account_id IS ? AND caldav_id IS ? AND source = ? AND user_id = ?",
         )
         .bind(account)
         .bind(caldav)
         .bind(source)
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         let has_default: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM calendars WHERE is_default = 1 AND source <> 'local'",
+            "SELECT COUNT(*) > 0 FROM calendars WHERE is_default = 1 AND source <> 'local' AND user_id = ?",
         )
+        .bind(self.user.0)
         .fetch_one(&self.pool)
         .await?;
         let mut tx = self.pool.begin().await?;
@@ -215,11 +252,15 @@ impl AgendaStore {
                     // for new events (instead of Havre's local one).
                     let default = remote.is_default && !has_default && !remote.read_only;
                     if default {
-                        sqlx::query("UPDATE calendars SET is_default = 0").execute(&mut *tx).await?;
+                        sqlx::query("UPDATE calendars SET is_default = 0 WHERE user_id = ?")
+                            .bind(self.user.0)
+                            .execute(&mut *tx)
+                            .await?;
                     }
                     sqlx::query(
-                        "INSERT INTO calendars (source, account_id, caldav_id, remote_id, name, color, read_only, is_default)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO calendars (source, account_id, caldav_id, remote_id, name, color, read_only, is_default,
+                                                user_id)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     )
                     .bind(source)
                     .bind(account)
@@ -229,6 +270,7 @@ impl AgendaStore {
                     .bind(color)
                     .bind(remote.read_only)
                     .bind(default)
+                    .bind(self.user.0)
                     .execute(&mut *tx)
                     .await?;
                 }
@@ -245,11 +287,14 @@ impl AgendaStore {
 
     /// Exactly one calendar receives new events: Havre's own if needed.
     async fn ensure_default(&self) -> Result<()> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calendars WHERE is_default = 1")
-            .fetch_one(&self.pool)
-            .await?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM calendars WHERE is_default = 1 AND user_id = ?")
+                .bind(self.user.0)
+                .fetch_one(&self.pool)
+                .await?;
         if count == 0 {
-            sqlx::query("UPDATE calendars SET is_default = 1 WHERE source = 'local'")
+            sqlx::query("UPDATE calendars SET is_default = 1 WHERE source = 'local' AND user_id = ?")
+                .bind(self.user.0)
                 .execute(&self.pool)
                 .await?;
         }
@@ -289,15 +334,20 @@ impl AgendaStore {
             if row.calendar.read_only {
                 return Err(Error::Config("New events can't go into a read-only calendar.".into()));
             }
-            sqlx::query("UPDATE calendars SET is_default = (id = ?)").bind(id).execute(&self.pool).await?;
+            sqlx::query("UPDATE calendars SET is_default = (id = ?) WHERE user_id = ?")
+                .bind(id)
+                .bind(self.user.0)
+                .execute(&self.pool)
+                .await?;
         }
         Ok(self.calendar_row(id).await?.calendar)
     }
 
     pub(crate) async fn set_error(&self, calendar: i64, error: Option<&str>) -> Result<()> {
-        sqlx::query("UPDATE calendars SET error = ? WHERE id = ?")
+        sqlx::query("UPDATE calendars SET error = ? WHERE id = ? AND user_id = ?")
             .bind(error)
             .bind(calendar)
+            .bind(self.user.0)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -309,9 +359,10 @@ impl AgendaStore {
     pub async fn events(&self, from: i64, to: i64) -> Result<Vec<Event>> {
         let rows = sqlx::query(sql!(
             "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id
-             WHERE c.enabled = 1 AND e.start_ts < ? AND e.end_ts > ?
+             WHERE c.user_id = ? AND c.enabled = 1 AND e.start_ts < ? AND e.end_ts > ?
              ORDER BY e.all_day DESC, e.start_ts, e.end_ts DESC"
         ))
+        .bind(self.user.0)
         .bind(to)
         .bind(from)
         .fetch_all(&self.pool)
@@ -320,11 +371,14 @@ impl AgendaStore {
     }
 
     pub(crate) async fn event_row(&self, id: i64) -> Result<EventRow> {
-        let row = sqlx::query(sql!("{EVENT_SELECT} WHERE e.id = ?"))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?
-            .ok_or_else(|| Error::NotFound(format!("event {id}")))?;
+        let row = sqlx::query(sql!(
+            "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id WHERE e.id = ? AND c.user_id = ?"
+        ))
+        .bind(id)
+        .bind(self.user.0)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("event {id}")))?;
         Ok(event_from_row(&row))
     }
 
@@ -504,12 +558,14 @@ impl AgendaStore {
     pub async fn events_by_uid(&self, uid: &str) -> Result<Vec<Event>> {
         // The meeting itself, or your copy of it (see `remember_copy`).
         let rows = sqlx::query(sql!(
-            "{EVENT_SELECT} WHERE e.uid = ?1 OR EXISTS (
+            "{EVENT_SELECT} JOIN calendars cal ON cal.id = e.calendar_id
+             WHERE cal.user_id = ?2 AND (e.uid = ?1 OR EXISTS (
                  SELECT 1 FROM invitation_copies c
-                 WHERE c.uid = ?1 AND c.calendar_id = e.calendar_id AND c.remote_id = e.remote_id)
+                 WHERE c.uid = ?1 AND c.calendar_id = e.calendar_id AND c.remote_id = e.remote_id))
              ORDER BY e.start_ts"
         ))
         .bind(uid)
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.iter().map(|r| event_from_row(r).event).collect())
@@ -519,9 +575,10 @@ impl AgendaStore {
     pub async fn pending_invitations(&self, from: i64) -> Result<Vec<Event>> {
         let rows = sqlx::query(sql!(
             "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id
-             WHERE c.enabled = 1 AND e.my_response = 'needs_action' AND e.end_ts > ?
+             WHERE c.user_id = ? AND c.enabled = 1 AND e.my_response = 'needs_action' AND e.end_ts > ?
              ORDER BY e.start_ts LIMIT 50"
         ))
+        .bind(self.user.0)
         .bind(from)
         .fetch_all(&self.pool)
         .await?;
@@ -545,7 +602,8 @@ impl AgendaStore {
 
     /// Your answer to the invitation with this UID, if you gave one.
     pub async fn answer(&self, uid: &str) -> Result<Option<String>> {
-        Ok(sqlx::query_scalar("SELECT response FROM invitation_answers WHERE uid = ?")
+        Ok(sqlx::query_scalar("SELECT response FROM invitation_answers WHERE user_id = ? AND uid = ?")
+            .bind(self.user.0)
             .bind(uid)
             .fetch_optional(&self.pool)
             .await?)
@@ -553,9 +611,10 @@ impl AgendaStore {
 
     pub(crate) async fn remember_answer(&self, uid: &str, response: &str) -> Result<()> {
         sqlx::query(
-            "INSERT INTO invitation_answers (uid, response, answered_at) VALUES (?, ?, ?)
-             ON CONFLICT (uid) DO UPDATE SET response = excluded.response, answered_at = excluded.answered_at",
+            "INSERT INTO invitation_answers (user_id, uid, response, answered_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT (user_id, uid) DO UPDATE SET response = excluded.response, answered_at = excluded.answered_at",
         )
+        .bind(self.user.0)
         .bind(uid)
         .bind(response)
         .bind(now())
@@ -566,9 +625,12 @@ impl AgendaStore {
 
     /// After answering an invitation.
     pub(crate) async fn set_my_response(&self, id: i64, response: &str) -> Result<()> {
-        sqlx::query("UPDATE events SET my_response = ? WHERE id = ?")
-            .bind(response)
-            .bind(id)
+        sqlx::query(
+            "UPDATE events SET my_response = ? WHERE id = ? AND calendar_id IN (SELECT id FROM calendars WHERE user_id = ?)",
+        )
+        .bind(response)
+        .bind(id)
+        .bind(self.user.0)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -588,7 +650,7 @@ impl AgendaStore {
         };
         let rows = sqlx::query(sql!(
             "{EVENT_SELECT} JOIN calendars c ON c.id = e.calendar_id
-             WHERE c.enabled = 1 AND {filter}
+             WHERE c.user_id = ?4 AND c.enabled = 1 AND {filter}
                AND (EXISTS (SELECT 1 FROM json_each(e.attendees) a WHERE lower(json_extract(a.value, '$.email')) = ?1)
                     OR lower(e.organizer) LIKE '%' || ?1 || '%'
                     OR EXISTS (SELECT 1 FROM invitation_copies k WHERE k.organizer = ?1
@@ -598,6 +660,7 @@ impl AgendaStore {
         .bind(&email)
         .bind(upcoming_from.unwrap_or_else(now))
         .bind(limit as i64)
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.iter().map(|r| event_from_row(r).event).collect())
@@ -605,17 +668,25 @@ impl AgendaStore {
 
     /// Replaces an event whose provider id changed (moved to another calendar…).
     pub(crate) async fn delete_event(&self, id: i64) -> Result<()> {
-        sqlx::query("DELETE FROM events WHERE id = ?").bind(id).execute(&self.pool).await?;
+        sqlx::query(
+            "DELETE FROM events WHERE id = ? AND calendar_id IN (SELECT id FROM calendars WHERE user_id = ?)",
+        )
+        .bind(id)
+        .bind(self.user.0)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
     // ---- CalDAV servers --------------------------------------------------------------
 
     pub async fn caldav_accounts(&self) -> Result<Vec<CalDavAccount>> {
-        let rows: Vec<(i64, String, String, String)> =
-            sqlx::query_as("SELECT id, name, url, username FROM caldav_accounts ORDER BY id")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
+            "SELECT id, name, url, username FROM caldav_accounts WHERE user_id = ? ORDER BY id",
+        )
+        .bind(self.user.0)
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows
             .into_iter()
             .map(|(id, name, url, username)| CalDavAccount { id, name, url, username })
@@ -630,35 +701,50 @@ impl AgendaStore {
         password: &str,
     ) -> Result<i64> {
         Ok(sqlx::query_scalar(
-            "INSERT INTO caldav_accounts (name, url, username, password, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
+            "INSERT INTO caldav_accounts (name, url, username, password, created_at, user_id)
+             VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(name)
         .bind(url)
         .bind(username)
         .bind(self.secrets.encrypt(password)?)
         .bind(now())
+        .bind(self.user.0)
         .fetch_one(&self.pool)
         .await?)
     }
 
     pub(crate) async fn caldav_login(&self, id: i64) -> Result<CalDavLogin> {
-        let (url, username, password): (String, String, Vec<u8>) =
-            sqlx::query_as("SELECT url, username, password FROM caldav_accounts WHERE id = ?")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?
-                .ok_or_else(|| Error::NotFound(format!("CalDAV account {id}")))?;
+        let (url, username, password): (String, String, Vec<u8>) = sqlx::query_as(
+            "SELECT url, username, password FROM caldav_accounts WHERE id = ? AND user_id = ?",
+        )
+        .bind(id)
+        .bind(self.user.0)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("CalDAV account {id}")))?;
         Ok(CalDavLogin { url, username, password: self.secrets.decrypt(&password)? })
     }
 
     pub async fn delete_caldav(&self, id: i64) -> Result<()> {
-        sqlx::query("DELETE FROM caldav_accounts WHERE id = ?").bind(id).execute(&self.pool).await?;
+        let gone = sqlx::query("DELETE FROM caldav_accounts WHERE id = ? AND user_id = ?")
+            .bind(id)
+            .bind(self.user.0)
+            .execute(&self.pool)
+            .await?;
+        if gone.rows_affected() == 0 {
+            return Err(Error::NotFound(format!("CalDAV account {id}")));
+        }
         self.ensure_default().await
     }
 
     /// When an account loses calendar access, its calendars go.
     pub(crate) async fn remove_account_calendars(&self, account: i64) -> Result<()> {
-        sqlx::query("DELETE FROM calendars WHERE account_id = ?").bind(account).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM calendars WHERE account_id = ? AND user_id = ?")
+            .bind(account)
+            .bind(self.user.0)
+            .execute(&self.pool)
+            .await?;
         self.ensure_default().await
     }
 }

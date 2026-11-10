@@ -487,3 +487,23 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - *Learned:* tools a model can't misuse (only ids it found, errors that teach it), propose-then-confirm, checking at
   confirm time that nothing changed, undo on the same path as the app's buttons, Rust's borrow rules with closures
   (`&mut` held by a closure blocks other reads: a plain function instead).
+
+## 29 · Several users (the family on one Havre)
+- ✅ **29a · Every piece of data has an owner** (migration `0028_users.sql`): `users` (today's owner is user 1, the
+  admin), and an owner on the roots (mail accounts, CalDAV servers, calendars, task lists, notes, contacts and
+  address books, labels, push devices); the one-row settings become one row per user (dock, notifications, time
+  zone, Mail, Files, contacts). Label names and contact addresses are unique per user.
+- ✅ Whose data it is, checked by the compiler: a `UserId` type, and stores made with one (`db.notes(user)`,
+  `agenda.for_user(user)`, `db.mailbox(user, account)`…); another user's id is *not found* (404, not 403).
+- ✅ Every request knows who's asking (`CurrentUser`); AI, MCP tokens and backups take `Admin` (404 for anyone
+  else). Background work finds the owner from its data: reminders, new mail and invitations reach that user's
+  pages and devices only; live changes (`/api/events`) are filtered by user.
+- ✅ AI is the admin's only: only their mail is indexed or sent to the model; the AI app isn't in others' library.
+- ✅ Tests: two users, every API route asked by one with the other's ids (never their data, nothing changed; a new
+  route must be added to the test), the migration of an existing Havre, reminders reaching their user.
+- 29b · Settings › Users: the admin adds and removes people, who sign in with a name and a password.
+- 30 · Sign in with Authentik (OpenID Connect).
+- *Learned:* multi-tenancy, making the compiler enforce it with types, `Deref` to give a per-user view of a shared
+  service, migrations that rebuild tables without losing rows (foreign keys cascade on `DROP TABLE`), Axum
+  extractors, testing a security property across a whole API.
+

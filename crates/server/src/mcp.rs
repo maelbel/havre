@@ -23,7 +23,7 @@ use havre_core::mcp::McpToken;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{AppState, api::ApiError};
+use crate::{AppState, api::ApiError, auth::Admin};
 
 /// `/mcp`, mounted at the root.
 pub fn endpoint() -> Router<AppState> {
@@ -108,7 +108,7 @@ fn ai(state: &AppState) -> Result<&std::sync::Arc<havre_core::ai::Ai>, ApiError>
     state.ai.as_ref().ok_or_else(|| ApiError::BadRequest("Not available in demo mode.".into()))
 }
 
-async fn list_tokens(State(state): State<AppState>) -> Result<Json<Vec<McpToken>>, ApiError> {
+async fn list_tokens(State(state): State<AppState>, _admin: Admin) -> Result<Json<Vec<McpToken>>, ApiError> {
     Ok(Json(ai(&state)?.mcp_tokens().list().await?))
 }
 
@@ -120,13 +120,18 @@ struct NewToken {
 
 async fn create_token(
     State(state): State<AppState>,
+    _admin: Admin,
     Json(new): Json<NewToken>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let (token, secret) = ai(&state)?.mcp_tokens().create(&new.name).await?;
     Ok((StatusCode::CREATED, Json(json!({ "token": token, "secret": secret }))))
 }
 
-async fn revoke_token(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
+async fn revoke_token(
+    State(state): State<AppState>,
+    _admin: Admin,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
     ai(&state)?.mcp_tokens().revoke(id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

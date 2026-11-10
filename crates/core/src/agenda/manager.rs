@@ -14,6 +14,7 @@
 
 use std::{
     collections::HashMap,
+    ops::Deref,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -34,6 +35,7 @@ use crate::{
     oauth::{OAuthSession, Provider, Resource},
     store::Database,
     sync::{AccountEvent, SyncEvent},
+    users::UserId,
 };
 
 const DAY: i64 = 86_400;
@@ -51,9 +53,11 @@ enum Source {
     CalDav(CalDavLogin),
 }
 
+/// The Agenda of the whole Havre: the background sync and reminders for
+/// everyone, and the cached calendar tokens. What a user reads or changes
+/// goes through [`Agenda::for_user`].
 pub struct Agenda {
     db: Database,
-    store: AgendaStore,
     events: broadcast::Sender<AccountEvent>,
     /// Calendar tokens, per mail account.
     sessions: Mutex<HashMap<i64, Arc<OAuthSession>>>,
@@ -83,7 +87,6 @@ impl Agenda {
     /// listens to (shared with mail).
     pub fn start(db: Database, events: broadcast::Sender<AccountEvent>) -> Arc<Self> {
         let agenda = Arc::new(Self {
-            store: db.agenda(),
             db,
             events,
             sessions: Mutex::new(HashMap::new()),
@@ -134,39 +137,109 @@ impl Agenda {
         agenda
     }
 
-    /// Announces the event reminders whose time has come (once each).
+    /// Announces the event reminders whose time has come (once each), to
+    /// each user, in their own time zone.
     pub(crate) async fn ring(&self, now: i64) -> Result<()> {
-        let settings = self.store.settings().await?;
-        // Your time zone, as your browser last said; UTC until it has.
-        let tz: Tz = settings.time_zone.as_deref().and_then(|z| z.parse().ok()).unwrap_or(Tz::UTC);
-        for (event, ring) in self.store.due_reminders(now, tz).await? {
-            self.store.mark_rung(event.id, now).await?;
-            if ring {
-                let reminder = SyncEvent::EventReminder {
-                    event: event.id,
-                    title: event.title,
-                    start: event.start,
-                    all_day: event.all_day,
-                    location: event.location,
-                    join_url: event.join_url,
-                };
-                let _ = self.events.send(AccountEvent { account: 0, event: reminder });
+        for user in self.db.users().all().await? {
+            let store = self.db.agenda(user);
+            let settings = store.settings().await?;
+            // Your time zone, as your browser last said; UTC until it has.
+            let tz: Tz = settings.time_zone.as_deref().and_then(|z| z.parse().ok()).unwrap_or(Tz::UTC);
+            for (event, ring) in store.due_reminders(now, tz).await? {
+                store.mark_rung(event.id, now).await?;
+                if ring {
+                    let reminder = SyncEvent::EventReminder {
+                        event: event.id,
+                        title: event.title,
+                        start: event.start,
+                        all_day: event.all_day,
+                        location: event.location,
+                        join_url: event.join_url,
+                    };
+                    let _ = self.events.send(AccountEvent { account: 0, user, event: reminder });
+                }
             }
+            store.forget_old_marks(now).await?;
         }
-        self.store.forget_old_marks(now).await
-    }
-
-    pub fn store(&self) -> &AgendaStore {
-        &self.store
-    }
-
-    fn announce(&self) {
-        let _ = self.events.send(AccountEvent { account: 0, event: SyncEvent::Agenda });
+        Ok(())
     }
 
     /// Syncs soon, in the background (after an account change).
     pub fn wake(&self) {
         self.wake.notify_one();
+    }
+
+    /// One user's Agenda: what they read and change goes through it.
+    pub fn for_user(&self, user: UserId) -> UserAgenda<'_> {
+        UserAgenda { agenda: self, store: self.db.agenda(user) }
+    }
+
+    /// Refreshes every user's calendars, one user after the other.
+    pub async fn sync_all(&self) -> Result<()> {
+        let _guard = self.syncing.lock().await;
+        for user in self.db.users().all().await? {
+            self.for_user(user).sync_user().await?;
+        }
+        Ok(())
+    }
+
+    async fn token(&self, account: i64, provider: Provider) -> Result<String> {
+        let session = {
+            let mut sessions = self.sessions.lock().await;
+            match sessions.get(&account) {
+                Some(session) => Arc::clone(session),
+                None => {
+                    let app = self.db.oauth_app(provider).cloned().ok_or_else(|| {
+                        Error::Config(format!("OAuth2 with {} isn't set up in .env", provider.name()))
+                    })?;
+                    let session = Arc::new(OAuthSession::for_resource(
+                        app,
+                        account,
+                        self.db.clone(),
+                        Resource::Calendar,
+                    ));
+                    sessions.insert(account, Arc::clone(&session));
+                    session
+                }
+            }
+        };
+        session.access_token().await
+    }
+
+    /// Forgets cached tokens (after a reconnect, the old ones are stale).
+    pub async fn forget_account(&self, account: i64) {
+        self.sessions.lock().await.remove(&account);
+        self.wake();
+    }
+}
+
+/// One user's Agenda: the [`Agenda`] plus that user's store.
+///
+/// It "derefs" to the `Agenda` (see the `Deref` impl below), so its methods
+/// can use `self.db` or `self.token(…)` as if they were the Agenda's, while
+/// `self.store` is this user's. The same trick lets an `Arc<T>` or a
+/// `String` be used like the `T` or `str` inside.
+pub struct UserAgenda<'a> {
+    agenda: &'a Agenda,
+    store: AgendaStore,
+}
+
+impl Deref for UserAgenda<'_> {
+    type Target = Agenda;
+    fn deref(&self) -> &Agenda {
+        self.agenda
+    }
+}
+
+impl UserAgenda<'_> {
+    pub fn store(&self) -> &AgendaStore {
+        &self.store
+    }
+
+    /// Tells this user's pages that their Agenda changed.
+    fn announce(&self) {
+        let _ =
+            self.events.send(AccountEvent { account: 0, user: self.store.user(), event: SyncEvent::Agenda });
     }
 
     // ---- Reading ----------------------------------------------------------------------
@@ -192,13 +265,12 @@ impl Agenda {
 
     // ---- Syncing ---------------------------------------------------------------------------
 
-    /// Refreshes every source: its list of calendars, then their events.
-    pub async fn sync_all(&self) -> Result<()> {
-        let _guard = self.syncing.lock().await;
+    /// Refreshes every source of this user: its list of calendars, then their events.
+    async fn sync_user(&self) -> Result<()> {
         let (from, to) = default_window();
         let mut changed = false;
 
-        for account in self.db.accounts().await? {
+        for account in self.db.accounts(self.store.user()).await? {
             let Some(provider) = Provider::parse(&account.auth) else { continue };
             if !account.can_calendar {
                 // Signed in before the Agenda existed: nothing to show until
@@ -358,36 +430,8 @@ impl Agenda {
         for row in self.store.calendar_rows().await? {
             self.store.set_error(row.calendar.id, None).await?;
         }
-        self.sync_all().await
-    }
-
-    async fn token(&self, account: i64, provider: Provider) -> Result<String> {
-        let session = {
-            let mut sessions = self.sessions.lock().await;
-            match sessions.get(&account) {
-                Some(session) => Arc::clone(session),
-                None => {
-                    let app = self.db.oauth_app(provider).cloned().ok_or_else(|| {
-                        Error::Config(format!("OAuth2 with {} isn't set up in .env", provider.name()))
-                    })?;
-                    let session = Arc::new(OAuthSession::for_resource(
-                        app,
-                        account,
-                        self.db.clone(),
-                        Resource::Calendar,
-                    ));
-                    sessions.insert(account, Arc::clone(&session));
-                    session
-                }
-            }
-        };
-        session.access_token().await
-    }
-
-    /// Forgets cached tokens (after a reconnect, the old ones are stale).
-    pub async fn forget_account(&self, account: i64) {
-        self.sessions.lock().await.remove(&account);
-        self.wake();
+        let _guard = self.syncing.lock().await;
+        self.sync_user().await
     }
 
     async fn source(&self, calendar: &Calendar) -> Result<Source> {
@@ -969,8 +1013,15 @@ mod tests {
         let db = Database::in_memory().await.unwrap();
         let accounts = AccountManager::start(db.clone()).await.unwrap();
         let agenda = Agenda::start(db, accounts.sender());
-        let local =
-            agenda.store().calendars().await.unwrap().into_iter().find(|c| c.source == "local").unwrap();
+        let local = agenda
+            .for_user(UserId::ADMIN)
+            .store()
+            .calendars()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.source == "local")
+            .unwrap();
         (agenda, local.id)
     }
 
@@ -1005,9 +1056,41 @@ mod tests {
         titles
     }
 
+    /// Each user's reminders ring for them only, in their own time zone.
+    #[tokio::test]
+    async fn reminders_ring_for_their_user() {
+        let (shared, admin_calendar) = agenda().await;
+        let lea = shared.db.users().add("Léa").await.unwrap();
+        let hers = shared.for_user(lea);
+        let her_calendar = hers.store().calendars().await.unwrap()[0].id;
+        let mut rx = shared.events.subscribe();
+        let now = 1_791_200_000;
+        let soon = |calendar: i64, title: &str| EventInput {
+            reminder: Some(10),
+            time_zone: None,
+            ..input(calendar, title, now + 300, None)
+        };
+        shared.for_user(UserId::ADMIN).create(&soon(admin_calendar, "Admin's")).await.unwrap();
+        hers.create(&soon(her_calendar, "Léa's")).await.unwrap();
+        // Léa can't put an event in the admin's calendar.
+        assert!(hers.create(&soon(admin_calendar, "Sneaky")).await.is_err());
+
+        shared.ring(now).await.unwrap();
+        let mut rung = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            if let SyncEvent::EventReminder { title, .. } = e.event {
+                rung.push((e.user, title));
+            }
+        }
+        rung.sort_by_key(|(user, _)| user.0);
+        assert_eq!(rung, [(UserId::ADMIN, "Admin's".to_owned()), (lea, "Léa's".to_owned())]);
+    }
+
     #[tokio::test]
     async fn event_reminders_ring_once() {
-        let (agenda, local) = agenda().await;
+        let (shared, local) = agenda().await;
+        // The admin's Agenda (user 1).
+        let agenda = shared.for_user(UserId::ADMIN);
         let mut rx = agenda.events.subscribe();
         let now = 1_791_200_000;
         let with = |title: &str, start: i64, reminder: Option<i64>| EventInput {
@@ -1060,7 +1143,9 @@ mod tests {
 
     #[tokio::test]
     async fn all_day_reminders_use_your_time_zone() {
-        let (agenda, local) = agenda().await;
+        let (shared, local) = agenda().await;
+        // The admin's Agenda (user 1).
+        let agenda = shared.for_user(UserId::ADMIN);
         let mut rx = agenda.events.subscribe();
         agenda.store.set_time_zone("Europe/Paris").await.unwrap();
         let day = 1_791_244_800; // Tue 6 Oct 2026
@@ -1080,14 +1165,16 @@ mod tests {
     }
 
     /// The series' occurrences in the next two months: (title, start).
-    async fn shown(agenda: &Agenda, from: i64) -> Vec<(String, i64)> {
+    async fn shown(agenda: &UserAgenda<'_>, from: i64) -> Vec<(String, i64)> {
         let events = agenda.events(from - DAY, from + 70 * DAY).await.unwrap();
         events.into_iter().filter(|e| e.recurring).map(|e| (e.title, e.start)).collect()
     }
 
     #[tokio::test]
     async fn repeating_events_in_havres_calendar() {
-        let (agenda, calendar) = agenda().await;
+        let (shared, calendar) = agenda().await;
+        // The admin's Agenda (user 1).
+        let agenda = shared.for_user(UserId::ADMIN);
         // Next week, 08:00 UTC, every week, 5 times.
         let start = day_start(now()) + 7 * DAY + 8 * 3600;
         let week = 7 * DAY;
@@ -1096,7 +1183,7 @@ mod tests {
         assert_eq!(first.repeat.as_ref().and_then(|r| r.count), Some(5));
         assert_eq!(shown(&agenda, start).await.len(), 5);
         let id_of = |start: i64| {
-            let agenda = Arc::clone(&agenda);
+            let agenda = &agenda;
             async move {
                 let events = agenda.events(start - DAY, start + DAY).await.unwrap();
                 events.into_iter().find(|e| e.recurring && (e.start - start).abs() < 4 * 3600).unwrap()

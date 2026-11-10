@@ -24,6 +24,9 @@ use crate::{Result, mail::Person};
 pub const MAX_INDEXED: i64 = 20_000;
 /// Characters of the body used per message.
 const BODY_CHARS: usize = 1_500;
+/// In SQL: "a message of the admin's accounts". AI is the admin's only
+/// (user 1, `AI_USER`): nobody else's mail is sent to a model or indexed.
+const ADMIN_MAIL: &str = "account_id IN (SELECT id FROM accounts WHERE user_id = 1)";
 
 /// A search result.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -71,12 +74,15 @@ impl MailIndex {
     }
 
     /// How many messages are indexed with `model`, out of how many.
+    /// Only the admin's mail is ever indexed: AI is theirs (see `AI_USER`).
     pub async fn progress(&self, model: &str) -> Result<(i64, i64)> {
         let done: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mail_vectors WHERE model = ?")
             .bind(model)
             .fetch_one(&self.pool)
             .await?;
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages").fetch_one(&self.pool).await?;
+        let total: i64 = sqlx::query_scalar(sql!("SELECT COUNT(*) FROM messages WHERE {ADMIN_MAIL}"))
+            .fetch_one(&self.pool)
+            .await?;
         Ok((done, total.min(MAX_INDEXED)))
     }
 
@@ -85,15 +91,15 @@ impl MailIndex {
     pub async fn step(&self, client: &Client, model: &str, batch: i64) -> Result<usize> {
         // The newest messages without a vector for this model, or indexed
         // before their body was known.
-        let rows = sqlx::query(
+        let rows = sqlx::query(sql!(
             "SELECT m.account_id, m.folder, m.uid, m.subject, m.from_name, m.from_address, m.date, b.raw
-             FROM (SELECT * FROM messages ORDER BY datetime(date) DESC LIMIT ?1) m
+             FROM (SELECT * FROM messages WHERE {ADMIN_MAIL} ORDER BY datetime(date) DESC LIMIT ?1) m
              LEFT JOIN mail_vectors v
                ON v.account_id = m.account_id AND v.folder = m.folder AND v.uid = m.uid AND v.model = ?2
              LEFT JOIN bodies b ON b.account_id = m.account_id AND b.folder = m.folder AND b.uid = m.uid
              WHERE v.uid IS NULL OR (v.with_body = 0 AND b.uid IS NOT NULL)
-             ORDER BY datetime(m.date) DESC LIMIT ?3",
-        )
+             ORDER BY datetime(m.date) DESC LIMIT ?3"
+        ))
         .bind(MAX_INDEXED)
         .bind(model)
         .bind(batch)
@@ -159,10 +165,12 @@ impl MailIndex {
         if self.loaded.read().unwrap().as_ref().is_some_and(|l| l.model == model) {
             return Ok(());
         }
-        let rows = sqlx::query("SELECT account_id, folder, uid, vector FROM mail_vectors WHERE model = ?")
-            .bind(model)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(sql!(
+            "SELECT account_id, folder, uid, vector FROM mail_vectors WHERE model = ? AND {ADMIN_MAIL}"
+        ))
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await?;
         let entries = rows
             .iter()
             .map(|r| Entry {

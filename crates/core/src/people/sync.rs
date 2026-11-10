@@ -10,7 +10,7 @@
 //!
 //! Havre never deletes a contact from an address book.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration};
 
 use serde::Serialize;
 use tokio::sync::{Mutex, Notify, broadcast};
@@ -27,6 +27,7 @@ use crate::{
     oauth::{OAuthSession, Provider, Resource},
     store::Database,
     sync::{AccountEvent, SyncEvent},
+    users::UserId,
 };
 
 const EVERY: Duration = Duration::from_secs(15 * 60);
@@ -75,9 +76,10 @@ enum Access {
     CardDav(CalDavLogin),
 }
 
+/// Contacts sync for the whole Havre: the background loop and the cached
+/// tokens. What a user reads or changes goes through [`ContactSync::for_user`].
 pub struct ContactSync {
     db: Database,
-    people: People,
     events: broadcast::Sender<AccountEvent>,
     /// Graph / Google tokens, per mail account.
     sessions: Mutex<HashMap<i64, Arc<OAuthSession>>>,
@@ -91,7 +93,6 @@ impl ContactSync {
     /// listens to (shared with Mail, the Agenda and Tasks).
     pub fn start(db: Database, events: broadcast::Sender<AccountEvent>) -> Arc<Self> {
         let sync = Arc::new(Self {
-            people: db.people(),
             db,
             events,
             sessions: Mutex::new(HashMap::new()),
@@ -135,16 +136,81 @@ impl ContactSync {
         sync
     }
 
+    /// One user's contacts.
+    pub fn for_user(&self, user: UserId) -> UserContacts<'_> {
+        UserContacts { sync: self, people: self.db.people(user) }
+    }
+
+    /// Every user's address books, one user after the other.
+    pub async fn sync_all(&self) -> Result<()> {
+        let _guard = self.syncing.lock().await;
+        for user in self.db.users().all().await? {
+            self.for_user(user).sync_user().await?;
+        }
+        Ok(())
+    }
+
+    /// [`UserContacts::push`] in the background, for the person behind `key`.
+    pub fn push_later(self: &Arc<Self>, user: UserId, contact: Option<i64>) {
+        let Some(contact) = contact else { return };
+        let sync = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Err(err) = sync.for_user(user).push(contact).await {
+                tracing::warn!("can't update an address book: {err}");
+            }
+        });
+    }
+
+    async fn token(&self, account: i64, provider: Provider) -> Result<String> {
+        let session = {
+            let mut sessions = self.sessions.lock().await;
+            match sessions.get(&account) {
+                Some(session) => Arc::clone(session),
+                None => {
+                    let app = self.db.oauth_app(provider).cloned().ok_or_else(|| {
+                        Error::Config(format!("OAuth2 with {} isn't set up in .env", provider.name()))
+                    })?;
+                    // The Graph / Google APIs token (the same as the Agenda's).
+                    let session = Arc::new(OAuthSession::for_resource(
+                        app,
+                        account,
+                        self.db.clone(),
+                        Resource::Calendar,
+                    ));
+                    sessions.insert(account, Arc::clone(&session));
+                    session
+                }
+            }
+        };
+        session.access_token().await
+    }
+}
+
+/// One user's contacts sync: the [`ContactSync`] plus that user's [`People`].
+/// It derefs to the `ContactSync` (like `UserAgenda` does to the `Agenda`).
+pub struct UserContacts<'a> {
+    sync: &'a ContactSync,
+    people: People,
+}
+
+impl Deref for UserContacts<'_> {
+    type Target = ContactSync;
+    fn deref(&self) -> &ContactSync {
+        self.sync
+    }
+}
+
+impl UserContacts<'_> {
     fn announce(&self) {
-        let _ = self.events.send(AccountEvent { account: 0, event: SyncEvent::People });
+        let _ =
+            self.events.send(AccountEvent { account: 0, user: self.people.user(), event: SyncEvent::People });
     }
 
     // ---- Syncing -------------------------------------------------------------------------
 
-    /// Every source: its address books, then what changed in each.
-    pub async fn sync_all(&self) -> Result<()> {
-        let _guard = self.syncing.lock().await;
-        for account in self.db.accounts().await? {
+    /// Every source of this user: its address books, then what changed in each.
+    async fn sync_user(&self) -> Result<()> {
+        for account in self.db.accounts(self.people.user()).await? {
             let Some(provider) = Provider::parse(&account.auth) else { continue };
             let source = provider.as_str();
             let key = format!("account:{}", account.id);
@@ -168,13 +234,13 @@ impl ContactSync {
             let book = RemoteBook { name: format!("{} ({})", book.name, account.name), ..book };
             self.people.replace_books(source, Some(account.id), None, &[book]).await?;
         }
-        for server in self.db.agenda().caldav_accounts().await? {
+        for server in self.db.agenda(self.people.user()).caldav_accounts().await? {
             let key = format!("caldav:{}", server.id);
             if !self.people.source_enabled(&key).await? {
                 self.people.remove_books("carddav", None, Some(server.id)).await?;
                 continue;
             }
-            let listed = match self.db.agenda().caldav_login(server.id).await {
+            let listed = match self.db.agenda(self.people.user()).caldav_login(server.id).await {
                 Ok(login) => carddav::books(&login).await,
                 Err(err) => Err(err),
             };
@@ -282,45 +348,11 @@ impl ContactSync {
         Ok(())
     }
 
-    /// [`ContactSync::push`] in the background, for the person behind `key`.
-    pub fn push_later(self: &Arc<Self>, contact: Option<i64>) {
-        let Some(contact) = contact else { return };
-        let sync = Arc::clone(self);
-        tokio::spawn(async move {
-            if let Err(err) = sync.push(contact).await {
-                tracing::warn!("can't update an address book: {err}");
-            }
-        });
-    }
-
     /// Syncs everything now and waits (the refresh button).
     pub async fn sync_now(&self) -> Result<()> {
         self.sessions.lock().await.clear();
-        self.sync_all().await
-    }
-
-    async fn token(&self, account: i64, provider: Provider) -> Result<String> {
-        let session = {
-            let mut sessions = self.sessions.lock().await;
-            match sessions.get(&account) {
-                Some(session) => Arc::clone(session),
-                None => {
-                    let app = self.db.oauth_app(provider).cloned().ok_or_else(|| {
-                        Error::Config(format!("OAuth2 with {} isn't set up in .env", provider.name()))
-                    })?;
-                    // The Graph / Google APIs token (the same as the Agenda's).
-                    let session = Arc::new(OAuthSession::for_resource(
-                        app,
-                        account,
-                        self.db.clone(),
-                        Resource::Calendar,
-                    ));
-                    sessions.insert(account, Arc::clone(&session));
-                    session
-                }
-            }
-        };
-        session.access_token().await
+        let _guard = self.syncing.lock().await;
+        self.sync_user().await
     }
 
     async fn access(&self, book: &Book) -> Result<Access> {
@@ -329,7 +361,9 @@ impl ContactSync {
             ("microsoft", Some(account), _) => {
                 Access::Microsoft(self.token(account, Provider::Microsoft).await?)
             }
-            ("carddav", _, Some(server)) => Access::CardDav(self.db.agenda().caldav_login(server).await?),
+            ("carddav", _, Some(server)) => {
+                Access::CardDav(self.db.agenda(self.people.user()).caldav_login(server).await?)
+            }
             _ => return Err(Error::Config(format!("address book {} has no source", book.id))),
         })
     }
@@ -382,7 +416,7 @@ impl ContactSync {
                 .collect::<Vec<_>>()
         };
         let mut sources = Vec::new();
-        for account in self.db.accounts().await? {
+        for account in self.db.accounts(self.people.user()).await? {
             let Some(provider) = Provider::parse(&account.auth) else { continue };
             let key = format!("account:{}", account.id);
             sources.push(ContactSource {
@@ -395,7 +429,7 @@ impl ContactSync {
                 books: mine(provider.as_str(), Some(account.id), None),
             });
         }
-        for server in self.db.agenda().caldav_accounts().await? {
+        for server in self.db.agenda(self.people.user()).caldav_accounts().await? {
             let key = format!("caldav:{}", server.id);
             sources.push(ContactSource {
                 enabled: self.people.source_enabled(&key).await?,
@@ -416,7 +450,10 @@ impl ContactSync {
             return Err(Error::NotFound(format!("contact source {key}")));
         }
         self.people.set_source_enabled(key, enabled).await?;
-        self.sync_all().await?;
+        {
+            let _guard = self.syncing.lock().await;
+            self.sync_user().await?;
+        }
         self.settings().await
     }
 

@@ -16,7 +16,7 @@ use serde::Serialize;
 use crate::{
     Error, Result,
     accounts::AccountManager,
-    agenda::{Agenda, Event, Scope, ics},
+    agenda::{Event, Scope, UserAgenda, ics},
 };
 
 /// What the invitation card shows.
@@ -44,31 +44,33 @@ pub struct InvitationView {
 
 async fn ics_text(
     accounts: &AccountManager,
+    agenda: &UserAgenda<'_>,
     account: i64,
     folder: &str,
     uid: u32,
     index: usize,
 ) -> Result<String> {
-    let file = accounts.engine(account).await?.attachment(folder, uid, index).await?;
+    // The user's own account only (the Agenda says whose).
+    let file = accounts.engine(agenda.store().user(), account).await?.attachment(folder, uid, index).await?;
     Ok(String::from_utf8_lossy(&file.bytes).into_owned())
 }
 
 /// Reads the invitation attached to a message.
 pub async fn view(
     accounts: &AccountManager,
-    agenda: &Agenda,
+    agenda: &UserAgenda<'_>,
     account: i64,
     folder: &str,
     uid: u32,
     index: usize,
 ) -> Result<InvitationView> {
-    let text = ics_text(accounts, account, folder, uid, index).await?;
+    let text = ics_text(accounts, agenda, account, folder, uid, index).await?;
     build_view(accounts, agenda, account, &text).await
 }
 
 async fn build_view(
     accounts: &AccountManager,
-    agenda: &Agenda,
+    agenda: &UserAgenda<'_>,
     account: i64,
     text: &str,
 ) -> Result<InvitationView> {
@@ -136,7 +138,7 @@ pub struct FoundInvitation {
 /// haven't answered (or, for one you can't answer, haven't added).
 pub async fn found_in_mail(
     accounts: &AccountManager,
-    agenda: &Agenda,
+    agenda: &UserAgenda<'_>,
     limit: usize,
 ) -> Result<Vec<FoundInvitation>> {
     use sqlx::Row;
@@ -145,9 +147,12 @@ pub async fn found_in_mail(
     // `mail::Digest`), so this only looks at what Havre has downloaded.
     let rows = sqlx::query(
         "SELECT account_id, folder, uid, subject, from_name, from_address, files FROM messages
-         WHERE has_invite = 1 AND invite_at >= ? ORDER BY invite_at LIMIT 40",
+         WHERE has_invite = 1 AND invite_at >= ?
+           AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)
+         ORDER BY invite_at LIMIT 40",
     )
     .bind(now - 3600)
+    .bind(agenda.store().user().0)
     .fetch_all(&accounts.database().pool())
     .await?;
     let mut found: Vec<FoundInvitation> = Vec::new();
@@ -192,7 +197,7 @@ pub async fn found_in_mail(
 /// Accept, maybe or decline (`accepted`, `tentative`, `declined`).
 pub async fn respond(
     accounts: &Arc<AccountManager>,
-    agenda: &Agenda,
+    agenda: &UserAgenda<'_>,
     account: i64,
     folder: &str,
     uid: u32,
@@ -205,7 +210,7 @@ pub async fn respond(
         "declined" => "DECLINED",
         other => return Err(Error::Config(format!("unknown answer “{other}”"))),
     };
-    let text = ics_text(accounts, account, folder, uid, index).await?;
+    let text = ics_text(accounts, agenda, account, folder, uid, index).await?;
     let invitation = ics::read_invitation(&text)?;
     let store = agenda.store();
     let existing = match &invitation.uid {

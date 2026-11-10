@@ -1,5 +1,7 @@
 //! Backups (step 9): Settings › Backups, and the `havre backup` /
 //! `havre restore` / `havre key` commands. Behind the session, under `/api`.
+//! The admin's only (`Admin`: a backup is the whole Havre), except a
+//! calendar's export, which is anyone's own.
 //!
 //! | Method | Path | What |
 //! |--------|------|------|
@@ -33,7 +35,11 @@ use havre_core::{
     secrets::Secrets,
 };
 
-use crate::{AppState, api::ApiError};
+use crate::{
+    AppState,
+    api::ApiError,
+    auth::{Admin, CurrentUser},
+};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -51,12 +57,13 @@ fn backups(state: &AppState) -> Result<&Backups, ApiError> {
     state.backups.as_ref().ok_or_else(|| ApiError::BadRequest("No backups in demo mode.".into()))
 }
 
-async fn status(State(state): State<AppState>) -> Result<Json<BackupStatus>, ApiError> {
+async fn status(State(state): State<AppState>, _admin: Admin) -> Result<Json<BackupStatus>, ApiError> {
     Ok(Json(backups(&state)?.status().await?))
 }
 
 async fn save_settings(
     State(state): State<AppState>,
+    _admin: Admin,
     Json(s): Json<BackupSettings>,
 ) -> Result<Json<BackupSettings>, ApiError> {
     Ok(Json(backups(&state)?.save_settings(&s).await?))
@@ -64,18 +71,20 @@ async fn save_settings(
 
 async fn save_remote(
     State(state): State<AppState>,
+    _admin: Admin,
     Json(s): Json<RemoteSettings>,
 ) -> Result<Json<RemoteStatus>, ApiError> {
     Ok(Json(backups(&state)?.save_remote(&s).await?))
 }
 
-async fn forget_remote(State(state): State<AppState>) -> Result<Json<RemoteStatus>, ApiError> {
+async fn forget_remote(State(state): State<AppState>, _admin: Admin) -> Result<Json<RemoteStatus>, ApiError> {
     Ok(Json(backups(&state)?.forget_remote().await?))
 }
 
 /// Tries the destination; the answer is a sentence for the page.
 async fn test_remote(
     State(state): State<AppState>,
+    _admin: Admin,
     Json(s): Json<RemoteSettings>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let message = backups(&state)?.test_remote(&s).await?;
@@ -84,18 +93,23 @@ async fn test_remote(
 
 async fn send_offsite(
     State(state): State<AppState>,
+    _admin: Admin,
     UrlPath(name): UrlPath<String>,
 ) -> Result<Json<RemoteFile>, ApiError> {
     Ok(Json(backups(&state)?.send_offsite(&name).await?))
 }
 
-async fn run(State(state): State<AppState>) -> Result<(StatusCode, Json<BackupFile>), ApiError> {
+async fn run(
+    State(state): State<AppState>,
+    _admin: Admin,
+) -> Result<(StatusCode, Json<BackupFile>), ApiError> {
     Ok((StatusCode::CREATED, Json(backups(&state)?.run().await?)))
 }
 
 /// The file itself. Only names Havre writes are served (`is_backup_name`).
 async fn download(
     State(state): State<AppState>,
+    _admin: Admin,
     UrlPath(name): UrlPath<String>,
 ) -> Result<Response, ApiError> {
     let path = backups(&state)?.path_of(&name)?;
@@ -110,6 +124,7 @@ async fn download(
 
 async fn remove(
     State(state): State<AppState>,
+    _admin: Admin,
     UrlPath(name): UrlPath<String>,
 ) -> Result<StatusCode, ApiError> {
     backups(&state)?.delete(&name)?;
@@ -119,11 +134,13 @@ async fn remove(
 /// One calendar as `.ics` (e.g. Havre's own, which lives nowhere else).
 async fn export_calendar(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     UrlPath(id): UrlPath<i64>,
 ) -> Result<Response, ApiError> {
     let agenda =
         state.agenda.as_ref().ok_or_else(|| ApiError::BadRequest("No Agenda in demo mode.".into()))?;
-    let store = agenda.store();
+    let user_agenda = agenda.for_user(user);
+    let store = user_agenda.store();
     let calendar = store
         .calendars()
         .await?

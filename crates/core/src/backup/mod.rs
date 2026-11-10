@@ -779,6 +779,7 @@ fn modified_at(meta: &std::fs::Metadata) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::users::UserId;
 
     #[test]
     fn only_backup_names_are_served() {
@@ -824,22 +825,25 @@ mod tests {
         let secrets = Secrets::random();
         let db = Database::open(&data.join("havre.db"), secrets.clone()).await.unwrap();
         let account = db
-            .insert_account(&crate::store::NewAccount {
-                name: "Work".into(),
-                email: "me@x.test".into(),
-                color: "work".into(),
-                imap_host: "imap.x.test".into(),
-                imap_port: 993,
-                imap_user: String::new(),
-                password: "s3cret".into(),
-                sender_name: String::new(),
-                smtp_host: None,
-                smtp_port: None,
-                smtp_security: None,
-            })
+            .insert_account(
+                UserId::ADMIN,
+                &crate::store::NewAccount {
+                    name: "Work".into(),
+                    email: "me@x.test".into(),
+                    color: "work".into(),
+                    imap_host: "imap.x.test".into(),
+                    imap_port: 993,
+                    imap_user: String::new(),
+                    password: "s3cret".into(),
+                    sender_name: String::new(),
+                    smtp_host: None,
+                    smtp_port: None,
+                    smtp_security: None,
+                },
+            )
             .await
             .unwrap();
-        db.create_label("Clients", "work").await.unwrap();
+        db.create_label(UserId::ADMIN, "Clients", "work").await.unwrap();
 
         let backups = Backups::new(db.clone(), root.join("backups"), secrets.clone());
         let file = backups.run().await.unwrap();
@@ -859,7 +863,7 @@ mod tests {
             Database::open(&new_data.join("havre.db"), Secrets::load_or_create(&new_data).unwrap())
                 .await
                 .unwrap();
-        assert_eq!(restored.labels().await.unwrap()[0].name, "Clients");
+        assert_eq!(restored.labels(UserId::ADMIN).await.unwrap()[0].name, "Clients");
         // The password decrypts with the restored key.
         assert!(matches!(
             restored.imap_config(account.id).await.unwrap().auth,

@@ -61,5 +61,6 @@ pub mod secrets;
 pub mod store;
 pub mod sync;
 pub mod tasks;
+pub mod users;
 
 pub use error::{Error, Result};

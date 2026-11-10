@@ -33,6 +33,7 @@ use crate::{
     Error, Result,
     store::Database,
     sync::{AccountEvent, SyncEvent},
+    users::UserId,
 };
 pub use actions::{Action, Button, Target};
 use crypto::{BrowserKeys, Vapid};
@@ -239,27 +240,41 @@ impl Push {
     }
 
     /// Saves a browser's subscription (the same address again just updates it).
-    pub async fn subscribe(&self, s: &NewSubscription) -> Result<()> {
+    /// A device belongs to whoever turned notifications on there; signing in
+    /// as someone else and turning them on again makes it theirs.
+    pub async fn subscribe(&self, user: UserId, s: &NewSubscription) -> Result<()> {
         check_endpoint(&s.endpoint)?;
         BrowserKeys::from_base64(&s.keys.p256dh, &s.keys.auth)?;
         let label: String = s.label.trim().chars().take(80).collect();
         sqlx::query(
-            "INSERT INTO push_subscriptions (endpoint, p256dh, auth, label, created_at) VALUES (?, ?, ?, ?, ?)
+            "INSERT INTO push_subscriptions (endpoint, p256dh, auth, label, created_at, user_id)
+             VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth,
-                 label = excluded.label, last_error = NULL",
+                 label = excluded.label, last_error = NULL, user_id = excluded.user_id",
         )
         .bind(&s.endpoint)
         .bind(&s.keys.p256dh)
         .bind(&s.keys.auth)
         .bind(label)
         .bind(now())
+        .bind(user.0)
         .execute(&self.pool())
         .await?;
         Ok(())
     }
 
     /// Forgets a browser (it turned notifications off).
-    pub async fn unsubscribe(&self, endpoint: &str) -> Result<()> {
+    pub async fn unsubscribe(&self, user: UserId, endpoint: &str) -> Result<()> {
+        sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?")
+            .bind(endpoint)
+            .bind(user.0)
+            .execute(&self.pool())
+            .await?;
+        Ok(())
+    }
+
+    /// The push service says the browser is gone: forget it, whoever's it was.
+    async fn forget(&self, endpoint: &str) -> Result<()> {
         sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ?")
             .bind(endpoint)
             .execute(&self.pool())
@@ -267,11 +282,13 @@ impl Push {
         Ok(())
     }
 
-    /// Every device; `this_device` marks the one with `endpoint`.
-    pub async fn devices(&self, endpoint: Option<&str>) -> Result<Vec<Device>> {
+    /// `user`'s devices; `this_device` marks the one with `endpoint`.
+    pub async fn devices(&self, user: UserId, endpoint: Option<&str>) -> Result<Vec<Device>> {
         let rows = sqlx::query(
-            "SELECT id, endpoint, label, created_at, last_ok_at, last_error FROM push_subscriptions ORDER BY id",
+            "SELECT id, endpoint, label, created_at, last_ok_at, last_error FROM push_subscriptions
+             WHERE user_id = ? ORDER BY id",
         )
+        .bind(user.0)
         .fetch_all(&self.pool())
         .await?;
         Ok(rows
@@ -287,45 +304,64 @@ impl Push {
             .collect())
     }
 
-    pub async fn remove_device(&self, id: i64) -> Result<()> {
-        let done =
-            sqlx::query("DELETE FROM push_subscriptions WHERE id = ?").bind(id).execute(&self.pool()).await?;
+    pub async fn remove_device(&self, user: UserId, id: i64) -> Result<()> {
+        let done = sqlx::query("DELETE FROM push_subscriptions WHERE id = ? AND user_id = ?")
+            .bind(id)
+            .bind(user.0)
+            .execute(&self.pool())
+            .await?;
         if done.rows_affected() == 0 {
             return Err(Error::NotFound(format!("device {id}")));
         }
         Ok(())
     }
 
-    pub async fn settings(&self) -> Result<PushSettings> {
+    /// What `user` wants pushed (everything, until they choose).
+    pub async fn settings(&self, user: UserId) -> Result<PushSettings> {
         let r = sqlx::query(
-            "SELECT new_mail, mail_details, reminders, event_reminders, invitations FROM push_settings WHERE id = 1",
+            "SELECT new_mail, mail_details, reminders, event_reminders, invitations FROM push_prefs WHERE user_id = ?",
         )
-        .fetch_one(&self.pool())
+        .bind(user.0)
+        .fetch_optional(&self.pool())
         .await?;
-        Ok(PushSettings {
-            new_mail: r.get("new_mail"),
-            mail_details: r.get("mail_details"),
-            reminders: r.get("reminders"),
-            event_reminders: r.get("event_reminders"),
-            invitations: r.get("invitations"),
+        Ok(match r {
+            Some(r) => PushSettings {
+                new_mail: r.get("new_mail"),
+                mail_details: r.get("mail_details"),
+                reminders: r.get("reminders"),
+                event_reminders: r.get("event_reminders"),
+                invitations: r.get("invitations"),
+            },
+            None => PushSettings {
+                new_mail: true,
+                mail_details: true,
+                reminders: true,
+                event_reminders: true,
+                invitations: true,
+            },
         })
     }
 
-    pub async fn update_settings(&self, u: &PushSettingsUpdate) -> Result<PushSettings> {
+    pub async fn update_settings(&self, user: UserId, u: &PushSettingsUpdate) -> Result<PushSettings> {
+        sqlx::query("INSERT OR IGNORE INTO push_prefs (user_id) VALUES (?)")
+            .bind(user.0)
+            .execute(&self.pool())
+            .await?;
         // `COALESCE(?, column)`: a missing field (NULL) keeps what's there.
         sqlx::query(
-            "UPDATE push_settings SET new_mail = COALESCE(?, new_mail), mail_details = COALESCE(?, mail_details),
+            "UPDATE push_prefs SET new_mail = COALESCE(?, new_mail), mail_details = COALESCE(?, mail_details),
              reminders = COALESCE(?, reminders), event_reminders = COALESCE(?, event_reminders),
-             invitations = COALESCE(?, invitations) WHERE id = 1",
+             invitations = COALESCE(?, invitations) WHERE user_id = ?",
         )
         .bind(u.new_mail)
         .bind(u.mail_details)
         .bind(u.reminders)
         .bind(u.event_reminders)
         .bind(u.invitations)
+        .bind(user.0)
         .execute(&self.pool())
         .await?;
-        self.settings().await
+        self.settings(user).await
     }
 
     /// A page says Havre is open and in front on this device.
@@ -342,7 +378,7 @@ impl Push {
     // ---- Sending ------------------------------------------------------------------
 
     /// Sends a test to one device (even if Havre is in front there: you asked).
-    pub async fn test(&self, endpoint: &str) -> Result<()> {
+    pub async fn test(&self, user: UserId, endpoint: &str) -> Result<()> {
         let note = Notification {
             title: "Havre".into(),
             body: "Notifications work on this device.".into(),
@@ -350,18 +386,22 @@ impl Push {
             tag: "havre-test".into(),
             ..Default::default()
         };
-        let row = sqlx::query("SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE endpoint = ?")
-            .bind(endpoint)
-            .fetch_optional(&self.pool())
-            .await?
-            .ok_or_else(|| Error::Config("Turn notifications on for this device first.".into()))?;
+        let row = sqlx::query(
+            "SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE endpoint = ? AND user_id = ?",
+        )
+        .bind(endpoint)
+        .bind(user.0)
+        .fetch_optional(&self.pool())
+        .await?
+        .ok_or_else(|| Error::Config("Turn notifications on for this device first.".into()))?;
         self.send(&row, &note).await
     }
 
-    /// Sends `note` to every device not showing Havre in front. Returns how
-    /// many got it.
-    pub async fn notify(&self, note: &Notification) -> Result<usize> {
-        let rows = sqlx::query("SELECT id, endpoint, p256dh, auth FROM push_subscriptions")
+    /// Sends `note` to every device of `user` not showing Havre in front.
+    /// Returns how many got it.
+    pub async fn notify(&self, user: UserId, note: &Notification) -> Result<usize> {
+        let rows = sqlx::query("SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?")
+            .bind(user.0)
             .fetch_all(&self.pool())
             .await?;
         let mut sent = 0;
@@ -400,7 +440,7 @@ impl Push {
             Ok(r) if r.status().is_success() => Ok(()),
             // The browser unsubscribed, or the subscription expired: forget it.
             Ok(r) if matches!(r.status().as_u16(), 404 | 410) => {
-                self.unsubscribe(&endpoint).await?;
+                self.forget(&endpoint).await?;
                 return Err(Error::Config("this device no longer accepts notifications (removed)".into()));
             }
             Ok(r) => {
@@ -427,47 +467,52 @@ impl Push {
 
     // ---- What sends one -------------------------------------------------------------
 
+    /// Each event goes to the devices of the user it's for (`event.user`).
     async fn on_event(&self, event: &AccountEvent) -> Result<()> {
+        let user = event.user;
         match &event.event {
             SyncEvent::Reminder { task, title } => {
-                if self.settings().await?.reminders {
-                    self.notify(&task_notification(*task, title)).await?;
+                if self.settings(user).await?.reminders {
+                    self.notify(user, &task_notification(*task, title)).await?;
                 }
             }
             SyncEvent::EventReminder { event: id, title, start, all_day, location, join_url } => {
-                if self.settings().await?.event_reminders {
-                    let tz = self.time_zone().await?;
+                if self.settings(user).await?.event_reminders {
+                    let tz = self.time_zone(user).await?;
                     let when = When { start: *start, all_day: *all_day, tz };
-                    self.notify(&event_notification(*id, title, &when, location, join_url.as_deref()))
+                    self.notify(user, &event_notification(*id, title, &when, location, join_url.as_deref()))
                         .await?;
                 }
             }
             // A scheduled message couldn't go: always said (you may count on it).
             SyncEvent::Outbox { draft, subject, sent: false, error: Some(error), .. } => {
                 let subject = if subject.trim().is_empty() { "(no subject)" } else { subject.trim() };
-                self.notify(&Notification {
-                    title: format!("Not sent: {subject}"),
-                    body: error.chars().take(160).collect(),
-                    url: "/mail?view=scheduled".into(),
-                    tag: format!("havre-outbox-{draft}"),
-                    ..Default::default()
-                })
+                self.notify(
+                    user,
+                    &Notification {
+                        title: format!("Not sent: {subject}"),
+                        body: error.chars().take(160).collect(),
+                        url: "/mail?view=scheduled".into(),
+                        tag: format!("havre-outbox-{draft}"),
+                        ..Default::default()
+                    },
+                )
                 .await?;
             }
             SyncEvent::Folder { path } => {
-                let notes = self.new_mail(event.account, path).await?;
-                let settings = self.settings().await?;
+                let notes = self.new_mail(user, event.account, path).await?;
+                let settings = self.settings(user).await?;
                 if settings.new_mail {
                     for note in notes {
-                        self.notify(&note).await?;
+                        self.notify(user, &note).await?;
                     }
                 }
                 // Invitations come a moment later (once the body is read), and
                 // take the place of the email's notification (the same tag).
-                let invitations = self.new_invitations(event.account, path).await?;
+                let invitations = self.new_invitations(user, event.account, path).await?;
                 if settings.invitations {
                     for note in invitations {
-                        self.notify(&note).await?;
+                        self.notify(user, &note).await?;
                     }
                 }
             }
@@ -477,10 +522,8 @@ impl Push {
     }
 
     /// Your time zone, as the Agenda knows it from your browser (UTC until then).
-    async fn time_zone(&self) -> Result<chrono_tz::Tz> {
-        let zone: Option<String> = sqlx::query_scalar("SELECT time_zone FROM agenda_settings WHERE id = 1")
-            .fetch_one(&self.pool())
-            .await?;
+    async fn time_zone(&self, user: UserId) -> Result<chrono_tz::Tz> {
+        let zone = self.db.agenda(user).settings().await?.time_zone;
         Ok(zone.and_then(|z| z.parse().ok()).unwrap_or(chrono_tz::Tz::UTC))
     }
 
@@ -503,7 +546,7 @@ impl Push {
     /// The notifications for mail that arrived in `folder` (if it's an
     /// inbox): unread, newer than what we looked at, from the last day, not
     /// snoozed. Moves the mark forward either way.
-    async fn new_mail(&self, account: i64, folder: &str) -> Result<Vec<Notification>> {
+    async fn new_mail(&self, user: UserId, account: i64, folder: &str) -> Result<Vec<Notification>> {
         let inbox: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM folders WHERE account_id = ? AND path = ? AND role = 'inbox')",
         )
@@ -552,7 +595,7 @@ impl Push {
             recent.push(Recent { account, folder: folder.to_owned(), uid, at: Instant::now() });
         }
         drop(recent);
-        let details = self.settings().await?.mail_details;
+        let details = self.settings(user).await?.mail_details;
         let mail: Vec<(i64, String, String)> = rows
             .iter()
             .map(|r| {
@@ -570,7 +613,7 @@ impl Push {
     /// The invitations among the mail notified a moment ago in `folder`, now
     /// that their bodies are read. Each email is looked at once: when its
     /// body is in, it's either an invitation (a notification) or forgotten.
-    async fn new_invitations(&self, account: i64, folder: &str) -> Result<Vec<Notification>> {
+    async fn new_invitations(&self, user: UserId, account: i64, folder: &str) -> Result<Vec<Notification>> {
         let mut recent = self.recent.lock().await;
         let mut notes = Vec::new();
         let mut done: Vec<u32> = Vec::new();
@@ -592,7 +635,7 @@ impl Push {
             done.push(r.uid);
             if row.get::<bool, _>("has_invite") {
                 // An invitation that can't be read keeps the email's notification.
-                match self.invitation_notification(account, folder, r.uid, &files).await {
+                match self.invitation_notification(user, account, folder, r.uid, &files).await {
                     Ok(Some(note)) => notes.push(note),
                     Ok(None) => {}
                     Err(err) => tracing::debug!("push: invitation in message {}: {err}", r.uid),
@@ -608,6 +651,7 @@ impl Push {
     /// an update, your own meeting, or one you already answered.
     async fn invitation_notification(
         &self,
+        user: UserId,
         account: i64,
         folder: &str,
         uid: u32,
@@ -640,12 +684,12 @@ impl Push {
         }
         // Already in your calendars with your answer: an update, nothing to ask.
         if let Some(uid) = &invitation.uid {
-            let agenda = self.db.agenda();
+            let agenda = self.db.agenda(user);
             if agenda.events_by_uid(uid).await?.iter().any(|e| e.my_response.is_some()) {
                 return Ok(None);
             }
         }
-        let when = When { start: first.start, all_day: first.all_day, tz: self.time_zone().await? };
+        let when = When { start: first.start, all_day: first.all_day, tz: self.time_zone(user).await? };
         Ok(Some(invitation_notification(
             account,
             folder,
@@ -663,11 +707,11 @@ impl Push {
     /// unknown UID would be ignored by the mail server, and the button would
     /// seem to work; here it's said instead. Other targets are returned as
     /// they are (their own functions look them up).
-    pub async fn still_there(&self, target: &Target) -> Result<Target> {
+    pub async fn still_there(&self, user: UserId, target: &Target) -> Result<Target> {
         let gone = || Error::Config("That email isn't there any more.".into());
         match target {
             Target::Mail { account, folder, uid } => {
-                if self.has_message(*account, folder, *uid).await? {
+                if self.has_message(user, *account, folder, *uid).await? {
                     Ok(target.clone())
                 } else {
                     Err(gone())
@@ -676,7 +720,7 @@ impl Push {
             Target::Inbox { account, folder, uids } => {
                 let mut there = Vec::new();
                 for uid in uids {
-                    if self.has_message(*account, folder, *uid).await? {
+                    if self.has_message(user, *account, folder, *uid).await? {
                         there.push(*uid);
                     }
                 }
@@ -689,13 +733,16 @@ impl Push {
         }
     }
 
-    async fn has_message(&self, account: i64, folder: &str, uid: u32) -> Result<bool> {
+    /// In one of `user`'s accounts: someone else's email is never "there".
+    async fn has_message(&self, user: UserId, account: i64, folder: &str, uid: u32) -> Result<bool> {
         Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM messages WHERE account_id = ? AND folder = ? AND uid = ?)",
+            "SELECT EXISTS (SELECT 1 FROM messages WHERE account_id = ? AND folder = ? AND uid = ?
+                              AND account_id IN (SELECT id FROM accounts WHERE user_id = ?))",
         )
         .bind(account)
         .bind(folder)
         .bind(uid as i64)
+        .bind(user.0)
         .fetch_one(&self.pool())
         .await?)
     }
@@ -704,23 +751,24 @@ impl Push {
 
     /// A reminder again in `minutes` (a notification's *In 10 min*). The task
     /// or event must exist; it's looked up again when the time comes.
-    pub async fn snooze(&self, target: &Target, minutes: i64) -> Result<()> {
+    pub async fn snooze(&self, user: UserId, target: &Target, minutes: i64) -> Result<()> {
         let (kind, id, start) = match target {
             Target::Task { task } => {
-                self.db.tasks().task(*task).await?;
+                self.db.tasks(user).task(*task).await?;
                 ("task", *task, None)
             }
             Target::Event { event, start } => {
-                self.db.agenda().event(*event).await?;
+                self.db.agenda(user).event(*event).await?;
                 ("event", *event, Some(*start))
             }
             _ => return Err(Error::Config("Only reminders can come back later.".into())),
         };
-        sqlx::query("INSERT INTO push_snoozed (kind, ref_id, start, due_at) VALUES (?, ?, ?, ?)")
+        sqlx::query("INSERT INTO push_snoozed (kind, ref_id, start, due_at, user_id) VALUES (?, ?, ?, ?, ?)")
             .bind(kind)
             .bind(id)
             .bind(start)
             .bind(now() + minutes * 60)
+            .bind(user.0)
             .execute(&self.pool())
             .await?;
         Ok(())
@@ -729,7 +777,7 @@ impl Push {
     /// Announces the snoozed reminders whose time has come, once each: the
     /// row is deleted first, and only the one who deleted it rings.
     async fn ring_snoozed(&self, now: i64) -> Result<()> {
-        let due = sqlx::query("SELECT id, kind, ref_id, start FROM push_snoozed WHERE due_at <= ?")
+        let due = sqlx::query("SELECT id, kind, ref_id, start, user_id FROM push_snoozed WHERE due_at <= ?")
             .bind(now)
             .fetch_all(&self.pool())
             .await?;
@@ -742,13 +790,14 @@ impl Push {
                 continue;
             }
             let id: i64 = row.get("ref_id");
+            let user = UserId(row.get("user_id"));
             // Done or deleted since: nothing to remind.
             let event = match row.get::<String, _>("kind").as_str() {
-                "task" => match self.db.tasks().task(id).await {
+                "task" => match self.db.tasks(user).task(id).await {
                     Ok(task) if task.done_at.is_none() => SyncEvent::Reminder { task: id, title: task.title },
                     _ => continue,
                 },
-                _ => match self.db.agenda().event(id).await {
+                _ => match self.db.agenda(user).event(id).await {
                     Ok(e) => SyncEvent::EventReminder {
                         event: id,
                         title: e.title,
@@ -761,7 +810,7 @@ impl Push {
                 },
             };
             // Nobody listening (no page open): fine, `on_event` below still pushes.
-            let _ = self.events.send(AccountEvent { account: 0, event });
+            let _ = self.events.send(AccountEvent { account: 0, user, event });
         }
         Ok(())
     }
@@ -961,6 +1010,7 @@ fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::users::UserId;
     use crate::{
         mail::{FolderRole, MessageSummary, Person},
         store::tests::{folder, new_account},
@@ -1030,7 +1080,7 @@ mod tests {
             keys: SubscriptionKeys { p256dh: UA_PUBLIC.into(), auth: AUTH.into() },
             label: "Chrome on Android".into(),
         };
-        push.subscribe(&sub).await.unwrap();
+        push.subscribe(UserId::ADMIN, &sub).await.unwrap();
     }
 
     /// What the phone would show: the request's body, decrypted.
@@ -1040,13 +1090,13 @@ mod tests {
     }
 
     fn inbox_event(account: i64) -> AccountEvent {
-        AccountEvent { account, event: SyncEvent::Folder { path: "INBOX".into() } }
+        AccountEvent { account, user: UserId::ADMIN, event: SyncEvent::Folder { path: "INBOX".into() } }
     }
 
     #[tokio::test]
     async fn new_mail_is_pushed_once_and_old_mail_never() {
         let db = Database::in_memory().await.unwrap();
-        let account = db.insert_account(&new_account("me@x.test")).await.unwrap().id;
+        let account = db.insert_account(UserId::ADMIN, &new_account("me@x.test")).await.unwrap().id;
         let store = db.store(account);
         store
             .replace_folders(&[folder("INBOX", FolderRole::Inbox), folder("Archive", FolderRole::Archive)])
@@ -1072,9 +1122,13 @@ mod tests {
             .unwrap();
         store.upsert_messages("Archive", &[mail(9, "Elsewhere", "Not an inbox", true, 0)]).await.unwrap();
         push.on_event(&inbox_event(account)).await.unwrap();
-        push.on_event(&AccountEvent { account, event: SyncEvent::Folder { path: "Archive".into() } })
-            .await
-            .unwrap();
+        push.on_event(&AccountEvent {
+            account,
+            user: UserId::ADMIN,
+            event: SyncEvent::Folder { path: "Archive".into() },
+        })
+        .await
+        .unwrap();
         push.on_event(&inbox_event(account)).await.unwrap(); // the same mail again: nothing new
 
         let requests = got.lock().unwrap().clone();
@@ -1094,7 +1148,7 @@ mod tests {
             note["data"],
             serde_json::json!({"kind": "mail", "account": account, "folder": "INBOX", "uid": 2})
         );
-        assert!(push.devices(Some(&endpoint)).await.unwrap()[0].last_ok_at.is_some());
+        assert!(push.devices(UserId::ADMIN, Some(&endpoint)).await.unwrap()[0].last_ok_at.is_some());
     }
 
     #[test]
@@ -1138,7 +1192,7 @@ mod tests {
     #[tokio::test]
     async fn mail_buttons_only_act_on_mail_still_there() {
         let db = Database::in_memory().await.unwrap();
-        let account = db.insert_account(&new_account("me@x.test")).await.unwrap().id;
+        let account = db.insert_account(UserId::ADMIN, &new_account("me@x.test")).await.unwrap().id;
         let store = db.store(account);
         store.replace_folders(&[folder("INBOX", FolderRole::Inbox)]).await.unwrap();
         store
@@ -1147,16 +1201,19 @@ mod tests {
             .unwrap();
         let push = new_push(db);
         let one = |uid| Target::Mail { account, folder: "INBOX".into(), uid };
-        assert_eq!(push.still_there(&one(1)).await.unwrap(), one(1));
-        assert!(push.still_there(&one(2)).await.is_err(), "archived elsewhere since");
+        assert_eq!(push.still_there(UserId::ADMIN, &one(1)).await.unwrap(), one(1));
+        assert!(push.still_there(UserId::ADMIN, &one(2)).await.is_err(), "archived elsewhere since");
         let all = Target::Inbox { account, folder: "INBOX".into(), uids: vec![1, 2, 3] };
         assert_eq!(
-            push.still_there(&all).await.unwrap(),
+            push.still_there(UserId::ADMIN, &all).await.unwrap(),
             Target::Inbox { account, folder: "INBOX".into(), uids: vec![1, 3] }
         );
         let none = Target::Inbox { account, folder: "INBOX".into(), uids: vec![2] };
-        assert!(push.still_there(&none).await.is_err());
-        assert_eq!(push.still_there(&Target::Task { task: 9 }).await.unwrap(), Target::Task { task: 9 });
+        assert!(push.still_there(UserId::ADMIN, &none).await.is_err());
+        assert_eq!(
+            push.still_there(UserId::ADMIN, &Target::Task { task: 9 }).await.unwrap(),
+            Target::Task { task: 9 }
+        );
     }
 
     #[tokio::test]
@@ -1174,7 +1231,7 @@ mod tests {
         let calendar: i64 =
             sqlx::query_scalar("SELECT id FROM calendars LIMIT 1").fetch_one(&db.pool()).await.unwrap();
         let event = db
-            .agenda()
+            .agenda(UserId::ADMIN)
             .save_event(
                 calendar,
                 &crate::agenda::RemoteEvent {
@@ -1190,11 +1247,15 @@ mod tests {
         let (tx, mut rx) = broadcast::channel(16);
         let push = Push::new(db.clone(), tx);
 
-        push.snooze(&Target::Task { task }, 60).await.unwrap();
-        push.snooze(&Target::Event { event: event.id, start: event.start }, 10).await.unwrap();
+        push.snooze(UserId::ADMIN, &Target::Task { task }, 60).await.unwrap();
+        push.snooze(UserId::ADMIN, &Target::Event { event: event.id, start: event.start }, 10).await.unwrap();
         // Only reminders, and only things that exist.
-        assert!(push.snooze(&Target::Task { task: 999 }, 10).await.is_err());
-        assert!(push.snooze(&Target::Mail { account: 1, folder: "INBOX".into(), uid: 1 }, 10).await.is_err());
+        assert!(push.snooze(UserId::ADMIN, &Target::Task { task: 999 }, 10).await.is_err());
+        assert!(
+            push.snooze(UserId::ADMIN, &Target::Mail { account: 1, folder: "INBOX".into(), uid: 1 }, 10)
+                .await
+                .is_err()
+        );
 
         let t = now();
         push.ring_snoozed(t + 5 * 60).await.unwrap();
@@ -1231,7 +1292,7 @@ mod tests {
             .await
             .unwrap();
         // The invitation is for mael@example.net, from Claire.
-        let account = db.insert_account(&new_account("mael@example.net")).await.unwrap().id;
+        let account = db.insert_account(UserId::ADMIN, &new_account("mael@example.net")).await.unwrap().id;
         let store = db.store(account);
         store.replace_folders(&[folder("INBOX", FolderRole::Inbox)]).await.unwrap();
         let push = new_push(db.clone());
@@ -1271,14 +1332,17 @@ mod tests {
     async fn invitations_follow_their_setting_and_skip_your_own() {
         let db = Database::in_memory().await.unwrap();
         // This time the organizer is you: nothing to answer.
-        let account = db.insert_account(&new_account("claire@example.org")).await.unwrap().id;
+        let account = db.insert_account(UserId::ADMIN, &new_account("claire@example.org")).await.unwrap().id;
         let store = db.store(account);
         store.replace_folders(&[folder("INBOX", FolderRole::Inbox)]).await.unwrap();
         let push = new_push(db.clone());
         push.remember_inboxes().await.unwrap();
-        push.update_settings(&PushSettingsUpdate { new_mail: Some(false), ..Default::default() })
-            .await
-            .unwrap();
+        push.update_settings(
+            UserId::ADMIN,
+            &PushSettingsUpdate { new_mail: Some(false), ..Default::default() },
+        )
+        .await
+        .unwrap();
         let (endpoint, got) = push_service(vec![201]).await;
         subscribe(&push, &endpoint).await;
         store.upsert_messages("INBOX", &[mail(5, "Claire", "Kick-off", true, 0)]).await.unwrap();
@@ -1286,7 +1350,7 @@ mod tests {
         store.store_body("INBOX", 5, include_bytes!("../mail/testdata/5-invitation.eml")).await.unwrap();
         push.on_event(&inbox_event(account)).await.unwrap();
         assert!(got.lock().unwrap().is_empty(), "new mail off, and your own meeting");
-        assert!(push.settings().await.unwrap().invitations, "on by default");
+        assert!(push.settings(UserId::ADMIN).await.unwrap().invitations, "on by default");
     }
 
     #[tokio::test]
@@ -1295,12 +1359,18 @@ mod tests {
         let push = new_push(db);
         let (endpoint, got) = push_service(vec![201]).await;
         subscribe(&push, &endpoint).await;
-        let ring =
-            AccountEvent { account: 0, event: SyncEvent::Reminder { task: 7, title: "Call Thomas".into() } };
+        let ring = AccountEvent {
+            account: 0,
+            user: UserId::ADMIN,
+            event: SyncEvent::Reminder { task: 7, title: "Call Thomas".into() },
+        };
         push.on_event(&ring).await.unwrap();
-        push.update_settings(&PushSettingsUpdate { reminders: Some(false), ..Default::default() })
-            .await
-            .unwrap();
+        push.update_settings(
+            UserId::ADMIN,
+            &PushSettingsUpdate { reminders: Some(false), ..Default::default() },
+        )
+        .await
+        .unwrap();
         push.on_event(&ring).await.unwrap();
         let requests = got.lock().unwrap().clone();
         assert_eq!(requests.len(), 1, "the second one is off");
@@ -1315,6 +1385,7 @@ mod tests {
         subscribe(&push, &endpoint).await;
         let outbox = |sent: bool, error: Option<&str>| AccountEvent {
             account: 0,
+            user: UserId::ADMIN,
             event: SyncEvent::Outbox {
                 draft: 3,
                 subject: "Quote".into(),
@@ -1343,13 +1414,13 @@ mod tests {
         let note = Notification { title: "t".into(), url: "/".into(), tag: "x".into(), ..Default::default() };
 
         push.seen(&endpoint);
-        assert_eq!(push.notify(&note).await.unwrap(), 0);
+        assert_eq!(push.notify(UserId::ADMIN, &note).await.unwrap(), 0);
         assert!(got.lock().unwrap().is_empty(), "Havre is open there: no push");
 
         push.in_front.lock().unwrap().clear();
-        assert_eq!(push.notify(&note).await.unwrap(), 0);
+        assert_eq!(push.notify(UserId::ADMIN, &note).await.unwrap(), 0);
         assert_eq!(got.lock().unwrap().len(), 1);
-        assert!(push.devices(None).await.unwrap().is_empty(), "410: the subscription is gone");
+        assert!(push.devices(UserId::ADMIN, None).await.unwrap().is_empty(), "410: the subscription is gone");
     }
 
     #[tokio::test]
@@ -1363,9 +1434,15 @@ mod tests {
             keys: SubscriptionKeys { p256dh: p256dh.into(), auth: AUTH.into() },
             label: String::new(),
         };
-        assert!(push.subscribe(&bad("http://push.example/x", UA_PUBLIC)).await.is_err(), "HTTPS only");
-        assert!(push.subscribe(&bad("https://push.example/x", "nope")).await.is_err(), "a real key");
-        assert!(push.subscribe(&bad("https://push.example/x", UA_PUBLIC)).await.is_ok());
+        assert!(
+            push.subscribe(UserId::ADMIN, &bad("http://push.example/x", UA_PUBLIC)).await.is_err(),
+            "HTTPS only"
+        );
+        assert!(
+            push.subscribe(UserId::ADMIN, &bad("https://push.example/x", "nope")).await.is_err(),
+            "a real key"
+        );
+        assert!(push.subscribe(UserId::ADMIN, &bad("https://push.example/x", UA_PUBLIC)).await.is_ok());
     }
 
     #[tokio::test]
@@ -1380,6 +1457,7 @@ mod tests {
         subscribe(&push, &endpoint).await;
         let ring = AccountEvent {
             account: 0,
+            user: UserId::ADMIN,
             event: SyncEvent::EventReminder {
                 event: 4,
                 title: "Kick-off".into(),
@@ -1390,9 +1468,12 @@ mod tests {
             },
         };
         push.on_event(&ring).await.unwrap();
-        push.update_settings(&PushSettingsUpdate { event_reminders: Some(false), ..Default::default() })
-            .await
-            .unwrap();
+        push.update_settings(
+            UserId::ADMIN,
+            &PushSettingsUpdate { event_reminders: Some(false), ..Default::default() },
+        )
+        .await
+        .unwrap();
         push.on_event(&ring).await.unwrap();
         let requests = got.lock().unwrap().clone();
         assert_eq!(requests.len(), 1, "the second one is off");

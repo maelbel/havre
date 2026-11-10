@@ -49,6 +49,11 @@ use crate::{
     store::Database,
 };
 use index::{Hit, MailIndex};
+
+/// Whose data the AI works with: the admin's only (step 29). The AI provider
+/// costs money and has limits, so other users don't get it, and their mail
+/// is never sent to it or indexed for it.
+pub(crate) const AI_USER: crate::users::UserId = crate::users::UserId::ADMIN;
 use provider::{Client, Request};
 use settings::{AiConfig, AiSettings, AiSettingsUpdate};
 
@@ -343,7 +348,7 @@ impl Ai {
         }
         let client = self.client().await?;
         self.need_mail().await?;
-        let raw = self.accounts.engine(account).await?.raw(folder, uid).await?;
+        let raw = self.accounts.engine(AI_USER, account).await?.raw(folder, uid).await?;
         let text = full_text(&raw, 12_000);
         let system = format!(
             "You summarize emails for a busy person. {UNTRUSTED}\n\
@@ -369,7 +374,7 @@ impl Ai {
     ) -> Result<()> {
         let client = self.client().await?;
         self.need_mail().await?;
-        let d = self.db.drafts().get(draft).await?;
+        let d = self.db.drafts(AI_USER).get(draft).await?;
         activity::log(&self.pool, "draft", "draft", &format!("Wrote a draft: {}", d.subject)).await;
         let me = self.db.account(d.account).await?;
         let name = if me.sender_name.is_empty() { me.email.clone() } else { me.sender_name.clone() };
@@ -470,7 +475,8 @@ impl Ai {
         let from = local.midnight(today);
         let to = local.midnight(today + chrono::Days::new(1));
         let mut out = format!("Now: {}\n\n<today_events>\n", now.format("%A %d %B %Y, %H:%M"));
-        let events = if s.read_agenda { self.agenda.events(from, to).await? } else { Vec::new() };
+        let events =
+            if s.read_agenda { self.agenda.for_user(AI_USER).events(from, to).await? } else { Vec::new() };
         for e in events {
             if e.my_response.as_deref() == Some("declined") {
                 continue;
@@ -483,7 +489,7 @@ impl Ai {
         }
         out.push_str("</today_events>\n\n<invitations_waiting>\n");
         let pending = if s.read_agenda {
-            self.agenda.store().pending_invitations(Utc::now().timestamp()).await?
+            self.db.agenda(AI_USER).pending_invitations(Utc::now().timestamp()).await?
         } else {
             Vec::new()
         };
@@ -497,19 +503,20 @@ impl Ai {
         }
         out.push_str("</invitations_waiting>\n\n<tasks_due>\n");
         // Tasks due today or late (when the Tasks app is in the dock).
-        let tasks_on = self.db.apps().list().await?.iter().any(|a| a.manifest.id == "tasks" && a.enabled);
+        let tasks_on =
+            self.db.apps(AI_USER).list().await?.iter().any(|a| a.manifest.id == "tasks" && a.enabled);
         if s.read_agenda && tasks_on {
             let day = today.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc().timestamp();
             let query =
                 crate::tasks::TaskQuery { done: Some(false), to: Some(day + 86_400), ..Default::default() };
-            for t in self.db.tasks().tasks(&query).await?.iter().filter(|t| t.due.is_some()).take(15) {
+            for t in self.db.tasks(AI_USER).tasks(&query).await?.iter().filter(|t| t.due.is_some()).take(15) {
                 let late = if t.due < Some(day) { " (late)" } else { "" };
                 out.push_str(&format!("- {}{late}\n", t.title));
             }
         }
         out.push_str("</tasks_due>\n\n<unread_emails>\n");
         let unread = if s.read_mail {
-            self.db.unread_inbox(15).await?
+            self.db.unread_inbox(AI_USER, 15).await?
         } else {
             crate::store::UnreadInbox { total: 0, messages: Vec::new() }
         };
@@ -549,6 +556,7 @@ impl Ai {
              JOIN folders f ON f.account_id = m.account_id AND f.path = m.folder
              LEFT JOIN bodies b ON b.account_id = m.account_id AND b.folder = m.folder AND b.uid = m.uid
              WHERE b.uid IS NULL AND f.role IN (?, ?, ?) AND datetime(m.date) >= datetime(?)
+               AND m.account_id IN (SELECT id FROM accounts WHERE user_id = 1) -- the admin's: AI is theirs
              ORDER BY datetime(m.date) DESC LIMIT ?",
         )
         .bind(role(FolderRole::Inbox))
@@ -559,7 +567,7 @@ impl Ai {
         .fetch_all(&self.pool)
         .await?;
         for (account, folder, uid) in rows {
-            let Ok(engine) = self.accounts.engine(account).await else { continue };
+            let Ok(engine) = self.accounts.engine(AI_USER, account).await else { continue };
             // `raw` downloads without marking as read, and keeps a copy.
             if let Err(err) = engine.raw(&folder, uid as u32).await {
                 tracing::debug!(%err, "can't download a message to index it");

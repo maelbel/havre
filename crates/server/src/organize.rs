@@ -28,7 +28,7 @@ use havre_core::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{AppState, api::ApiError, mail_source::MailSource};
+use crate::{AppState, api::ApiError, auth::CurrentUser, mail_source::MailSource};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -53,13 +53,16 @@ fn manager(state: &AppState) -> Result<&std::sync::Arc<havre_core::accounts::Acc
     }
 }
 
-async fn organize(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+async fn organize(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Value>, ApiError> {
     Ok(Json(match &state.mail {
         MailSource::Demo(_) => json!({ "labels": [], "starred": 0, "snoozed": 0 }),
         MailSource::Accounts(m) => {
             let db = m.database();
-            let counts = db.organize_counts().await?;
-            json!({ "labels": db.labels().await?, "starred": counts.starred, "snoozed": counts.snoozed })
+            let counts = db.organize_counts(user).await?;
+            json!({ "labels": db.labels(user).await?, "starred": counts.starred, "snoozed": counts.snoozed })
         }
     }))
 }
@@ -76,6 +79,7 @@ struct ViewQuery {
 
 async fn view(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(v): Query<ViewQuery>,
 ) -> Result<Json<MessagePage>, ApiError> {
     let which = match (v.view.as_str(), v.label) {
@@ -93,7 +97,7 @@ async fn view(
         MailSource::Demo(_) => MessagePage { messages: Vec::new(), has_more: false },
         MailSource::Accounts(m) => {
             let q = v.q.as_deref().filter(|q| !q.trim().is_empty());
-            m.database().across(which, v.limit.unwrap_or(50).clamp(1, 200), v.offset, q).await?
+            m.database().across(user, which, v.limit.unwrap_or(50).clamp(1, 200), v.offset, q).await?
         }
     }))
 }
@@ -126,7 +130,11 @@ struct FlagsBody {
     flagged: Option<bool>,
 }
 
-async fn flags(State(state): State<AppState>, Json(b): Json<FlagsBody>) -> Result<StatusCode, ApiError> {
+async fn flags(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(b): Json<FlagsBody>,
+) -> Result<StatusCode, ApiError> {
     b.selection.check()?;
     let s = &b.selection;
     match &state.mail {
@@ -134,12 +142,12 @@ async fn flags(State(state): State<AppState>, Json(b): Json<FlagsBody>) -> Resul
         MailSource::Demo(_) => {
             if let Some(seen) = b.seen {
                 for uid in &s.uids {
-                    state.mail.set_seen(s.account, &s.folder, *uid, seen).await?;
+                    state.mail.set_seen(user, s.account, &s.folder, *uid, seen).await?;
                 }
             }
         }
         MailSource::Accounts(m) => {
-            let engine = m.engine(s.account).await?;
+            let engine = m.engine(user, s.account).await?;
             if let Some(seen) = b.seen {
                 engine.set_seen_many(&s.folder, &s.uids, seen).await?;
             }
@@ -161,11 +169,12 @@ struct LabelBody {
 
 async fn label_messages(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(b): Json<LabelBody>,
 ) -> Result<StatusCode, ApiError> {
     b.selection.check()?;
     let s = &b.selection;
-    manager(&state)?.engine(s.account).await?.set_label(&s.folder, &s.uids, b.label, b.on).await?;
+    manager(&state)?.engine(user, s.account).await?.set_label(&s.folder, &s.uids, b.label, b.on).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -177,10 +186,14 @@ struct SnoozeBody {
     until: Option<i64>,
 }
 
-async fn snooze(State(state): State<AppState>, Json(b): Json<SnoozeBody>) -> Result<StatusCode, ApiError> {
+async fn snooze(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(b): Json<SnoozeBody>,
+) -> Result<StatusCode, ApiError> {
     b.selection.check()?;
     let s = &b.selection;
-    manager(&state)?.engine(s.account).await?.snooze(&s.folder, &s.uids, b.until).await?;
+    manager(&state)?.engine(user, s.account).await?.snooze(&s.folder, &s.uids, b.until).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -194,11 +207,16 @@ struct UndoBody {
     message_ids: Vec<String>,
 }
 
-async fn undo(State(state): State<AppState>, Json(b): Json<UndoBody>) -> Result<Json<Value>, ApiError> {
+async fn undo(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(b): Json<UndoBody>,
+) -> Result<Json<Value>, ApiError> {
     if b.message_ids.is_empty() {
         return Err(ApiError::BadRequest("Nothing to undo.".into()));
     }
-    let moved = manager(&state)?.engine(b.account).await?.undo_move(&b.from, &b.to, &b.message_ids).await?;
+    let moved =
+        manager(&state)?.engine(user, b.account).await?.undo_move(&b.from, &b.to, &b.message_ids).await?;
     Ok(Json(json!({ "moved": moved })))
 }
 
@@ -211,9 +229,10 @@ struct NewLabel {
 
 async fn create_label(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(b): Json<NewLabel>,
 ) -> Result<(StatusCode, Json<Label>), ApiError> {
-    Ok((StatusCode::CREATED, Json(manager(&state)?.database().create_label(&b.name, &b.color).await?)))
+    Ok((StatusCode::CREATED, Json(manager(&state)?.database().create_label(user, &b.name, &b.color).await?)))
 }
 
 #[derive(Deserialize)]
@@ -224,25 +243,36 @@ struct LabelUpdate {
 
 async fn update_label(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(b): Json<LabelUpdate>,
 ) -> Result<Json<Label>, ApiError> {
-    Ok(Json(manager(&state)?.database().update_label(id, b.name.as_deref(), b.color.as_deref()).await?))
+    Ok(Json(manager(&state)?.database().update_label(user, id, b.name.as_deref(), b.color.as_deref()).await?))
 }
 
-async fn delete_label(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
-    manager(&state)?.database().delete_label(id).await?;
+async fn delete_label(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    manager(&state)?.database().delete_label(user, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /api/mail/present`: which of these messages are still in the folder.
 /// The assistant's cards check before acting (a card can be minutes old).
-async fn present(State(state): State<AppState>, Json(s): Json<Selection>) -> Result<Json<Value>, ApiError> {
+async fn present(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(s): Json<Selection>,
+) -> Result<Json<Value>, ApiError> {
     s.check()?;
     let uids = match &state.mail {
         // Demo: nothing moves on its own.
         MailSource::Demo(_) => s.uids.clone(),
-        MailSource::Accounts(m) => m.database().store(s.account).present(&s.folder, &s.uids).await?,
+        MailSource::Accounts(m) => {
+            m.database().mailbox(user, s.account).await?.present(&s.folder, &s.uids).await?
+        }
     };
     Ok(Json(json!({ "uids": uids })))
 }

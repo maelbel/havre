@@ -23,6 +23,7 @@ use super::{
     store::{Keeps, ListRow, TaskStore},
     todo, validate,
 };
+use crate::users::UserId;
 use crate::{
     Error, Result,
     agenda::store::CalDavLogin,
@@ -75,9 +76,10 @@ pub struct TaskSource {
     pub error: Option<String>,
 }
 
+/// Everyone's tasks: each method acts for one user (`user`), and the
+/// background sync goes through the users one by one.
 pub struct Tasks {
     db: Database,
-    store: TaskStore,
     events: broadcast::Sender<AccountEvent>,
     /// Graph / Google tokens, per mail account.
     sessions: Mutex<HashMap<i64, Arc<OAuthSession>>>,
@@ -91,7 +93,6 @@ impl Tasks {
     /// channel the web UI listens to (shared with Mail and the Agenda).
     pub fn start(db: Database, events: broadcast::Sender<AccountEvent>) -> Arc<Self> {
         let tasks = Arc::new(Self {
-            store: db.tasks(),
             db,
             events,
             sessions: Mutex::new(HashMap::new()),
@@ -147,12 +148,14 @@ impl Tasks {
         tasks
     }
 
-    pub fn store(&self) -> &TaskStore {
-        &self.store
+    /// `user`'s lists and tasks.
+    pub fn store(&self, user: UserId) -> TaskStore {
+        self.db.tasks(user)
     }
 
-    fn announce(&self) {
-        let _ = self.events.send(AccountEvent { account: 0, event: SyncEvent::Tasks });
+    /// Tells `user`'s pages that their tasks changed.
+    fn announce(&self, user: UserId) {
+        let _ = self.events.send(AccountEvent { account: 0, user, event: SyncEvent::Tasks });
     }
 
     /// Syncs soon, in the background.
@@ -162,11 +165,12 @@ impl Tasks {
 
     /// Announces the reminders whose time has come (once each).
     async fn ring(&self, now: i64) -> Result<()> {
-        for task in self.store.due_reminders(now).await? {
-            self.store.mark_reminded(task.id).await?;
+        // Everyone's reminders at once; each goes to its task's user.
+        for (user, task) in super::store::due_reminders(&self.db.pool(), now).await? {
+            super::store::mark_reminded(&self.db.pool(), task.id).await?;
             if task.remind_at.is_some_and(|at| now - at <= TOO_LATE) {
                 let event = SyncEvent::Reminder { task: task.id, title: task.title.clone() };
-                let _ = self.events.send(AccountEvent { account: 0, event });
+                let _ = self.events.send(AccountEvent { account: 0, user, event });
             }
         }
         Ok(())
@@ -174,18 +178,30 @@ impl Tasks {
 
     // ---- Syncing ---------------------------------------------------------------------------
 
-    /// Refreshes every source: its lists, then their tasks.
+    /// Refreshes every source of every user: their lists, then their tasks.
     pub async fn sync_all(&self) -> Result<()> {
         let _guard = self.syncing.lock().await;
+        for user in self.db.users().all().await? {
+            // One user's trouble doesn't stop the others' sync.
+            if let Err(err) = self.sync_user(user).await {
+                tracing::warn!(user = user.0, "tasks sync: {err}");
+            }
+        }
+        Ok(())
+    }
+
+    /// One user's sources: their accounts and CalDAV servers, then their lists.
+    async fn sync_user(&self, user: UserId) -> Result<()> {
+        let store = self.store(user);
         let now = now();
 
-        for account in self.db.accounts().await? {
+        for account in self.db.accounts(user).await? {
             let Some(provider) = Provider::parse(&account.auth) else { continue };
             let source = provider.as_str();
             let key = format!("account:{}", account.id);
-            if !account.can_tasks || !self.store.sync_enabled(&key).await? {
+            if !account.can_tasks || !store.sync_enabled(&key).await? {
                 // Off, or signed in before Tasks existed (reconnect to allow).
-                self.store.remove_lists(source, Some(account.id), None).await?;
+                store.remove_lists(source, Some(account.id), None).await?;
                 continue;
             }
             let listed = match self.token(account.id, provider).await {
@@ -195,54 +211,54 @@ impl Tasks {
                 },
                 Err(err) => Err(err),
             };
-            self.apply_listing(source, Some(account.id), None, listed).await?;
+            self.apply_listing(&store, source, Some(account.id), None, listed).await?;
         }
-        for server in self.db.agenda().caldav_accounts().await? {
+        for server in self.db.agenda(user).caldav_accounts().await? {
             let key = format!("caldav:{}", server.id);
-            if !self.store.sync_enabled(&key).await? {
-                self.store.remove_lists("caldav", None, Some(server.id)).await?;
+            if !store.sync_enabled(&key).await? {
+                store.remove_lists("caldav", None, Some(server.id)).await?;
                 continue;
             }
-            let listed = match self.db.agenda().caldav_login(server.id).await {
+            let listed = match self.db.agenda(user).caldav_login(server.id).await {
                 Ok(login) => caldav::lists(&login).await,
                 Err(err) => Err(err),
             };
-            self.apply_listing("caldav", None, Some(server.id), listed).await?;
+            self.apply_listing(&store, "caldav", None, Some(server.id), listed).await?;
         }
 
-        for row in self.store.list_rows().await? {
+        for row in store.list_rows().await? {
             if row.list.source == "local" {
                 continue;
             }
-            let result = self.sync_list(&row, now).await;
+            let result = self.sync_list(&store, &row, now).await;
             if let Err(err) = &result {
                 tracing::warn!(list = row.list.name, "{err}");
             }
-            self.store.set_list_status(row.list.id, result.err().map(|e| e.to_string()).as_deref()).await?;
+            store.set_list_status(row.list.id, result.err().map(|e| e.to_string()).as_deref()).await?;
         }
-        self.announce();
         Ok(())
     }
 
     /// Saves a source's lists, or its error on its lists.
     async fn apply_listing(
         &self,
+        store: &TaskStore,
         source: &str,
         account: Option<i64>,
         caldav: Option<i64>,
         listed: Result<Vec<RemoteList>>,
     ) -> Result<()> {
         match listed {
-            Ok(lists) => self.store.replace_lists(source, account, caldav, &lists).await,
+            Ok(lists) => store.replace_lists(source, account, caldav, &lists).await,
             Err(err) => {
                 tracing::warn!(source, "can't list task lists: {err}");
-                self.store.set_source_error(source, account, caldav, &err.to_string()).await
+                store.set_source_error(source, account, caldav, &err.to_string()).await
             }
         }
     }
 
-    async fn sync_list(&self, row: &ListRow, now: i64) -> Result<()> {
-        let source = self.source(&row.list).await?;
+    async fn sync_list(&self, store: &TaskStore, row: &ListRow, now: i64) -> Result<()> {
+        let source = self.source(store.user(), &row.list).await?;
         let id = &row.remote_id;
         let tasks: Vec<RemoteTask> = match &source {
             Source::Local => return Ok(()),
@@ -250,7 +266,7 @@ impl Tasks {
             Source::Google(token) => gtasks::tasks(token, id, now).await?,
             Source::CalDav(login) => caldav::tasks(login, id).await?,
         };
-        self.store.replace_tasks(row.list.id, &tasks, source.keeps()).await
+        store.replace_tasks(row.list.id, &tasks, source.keeps()).await
     }
 
     /// Syncs everything now and waits (the refresh button).
@@ -283,14 +299,14 @@ impl Tasks {
         session.access_token().await
     }
 
-    async fn source(&self, list: &TaskList) -> Result<Source> {
+    async fn source(&self, user: UserId, list: &TaskList) -> Result<Source> {
         Ok(match (list.source.as_str(), list.account, list.caldav) {
             ("local", _, _) => Source::Local,
             ("microsoft", Some(account), _) => {
                 Source::Microsoft(self.token(account, Provider::Microsoft).await?)
             }
             ("google", Some(account), _) => Source::Google(self.token(account, Provider::Google).await?),
-            ("caldav", _, Some(server)) => Source::CalDav(self.db.agenda().caldav_login(server).await?),
+            ("caldav", _, Some(server)) => Source::CalDav(self.db.agenda(user).caldav_login(server).await?),
             _ => return Err(Error::Config(format!("task list {} has no source", list.id))),
         })
     }
@@ -298,8 +314,8 @@ impl Tasks {
     // ---- Settings ----------------------------------------------------------------------
 
     /// Every account and CalDAV server that could sync tasks.
-    pub async fn sources(&self) -> Result<Vec<TaskSource>> {
-        let lists = self.store.lists().await?;
+    pub async fn sources(&self, user: UserId) -> Result<Vec<TaskSource>> {
+        let lists = self.store(user).lists().await?;
         let summary = |account: Option<i64>, caldav: Option<i64>| {
             let mine: Vec<&TaskList> = lists
                 .iter()
@@ -308,12 +324,12 @@ impl Tasks {
             (mine.len() as i64, mine.iter().find_map(|l| l.error.clone()))
         };
         let mut out = Vec::new();
-        for account in self.db.accounts().await? {
+        for account in self.db.accounts(user).await? {
             let Some(provider) = Provider::parse(&account.auth) else { continue };
             let key = format!("account:{}", account.id);
             let (count, error) = summary(Some(account.id), None);
             out.push(TaskSource {
-                enabled: self.store.sync_enabled(&key).await?,
+                enabled: self.store(user).sync_enabled(&key).await?,
                 key,
                 kind: provider.as_str().to_owned(),
                 name: account.name,
@@ -322,11 +338,11 @@ impl Tasks {
                 error,
             });
         }
-        for server in self.db.agenda().caldav_accounts().await? {
+        for server in self.db.agenda(user).caldav_accounts().await? {
             let key = format!("caldav:{}", server.id);
             let (count, error) = summary(None, Some(server.id));
             out.push(TaskSource {
-                enabled: self.store.sync_enabled(&key).await?,
+                enabled: self.store(user).sync_enabled(&key).await?,
                 key,
                 kind: "caldav".into(),
                 name: server.name,
@@ -339,29 +355,29 @@ impl Tasks {
     }
 
     /// Turns task sync on or off for one account or server, and syncs.
-    pub async fn set_sync(&self, key: &str, enabled: bool) -> Result<Vec<TaskSource>> {
-        if !self.sources().await?.iter().any(|s| s.key == key) {
+    pub async fn set_sync(&self, user: UserId, key: &str, enabled: bool) -> Result<Vec<TaskSource>> {
+        if !self.sources(user).await?.iter().any(|s| s.key == key) {
             return Err(Error::NotFound(format!("task source {key}")));
         }
-        self.store.set_sync_enabled(key, enabled).await?;
+        self.store(user).set_sync_enabled(key, enabled).await?;
         self.sync_all().await?;
-        self.sources().await
+        self.sources(user).await
     }
 
     // ---- Writing ---------------------------------------------------------------------------
 
     /// A new task (in the default list when `input.list` is `None`).
-    pub async fn create(&self, input: &TaskInput) -> Result<Task> {
+    pub async fn create(&self, user: UserId, input: &TaskInput) -> Result<Task> {
         validate(input)?;
         let list = match input.list {
             Some(id) => id,
-            None => self.store.default_list().await?,
+            None => self.store(user).default_list().await?,
         };
-        let row = self.store.list_row(list).await?;
+        let row = self.store(user).list_row(list).await?;
         if row.list.read_only {
             return Err(Error::Config(format!("“{}” is read-only.", row.list.name)));
         }
-        let source = self.source(&row.list).await?;
+        let source = self.source(user, &row.list).await?;
         let now = now();
         let mut remote = match &source {
             Source::Local => local_task(&format!("local-{}", crate::agenda::random_id()), input, now),
@@ -370,16 +386,16 @@ impl Tasks {
             Source::CalDav(login) => caldav::create(login, &row.remote_id, input, now).await?,
         };
         keep_what_we_know(&mut remote, input);
-        let task = self.store.save_task(list, &remote, input.links.as_ref(), source.keeps()).await?;
-        self.announce();
+        let task = self.store(user).save_task(list, &remote, input.links.as_ref(), source.keeps()).await?;
+        self.announce(user);
         Ok(task)
     }
 
     /// Changes a task. Moving it to another list creates it there (with its
     /// links) and deletes the original.
-    pub async fn update(&self, id: i64, input: &TaskInput) -> Result<Task> {
+    pub async fn update(&self, user: UserId, id: i64, input: &TaskInput) -> Result<Task> {
         validate(input)?;
-        let current = self.store.task_row(id).await?;
+        let current = self.store(user).task_row(id).await?;
         if current.task.read_only {
             return Err(Error::Config("This task is in a read-only list.".into()));
         }
@@ -387,12 +403,12 @@ impl Tasks {
             && list != current.task.list
         {
             let links = input.links.clone().unwrap_or_else(|| current.task.links.clone());
-            let moved = self.create(&TaskInput { links: Some(links), ..input.clone() }).await?;
-            self.delete(id).await?;
+            let moved = self.create(user, &TaskInput { links: Some(links), ..input.clone() }).await?;
+            self.delete(user, id).await?;
             return Ok(moved);
         }
-        let row = self.store.list_row(current.task.list).await?;
-        let source = self.source(&row.list).await?;
+        let row = self.store(user).list_row(current.task.list).await?;
+        let source = self.source(user, &row.list).await?;
         let now = now();
         // Done stays done at the time it was done.
         let input = &TaskInput { list: Some(current.task.list), ..input.clone() };
@@ -419,15 +435,17 @@ impl Tasks {
             }
         };
         keep_what_we_know(&mut remote, input);
-        let task = self.store.save_task(row.list.id, &remote, input.links.as_ref(), source.keeps()).await?;
-        self.announce();
+        let task =
+            self.store(user).save_task(row.list.id, &remote, input.links.as_ref(), source.keeps()).await?;
+        self.announce(user);
         Ok(task)
     }
 
     /// Ticks a task (or unticks it).
-    pub async fn set_done(&self, id: i64, done: bool) -> Result<Task> {
-        let task = self.store.task(id).await?;
+    pub async fn set_done(&self, user: UserId, id: i64, done: bool) -> Result<Task> {
+        let task = self.store(user).task(id).await?;
         self.update(
+            user,
             id,
             &TaskInput {
                 list: Some(task.list),
@@ -443,13 +461,13 @@ impl Tasks {
         .await
     }
 
-    pub async fn delete(&self, id: i64) -> Result<()> {
-        let current = self.store.task_row(id).await?;
+    pub async fn delete(&self, user: UserId, id: i64) -> Result<()> {
+        let current = self.store(user).task_row(id).await?;
         if current.task.read_only {
             return Err(Error::Config("This task is in a read-only list.".into()));
         }
-        let row = self.store.list_row(current.task.list).await?;
-        match self.source(&row.list).await? {
+        let row = self.store(user).list_row(current.task.list).await?;
+        match self.source(user, &row.list).await? {
             Source::Local => {}
             Source::Microsoft(token) => todo::delete(&token, &row.remote_id, &current.remote_id).await?,
             Source::Google(token) => gtasks::delete(&token, &row.remote_id, &current.remote_id).await?,
@@ -459,30 +477,45 @@ impl Tasks {
                 }
             }
         }
-        self.store.delete_task(id).await?;
-        self.announce();
+        self.store(user).delete_task(id).await?;
+        self.announce(user);
         Ok(())
     }
 
     /// Quick add: reads `text` ("Call Thomas fri 10:00 #work") and creates
     /// the task, with links when given (made from an email).
-    pub async fn quick_add(&self, text: &str, js_offset: i32, links: Option<Links>) -> Result<Task> {
-        let parsed = self.parse(text, js_offset).await?;
-        self.create(&TaskInput {
-            list: parsed.list,
-            title: parsed.title,
-            due: parsed.due,
-            due_at: parsed.due_at,
-            links,
-            ..TaskInput::default()
-        })
+    pub async fn quick_add(
+        &self,
+        user: UserId,
+        text: &str,
+        js_offset: i32,
+        links: Option<Links>,
+    ) -> Result<Task> {
+        let parsed = self.parse(user, text, js_offset).await?;
+        self.create(
+            user,
+            &TaskInput {
+                list: parsed.list,
+                title: parsed.title,
+                due: parsed.due,
+                due_at: parsed.due_at,
+                links,
+                ..TaskInput::default()
+            },
+        )
         .await
     }
 
     /// What quick add would make of `text` (the preview while typing).
-    pub async fn parse(&self, text: &str, js_offset: i32) -> Result<parse::Parsed> {
-        let lists: Vec<(i64, String)> =
-            self.store.lists().await?.into_iter().filter(|l| !l.read_only).map(|l| (l.id, l.name)).collect();
+    pub async fn parse(&self, user: UserId, text: &str, js_offset: i32) -> Result<parse::Parsed> {
+        let lists: Vec<(i64, String)> = self
+            .store(user)
+            .lists()
+            .await?
+            .into_iter()
+            .filter(|l| !l.read_only)
+            .map(|l| (l.id, l.name))
+            .collect();
         Ok(parse::parse(text, now(), js_offset, &lists))
     }
 }
@@ -538,44 +571,50 @@ mod tests {
         };
         let due = 20_000 * DAY;
         let task = tasks
-            .create(&TaskInput {
-                title: " Confirm the quote ".into(),
-                due: Some(due),
-                due_at: Some(due + 17 * 3600),
-                remind_at: Some(due + 16 * 3600),
-                links: Some(links.clone()),
-                ..Default::default()
-            })
+            .create(
+                UserId::ADMIN,
+                &TaskInput {
+                    title: " Confirm the quote ".into(),
+                    due: Some(due),
+                    due_at: Some(due + 17 * 3600),
+                    remind_at: Some(due + 16 * 3600),
+                    links: Some(links.clone()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         assert_eq!(task.title, "Confirm the quote");
         assert_eq!(task.links, links);
 
         // Ticked, then the reminder doesn't ring.
-        let done = tasks.set_done(task.id, true).await.unwrap();
+        let done = tasks.set_done(UserId::ADMIN, task.id, true).await.unwrap();
         assert!(done.done_at.is_some());
         assert_eq!(done.links, links, "ticking keeps the links");
-        assert!(tasks.store().due_reminders(due + 16 * 3600).await.unwrap().is_empty());
-        let open = tasks.set_done(task.id, false).await.unwrap();
+        assert!(
+            super::super::store::due_reminders(&tasks.db.pool(), due + 16 * 3600).await.unwrap().is_empty()
+        );
+        let open = tasks.set_done(UserId::ADMIN, task.id, false).await.unwrap();
         assert_eq!(open.done_at, None);
 
         // Moved to another Havre list: links follow.
-        let home = tasks.store().create_local_list("Home").await.unwrap();
+        let home = tasks.store(UserId::ADMIN).create_local_list("Home").await.unwrap();
         let moved = tasks
             .update(
+                UserId::ADMIN,
                 task.id,
                 &TaskInput { list: Some(home.id), title: "Confirm".into(), ..Default::default() },
             )
             .await
             .unwrap();
         assert_eq!((moved.list, moved.links.clone()), (home.id, links));
-        assert!(tasks.store().task(task.id).await.is_err());
+        assert!(tasks.store(UserId::ADMIN).task(task.id).await.is_err());
 
         // Found by its email.
         let q = TaskQuery { message_id: Some("q4@renard".into()), ..Default::default() };
-        assert_eq!(tasks.store().tasks(&q).await.unwrap().len(), 1);
-        tasks.delete(moved.id).await.unwrap();
-        assert!(tasks.store().tasks(&TaskQuery::default()).await.unwrap().is_empty());
+        assert_eq!(tasks.store(UserId::ADMIN).tasks(&q).await.unwrap().len(), 1);
+        tasks.delete(UserId::ADMIN, moved.id).await.unwrap();
+        assert!(tasks.store(UserId::ADMIN).tasks(&TaskQuery::default()).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -584,7 +623,10 @@ mod tests {
         let mut events = tasks.events.subscribe();
         let at = now() - 60;
         let task = tasks
-            .create(&TaskInput { title: "Call".into(), remind_at: Some(at), ..Default::default() })
+            .create(
+                UserId::ADMIN,
+                &TaskInput { title: "Call".into(), remind_at: Some(at), ..Default::default() },
+            )
             .await
             .unwrap();
         // Skip the "tasks changed" announcement of the create.
@@ -603,8 +645,8 @@ mod tests {
     #[tokio::test]
     async fn quick_add_picks_the_list() {
         let (tasks, _) = tasks().await;
-        let home = tasks.store().create_local_list("Home").await.unwrap();
-        let task = tasks.quick_add("Boiler service #home tomorrow", -120, None).await.unwrap();
+        let home = tasks.store(UserId::ADMIN).create_local_list("Home").await.unwrap();
+        let task = tasks.quick_add(UserId::ADMIN, "Boiler service #home tomorrow", -120, None).await.unwrap();
         assert_eq!((task.title.as_str(), task.list), ("Boiler service", home.id));
         assert!(task.due.is_some());
     }

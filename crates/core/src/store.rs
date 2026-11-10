@@ -19,6 +19,7 @@ use sqlx::{
 };
 use unicode_normalization::UnicodeNormalization;
 
+use crate::users::UserId;
 use crate::{
     Error, Result,
     compose::{Security, SmtpConfig, smtp_defaults},
@@ -33,6 +34,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Account {
     pub id: i64,
+    /// Whose account it is (never sent to the browser).
+    #[serde(skip)]
+    pub user: Option<UserId>,
     pub name: String,
     pub email: String,
     /// One of the palette names: work, personal, lyon, hol.
@@ -227,8 +231,8 @@ impl Database {
     /// People matching `query` (mail senders and meeting guests), the
     /// ones you deal with most first: the suggestions when typing a
     /// recipient or a guest.
-    pub async fn contacts(&self, query: &str, limit: u32) -> Result<Vec<Contact>> {
-        let people = self.people().search(query, limit).await?;
+    pub async fn contacts(&self, user: UserId, query: &str, limit: u32) -> Result<Vec<Contact>> {
+        let people = self.people(user).search(query, limit).await?;
         Ok(people
             .into_iter()
             // Someone without an address (`~42`) can't be written to or invited.
@@ -237,24 +241,29 @@ impl Database {
             .collect())
     }
 
-    /// Tasks: lists, to-dos and their links.
-    pub fn tasks(&self) -> crate::tasks::TaskStore {
-        crate::tasks::TaskStore::new(self.pool.clone())
+    /// `user`'s tasks: lists, to-dos and their links.
+    pub fn tasks(&self, user: UserId) -> crate::tasks::TaskStore {
+        crate::tasks::TaskStore::new(self.pool.clone(), user)
     }
 
-    /// Files: the attachments of your mail, listed (the Files app).
-    pub fn files(&self) -> crate::files::FileStore {
-        crate::files::FileStore::new(self.pool.clone())
+    /// Files: the attachments of `user`'s mail, listed (the Files app).
+    pub fn files(&self, user: UserId) -> crate::files::FileStore {
+        crate::files::FileStore::new(self.pool.clone(), user)
     }
 
-    /// Notes (Havre's own: nothing to sync).
-    pub fn notes(&self) -> crate::notes::NoteStore {
-        crate::notes::NoteStore::new(self.pool.clone())
+    /// `user`'s notes (Havre's own: nothing to sync).
+    pub fn notes(&self, user: UserId) -> crate::notes::NoteStore {
+        crate::notes::NoteStore::new(self.pool.clone(), user)
     }
 
-    /// Calendars and events.
-    pub fn agenda(&self) -> crate::agenda::AgendaStore {
-        crate::agenda::AgendaStore::new(self.pool.clone(), self.secrets.clone())
+    /// Who uses this Havre.
+    pub fn users(&self) -> crate::users::Users {
+        crate::users::Users::new(self.pool.clone())
+    }
+
+    /// One user's calendars and events.
+    pub fn agenda(&self, user: UserId) -> crate::agenda::AgendaStore {
+        crate::agenda::AgendaStore::new(self.pool.clone(), self.secrets.clone(), user)
     }
 
     /// The database's size on disk, in bytes.
@@ -266,13 +275,20 @@ impl Database {
 
     /// Every account's inbox together, newest first ("All inboxes").
     /// `offset` pages through it; `search` keeps sender/subject matches.
-    pub async fn all_inboxes(&self, limit: u32, offset: u32, search: Option<&str>) -> Result<MessagePage> {
-        self.across(View::Inboxes, limit, offset, search).await
+    pub async fn all_inboxes(
+        &self,
+        user: UserId,
+        limit: u32,
+        offset: u32,
+        search: Option<&str>,
+    ) -> Result<MessagePage> {
+        self.across(user, View::Inboxes, limit, offset, search).await
     }
 
-    /// A list across every account: all inboxes, starred, a label, snoozed.
+    /// A list across every account of `user`: all inboxes, starred, a label, snoozed.
     pub async fn across(
         &self,
+        user: UserId,
         view: View,
         limit: u32,
         offset: u32,
@@ -283,8 +299,9 @@ impl Database {
             "SELECT {SUMMARY_COLUMNS}, m.account_id, m.folder FROM messages m \
              JOIN folders f ON f.account_id = m.account_id AND f.path = m.folder \
              LEFT JOIN snoozes s ON s.account_id = m.account_id AND s.folder = m.folder AND s.uid = m.uid \
-             WHERE "
+             WHERE m.account_id IN (SELECT id FROM accounts WHERE user_id = "
         ));
+        sql.push_bind(user.0).push(") AND ");
         // What's away (snoozed) shows only in Snoozed; trash and spam only where they are.
         match view {
             View::Inboxes => {
@@ -330,21 +347,23 @@ impl Database {
 
     /// Unread messages in every account's inbox, newest first, and how
     /// many there are in all (for the Today page).
-    pub async fn unread_inbox(&self, limit: u32) -> Result<UnreadInbox> {
+    pub async fn unread_inbox(&self, user: UserId, limit: u32) -> Result<UnreadInbox> {
         let total: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM messages m JOIN folders f ON f.account_id = m.account_id AND f.path = m.folder
-             WHERE f.role = 'inbox' AND m.unread = 1 AND NOT EXISTS (SELECT 1 FROM snoozes s
+             WHERE m.account_id IN (SELECT id FROM accounts WHERE user_id = ?) AND f.role = 'inbox' AND m.unread = 1 AND NOT EXISTS (SELECT 1 FROM snoozes s
                  WHERE s.account_id = m.account_id AND s.folder = m.folder AND s.uid = m.uid AND s.back = 0)",
         )
+        .bind(user.0)
         .fetch_one(&self.pool)
         .await?;
         let rows = sqlx::query(
             "SELECT m.account_id, m.folder, m.uid, m.subject, m.from_name, m.from_address, m.date
              FROM messages m JOIN folders f ON f.account_id = m.account_id AND f.path = m.folder
-             WHERE f.role = 'inbox' AND m.unread = 1 AND NOT EXISTS (SELECT 1 FROM snoozes s
+             WHERE m.account_id IN (SELECT id FROM accounts WHERE user_id = ?) AND f.role = 'inbox' AND m.unread = 1 AND NOT EXISTS (SELECT 1 FROM snoozes s
                  WHERE s.account_id = m.account_id AND s.folder = m.folder AND s.uid = m.uid AND s.back = 0)
              ORDER BY datetime(m.date) DESC LIMIT ?",
         )
+        .bind(user.0)
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -370,7 +389,12 @@ impl Database {
 
     /// Messages whose sender or subject contains any of the words, in all
     /// accounts and folders, newest first (the palette, the assistant).
-    pub async fn search_all(&self, query: &str, limit: i64) -> Result<Vec<crate::ai::index::Hit>> {
+    pub async fn search_all(
+        &self,
+        user: UserId,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<crate::ai::index::Hit>> {
         let words: Vec<String> = normalize(&[Some(query)])
             .split_whitespace()
             .filter(|w| w.chars().count() > 1)
@@ -380,8 +404,10 @@ impl Database {
             return Ok(Vec::new());
         }
         let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT account_id, folder, uid, subject, from_name, from_address, date FROM messages WHERE ",
+            "SELECT account_id, folder, uid, subject, from_name, from_address, date FROM messages \
+             WHERE account_id IN (SELECT id FROM accounts WHERE user_id = ",
         );
+        sql.push_bind(user.0).push(") AND ");
         // Every word when possible: count matching words, best first.
         sql.push("(");
         for (i, w) in words.iter().enumerate() {
@@ -419,35 +445,39 @@ impl Database {
             .collect())
     }
 
-    /// Everyone you write to or meet (built from mail and events).
-    pub fn people(&self) -> crate::people::People {
-        crate::people::People::new(self.pool.clone(), self.agenda())
+    /// One user's people (from their mail, calendars and contacts).
+    pub fn people(&self, user: UserId) -> crate::people::People {
+        crate::people::People::new(self.pool.clone(), self.agenda(user))
     }
 
-    /// Which apps are in the dock, in which order.
-    pub fn apps(&self) -> crate::apps::AppSettings {
-        crate::apps::AppSettings::new(self.pool.clone())
+    /// Which apps are in `user`'s dock, in which order.
+    pub fn apps(&self, user: UserId) -> crate::apps::AppSettings {
+        crate::apps::AppSettings::new(self.pool.clone(), user)
     }
 
     // ---- Labels ---------------------------------------------------------------
 
     /// Every label, in order, with how many messages carry it.
-    pub async fn labels(&self) -> Result<Vec<Label>> {
+    pub async fn labels(&self, user: UserId) -> Result<Vec<Label>> {
         Ok(sqlx::query_as::<_, Label>(
             "SELECT l.id, l.name, l.color, l.position,
                     (SELECT COUNT(*) FROM message_labels ml WHERE ml.label_id = l.id) AS count
-             FROM labels l ORDER BY l.position, l.name COLLATE NOCASE",
+             FROM labels l WHERE l.user_id = ? ORDER BY l.position, l.name COLLATE NOCASE",
         )
+        .bind(user.0)
         .fetch_all(&self.pool)
         .await?)
     }
 
-    pub async fn create_label(&self, name: &str, color: &str) -> Result<Label> {
+    pub async fn create_label(&self, user: UserId, name: &str, color: &str) -> Result<Label> {
         let name = label_name(name)?;
-        let position: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(position), 0) + 1 FROM labels")
-            .fetch_one(&self.pool)
-            .await?;
-        let id = sqlx::query("INSERT INTO labels (name, color, position) VALUES (?, ?, ?)")
+        let position: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(position), 0) + 1 FROM labels WHERE user_id = ?")
+                .bind(user.0)
+                .fetch_one(&self.pool)
+                .await?;
+        let id = sqlx::query("INSERT INTO labels (user_id, name, color, position) VALUES (?, ?, ?, ?)")
+            .bind(user.0)
             .bind(&name)
             .bind(label_color(color))
             .bind(position)
@@ -460,10 +490,18 @@ impl Database {
                 e => e.into(),
             })?
             .last_insert_rowid();
-        self.label(id).await
+        self.label(user, id).await
     }
 
-    pub async fn update_label(&self, id: i64, name: Option<&str>, color: Option<&str>) -> Result<Label> {
+    pub async fn update_label(
+        &self,
+        user: UserId,
+        id: i64,
+        name: Option<&str>,
+        color: Option<&str>,
+    ) -> Result<Label> {
+        // Another user's label is "not found", before anything changes.
+        self.label(user, id).await?;
         if let Some(name) = name {
             let name = label_name(name)?;
             sqlx::query("UPDATE labels SET name = ? WHERE id = ?")
@@ -485,17 +523,23 @@ impl Database {
                 .execute(&self.pool)
                 .await?;
         }
-        self.label(id).await
+        self.label(user, id).await
     }
 
     /// Deletes a label (the messages stay, without it).
-    pub async fn delete_label(&self, id: i64) -> Result<()> {
-        sqlx::query("DELETE FROM labels WHERE id = ?").bind(id).execute(&self.pool).await?;
+    pub async fn delete_label(&self, user: UserId, id: i64) -> Result<()> {
+        self.label(user, id).await?;
+        sqlx::query("DELETE FROM labels WHERE id = ? AND user_id = ?")
+            .bind(id)
+            .bind(user.0)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
-    async fn label(&self, id: i64) -> Result<Label> {
-        self.labels()
+    /// One of `user`'s labels.
+    pub async fn label(&self, user: UserId, id: i64) -> Result<Label> {
+        self.labels(user)
             .await?
             .into_iter()
             .find(|l| l.id == id)
@@ -515,13 +559,18 @@ impl Database {
     }
 
     /// How many messages are snoozed, starred (for the sidebar).
-    pub async fn organize_counts(&self) -> Result<OrganizeCounts> {
-        let snoozed: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM snoozes WHERE back = 0").fetch_one(&self.pool).await?;
+    pub async fn organize_counts(&self, user: UserId) -> Result<OrganizeCounts> {
+        let snoozed: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM snoozes WHERE back = 0 AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
+        )
+        .bind(user.0)
+        .fetch_one(&self.pool)
+        .await?;
         let starred: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM messages m JOIN folders f ON f.account_id = m.account_id AND f.path = m.folder
-             WHERE m.flagged = 1 AND f.role NOT IN ('trash', 'junk')",
+             WHERE m.account_id IN (SELECT id FROM accounts WHERE user_id = ?) AND m.flagged = 1 AND f.role NOT IN ('trash', 'junk')",
         )
+        .bind(user.0)
         .fetch_one(&self.pool)
         .await?;
         Ok(OrganizeCounts { snoozed, starred })
@@ -536,18 +585,40 @@ impl Database {
     }
 
     /// Messages being written.
-    pub fn drafts(&self) -> crate::compose::Drafts {
-        crate::compose::Drafts::new(self.pool.clone())
+    pub fn drafts(&self, user: UserId) -> crate::compose::Drafts {
+        crate::compose::Drafts::new(self.pool.clone(), user)
     }
 
-    /// The local mailbox copy of one account.
-    pub fn store(&self, account_id: i64) -> Store {
+    /// The local mailbox copy of one account, whoever's it is: for the sync
+    /// engine and background work. `pub(crate)`: the server must use
+    /// [`Database::mailbox`], which checks the account is the user's.
+    pub(crate) fn store(&self, account_id: i64) -> Store {
         Store { pool: self.pool.clone(), account: account_id, cache_limit: self.cache_limit }
+    }
+
+    /// The local mailbox copy of one of `user`'s accounts ("not found" for
+    /// anyone else's).
+    pub async fn mailbox(&self, user: UserId, account_id: i64) -> Result<Store> {
+        self.users().owns_account(user, account_id).await?;
+        Ok(self.store(account_id))
     }
 
     // ---- Accounts -----------------------------------------------------------
 
-    pub async fn accounts(&self) -> Result<Vec<Account>> {
+    /// `user`'s mail accounts.
+    pub async fn accounts(&self, user: UserId) -> Result<Vec<Account>> {
+        let rows = sqlx::query(sql!(
+            "SELECT {ACCOUNT_COLUMNS} FROM accounts WHERE user_id = ? ORDER BY position, id"
+        ))
+        .bind(user.0)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(|r| self.account_from_row(r)).collect())
+    }
+
+    /// Every user's mail accounts: for background work only (sync, backups),
+    /// which then acts for each account's user.
+    pub async fn all_accounts(&self) -> Result<Vec<Account>> {
         let rows = sqlx::query(sql!("SELECT {ACCOUNT_COLUMNS} FROM accounts ORDER BY position, id"))
             .fetch_all(&self.pool)
             .await?;
@@ -577,6 +648,7 @@ impl Database {
         let can_tasks = app.is_some_and(|app| app.can_tasks(scope));
         let can_contacts = app.is_some_and(|app| app.can_contacts(scope));
         Account {
+            user: r.get::<Option<i64>, _>("user_id").map(UserId),
             id: r.get("id"),
             name: r.get("name"),
             email: r.get("email"),
@@ -631,13 +703,14 @@ impl Database {
         })
     }
 
-    pub async fn insert_account(&self, new: &NewAccount) -> Result<Account> {
+    pub async fn insert_account(&self, owner: UserId, new: &NewAccount) -> Result<Account> {
         let user = if new.imap_user.trim().is_empty() { new.email.trim() } else { new.imap_user.trim() };
         let password = self.secrets.encrypt(&new.password)?;
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO accounts (name, email, color, imap_host, imap_port, imap_user, imap_password,
-                                   smtp_host, smtp_port, smtp_security, sender_name, position, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM accounts), ?)
+                                   smtp_host, smtp_port, smtp_security, sender_name, position, created_at, user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                     (SELECT COALESCE(MAX(position), 0) + 1 FROM accounts WHERE user_id = ?12), ?, ?12)
              RETURNING id",
         )
         .bind(new.name.trim())
@@ -651,6 +724,7 @@ impl Database {
         .bind(new.smtp_port.map(i64::from))
         .bind(clean_security(&new.smtp_security)?)
         .bind(new.sender_name.trim())
+        .bind(owner.0)
         .bind(now())
         .fetch_one(&self.pool)
         .await?;
@@ -766,6 +840,7 @@ impl Database {
     /// encrypted refresh token instead.
     pub async fn insert_oauth_account(
         &self,
+        owner: UserId,
         new: &NewAccount,
         provider: Provider,
         refresh: &str,
@@ -773,8 +848,9 @@ impl Database {
     ) -> Result<Account> {
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO accounts (name, email, color, imap_host, imap_port, imap_user, imap_password,
-                                   auth, oauth_refresh, oauth_scope, sender_name, position, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM accounts), ?)
+                                   auth, oauth_refresh, oauth_scope, sender_name, position, created_at, user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                     (SELECT COALESCE(MAX(position), 0) + 1 FROM accounts WHERE user_id = ?12), ?, ?12)
              RETURNING id",
         )
         .bind(new.name.trim())
@@ -788,6 +864,7 @@ impl Database {
         .bind(self.secrets.encrypt(refresh)?)
         .bind(scope)
         .bind(new.sender_name.trim())
+        .bind(owner.0)
         .bind(now())
         .fetch_one(&self.pool)
         .await?;
@@ -835,7 +912,7 @@ impl Database {
 }
 
 /// The columns `account_from_row` reads.
-const ACCOUNT_COLUMNS: &str = "id, name, email, color, imap_host, imap_port, imap_user, auth, \
+const ACCOUNT_COLUMNS: &str = "id, user_id, name, email, color, imap_host, imap_port, imap_user, auth, \
                                smtp_host, smtp_port, smtp_security, oauth_scope, sender_name, signature, \
                                signature_html, signature_in_replies";
 
@@ -1353,6 +1430,18 @@ impl Store {
     /// Adds (`on`) or removes a label on messages. Messages without a
     /// `Message-ID` can't carry one: they are counted in the error.
     pub async fn set_label(&self, folder: &str, uids: &[u32], label: i64, on: bool) -> Result<()> {
+        // A label of this account's owner only: another user's is "not found".
+        let theirs: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM labels l JOIN accounts a ON a.user_id = l.user_id
+                            WHERE l.id = ? AND a.id = ?)",
+        )
+        .bind(label)
+        .bind(self.account)
+        .fetch_one(&self.pool)
+        .await?;
+        if !theirs {
+            return Err(Error::NotFound(format!("label {label}")));
+        }
         let ids = self.message_ids(folder, uids).await?;
         if ids.is_empty() {
             return Err(Error::Config(
@@ -1479,9 +1568,13 @@ impl Store {
     /// dock, else how many of the newest emails per folder (`i64::MAX`: all).
     pub(crate) async fn files_depth(&self) -> Result<Option<i64>> {
         let row: Option<i64> = sqlx::query_scalar(
-            "SELECT s.depth FROM files_settings s
-             WHERE s.id = 1 AND EXISTS (SELECT 1 FROM app_settings WHERE id = 'files' AND enabled = 1)",
+            // The account's owner: their Files app, their setting (2000 when never set).
+            "SELECT COALESCE((SELECT depth FROM files_settings s WHERE s.user_id = a.user_id), 2000)
+             FROM accounts a
+             WHERE a.id = ? AND EXISTS (SELECT 1 FROM user_apps u WHERE u.user_id = a.user_id
+                                          AND u.id = 'files' AND u.enabled = 1)",
         )
+        .bind(self.account)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(|depth| if depth == 0 { i64::MAX } else { depth }))
@@ -1746,6 +1839,7 @@ fn role_from_str(s: &str) -> FolderRole {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::users::UserId;
 
     pub(crate) fn folder(path: &str, role: FolderRole) -> Folder {
         Folder { path: path.into(), name: path.into(), depth: 0, role, declared_role: true }
@@ -1785,7 +1879,7 @@ pub(crate) mod tests {
 
     async fn store_with_inbox() -> Store {
         let db = Database::in_memory().await.unwrap();
-        let account = db.insert_account(&new_account("me@x.test")).await.unwrap();
+        let account = db.insert_account(UserId::ADMIN, &new_account("me@x.test")).await.unwrap();
         let store = db.store(account.id);
         store
             .replace_folders(&[folder("INBOX", FolderRole::Inbox), folder("Trash", FolderRole::Trash)])
@@ -1797,7 +1891,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn accounts_keep_passwords_encrypted() {
         let db = Database::in_memory().await.unwrap();
-        let account = db.insert_account(&new_account("me@x.test")).await.unwrap();
+        let account = db.insert_account(UserId::ADMIN, &new_account("me@x.test")).await.unwrap();
         assert_eq!(account.imap_user, "me@x.test", "user defaults to the email");
 
         let raw: Vec<u8> =
@@ -1819,8 +1913,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn accounts_are_isolated_and_deleted_with_their_cache() {
         let db = Database::in_memory().await.unwrap();
-        let a = db.insert_account(&new_account("a@x.test")).await.unwrap();
-        let b = db.insert_account(&new_account("b@x.test")).await.unwrap();
+        let a = db.insert_account(UserId::ADMIN, &new_account("a@x.test")).await.unwrap();
+        let b = db.insert_account(UserId::ADMIN, &new_account("b@x.test")).await.unwrap();
         for id in [a.id, b.id] {
             db.store(id).replace_folders(&[folder("INBOX", FolderRole::Inbox)]).await.unwrap();
         }
@@ -1834,7 +1928,7 @@ pub(crate) mod tests {
         let left: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM messages").fetch_one(&db.pool).await.unwrap();
         assert_eq!(left, 0);
-        assert_eq!(db.accounts().await.unwrap().len(), 1);
+        assert_eq!(db.accounts(UserId::ADMIN).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1888,9 +1982,12 @@ pub(crate) mod tests {
         let store = store_with_inbox().await;
         let db = Database { pool: store.pool.clone(), ..Database::in_memory().await.unwrap() };
         store.upsert_messages("INBOX", &[with_id(msg(1, "a", "quote", false), "<q1@x.test>")]).await.unwrap();
-        let clients = db.create_label(" Clients ", "work").await.unwrap();
+        let clients = db.create_label(UserId::ADMIN, " Clients ", "work").await.unwrap();
         assert_eq!(clients.name, "Clients");
-        assert!(db.create_label("clients", "").await.is_err(), "names are unique, ignoring case");
+        assert!(
+            db.create_label(UserId::ADMIN, "clients", "").await.is_err(),
+            "names are unique, ignoring case"
+        );
 
         store.set_label("INBOX", &[1], clients.id, true).await.unwrap();
         let page = store.page("INBOX", &ListQuery { limit: 10, ..Default::default() }).await.unwrap();
@@ -1899,15 +1996,15 @@ pub(crate) mod tests {
         // Moved to Trash and back (a new UID): still labelled.
         store.remove_messages("INBOX", &[1]).await.unwrap();
         store.upsert_messages("INBOX", &[with_id(msg(7, "a", "quote", false), "q1@x.test")]).await.unwrap();
-        let view = db.across(View::Label(clients.id), 10, 0, None).await.unwrap();
+        let view = db.across(UserId::ADMIN, View::Label(clients.id), 10, 0, None).await.unwrap();
         assert_eq!(view.messages.iter().map(|m| m.uid).collect::<Vec<_>>(), [7]);
-        assert_eq!(db.labels().await.unwrap()[0].count, 1);
+        assert_eq!(db.labels(UserId::ADMIN).await.unwrap()[0].count, 1);
 
         // No Message-ID: can't be labelled.
         store.upsert_messages("INBOX", &[with_id(msg(8, "b", "x", false), "")]).await.unwrap();
         assert!(store.set_label("INBOX", &[8], clients.id, true).await.is_err());
 
-        db.delete_label(clients.id).await.unwrap();
+        db.delete_label(UserId::ADMIN, clients.id).await.unwrap();
         let page = store.page("INBOX", &ListQuery { limit: 10, ..Default::default() }).await.unwrap();
         assert!(page.messages.iter().all(|m| m.labels.is_empty()));
     }
@@ -1941,7 +2038,7 @@ pub(crate) mod tests {
         assert_eq!(inbox_unread(&store).await, before - 1, "a snoozed unread message isn't counted");
         let page = store.page("INBOX", &ListQuery { limit: 10, ..Default::default() }).await.unwrap();
         assert_eq!(page.messages.iter().map(|m| m.uid).collect::<Vec<_>>(), [2], "away from the inbox");
-        let snoozed = db.across(View::Snoozed, 10, 0, None).await.unwrap();
+        let snoozed = db.across(UserId::ADMIN, View::Snoozed, 10, 0, None).await.unwrap();
         assert_eq!(snoozed.messages[0].snoozed_until, Some(2_000_000_000));
         assert!(db.due_snoozes(1_999_999_999).await.unwrap().is_empty());
         assert_eq!(db.due_snoozes(2_000_000_000).await.unwrap(), [(store.account, "INBOX".to_owned(), 1)]);
@@ -1949,9 +2046,9 @@ pub(crate) mod tests {
         // Its time came (2033): back, and above the newer message.
         store.mark_back("INBOX", 1).await.unwrap();
         assert_eq!(inbox_unread(&store).await, before, "counted again once back");
-        let all = db.across(View::Inboxes, 10, 0, None).await.unwrap();
+        let all = db.across(UserId::ADMIN, View::Inboxes, 10, 0, None).await.unwrap();
         assert_eq!(all.messages.iter().map(|m| m.uid).collect::<Vec<_>>(), [1, 2]);
-        assert!(db.across(View::Snoozed, 10, 0, None).await.unwrap().messages.is_empty());
+        assert!(db.across(UserId::ADMIN, View::Snoozed, 10, 0, None).await.unwrap().messages.is_empty());
     }
 
     #[tokio::test]
@@ -1964,10 +2061,10 @@ pub(crate) mod tests {
         b.flagged = true;
         store.upsert_messages("INBOX", &[a]).await.unwrap();
         store.upsert_messages("Trash", &[b]).await.unwrap();
-        let starred = db.across(View::Starred, 10, 0, None).await.unwrap();
+        let starred = db.across(UserId::ADMIN, View::Starred, 10, 0, None).await.unwrap();
         assert_eq!(starred.messages.iter().map(|m| m.subject.as_str()).collect::<Vec<_>>(), ["keep"]);
         store.set_flagged("INBOX", &[1], false).await.unwrap();
-        assert_eq!(db.organize_counts().await.unwrap().starred, 0);
+        assert_eq!(db.organize_counts(UserId::ADMIN).await.unwrap().starred, 0);
     }
 
     #[tokio::test]

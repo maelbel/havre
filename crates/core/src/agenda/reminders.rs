@@ -55,13 +55,14 @@ impl AgendaStore {
         // 14 hours), the exact time in Rust.
         let rows = sqlx::query(
             "SELECT e.id FROM events e JOIN calendars c ON c.id = e.calendar_id
-             WHERE c.enabled = 1 AND e.reminder IS NOT NULL
+             WHERE c.user_id = ?2 AND c.enabled = 1 AND e.reminder IS NOT NULL
                AND e.start_ts - e.reminder * 60 - 86400 <= ?1 AND e.start_ts + 86400 >= ?1
                AND COALESCE(e.my_response, '') != 'declined'
                AND NOT EXISTS (SELECT 1 FROM event_reminders_rung r WHERE r.calendar_id = e.calendar_id
                                AND r.remote_id = e.remote_id AND r.start_ts = e.start_ts)",
         )
         .bind(now)
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         let mut due = Vec::new();

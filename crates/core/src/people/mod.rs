@@ -37,6 +37,7 @@ use sqlx::{Row, SqlitePool};
 use crate::{
     Result,
     agenda::{AgendaStore, Event},
+    users::UserId,
 };
 pub use contacts::{Details, Key, PersonUpdate, Phone};
 
@@ -303,7 +304,8 @@ struct Stats {
 }
 
 /// Per address: mail from them, mail you sent them, meetings, and when.
-/// Your own addresses (your accounts) are left out.
+/// Your own addresses (your accounts) are left out. `?2`: the user, whose
+/// accounts, messages and calendars are the only ones read.
 ///
 /// - `json_each` turns a JSON list (a message's recipients, an event's
 ///   guests) into rows, so SQLite can count them like a normal table.
@@ -311,22 +313,24 @@ struct Stats {
 /// - Each kind of sighting fills its own columns; `MAX`/`MIN` per address
 ///   then give the latest (or next) one.
 const STATS: &str = "
-    WITH me AS (SELECT lower(email) AS email FROM accounts),
+    WITH me AS (SELECT lower(email) AS email FROM accounts WHERE user_id = ?2),
     seen AS (
         SELECT lower(m.from_address) AS email, m.from_name AS name, 1 AS got, 0 AS sent, 0 AS met,
                unixepoch(m.date) AS got_at,
                CASE WHEN f.role = 'inbox' THEN unixepoch(m.date) END AS inbox_at,
                NULL AS sent_at, NULL AS met_at, NULL AS next_at
         FROM messages m LEFT JOIN folders f ON f.account_id = m.account_id AND f.path = m.folder
-        WHERE m.from_address IS NOT NULL AND m.from_address <> ''
+        WHERE m.from_address IS NOT NULL AND m.from_address <> '' AND m.account_id IN (SELECT id FROM accounts WHERE user_id = ?2)
         UNION ALL
         SELECT lower(r.value), NULL, 0, 1, 0, NULL, NULL, unixepoch(m.date), NULL, NULL
         FROM messages m, json_each(m.recipients) r
         WHERE m.recipients IS NOT NULL AND lower(m.from_address) IN (SELECT email FROM me)
+          AND m.account_id IN (SELECT id FROM accounts WHERE user_id = ?2)
         UNION ALL
         SELECT lower(json_extract(a.value, '$.email')), json_extract(a.value, '$.name'), 0, 0, 1, NULL, NULL, NULL,
                CASE WHEN e.start_ts <= ?1 THEN e.start_ts END, CASE WHEN e.start_ts > ?1 THEN e.start_ts END
-        FROM events e, json_each(e.attendees) a
+        FROM events e JOIN calendars c ON c.id = e.calendar_id, json_each(e.attendees) a
+        WHERE c.user_id = ?2
     )
     SELECT email, COALESCE(MAX(NULLIF(name, '')), '') AS name, SUM(got) AS messages, SUM(sent) AS sent,
            SUM(met) AS meetings, MAX(got_at) AS last_from, MAX(inbox_at) AS last_inbox, MAX(sent_at) AS last_to,
@@ -363,22 +367,30 @@ fn company_of(p: &Person, names: &HashMap<String, String>) -> Option<String> {
     Some(org)
 }
 
-/// Reads people out of the database.
+/// Reads one user's people out of the database: from their mail, their
+/// calendars and their contacts. Made from that user's Agenda, so both
+/// belong to the same user.
 #[derive(Clone)]
 pub struct People {
     pool: SqlitePool,
     agenda: AgendaStore,
+    user: UserId,
 }
 
 impl People {
     pub fn new(pool: SqlitePool, agenda: AgendaStore) -> Self {
-        Self { pool, agenda }
+        let user = agenda.user();
+        Self { pool, agenda, user }
+    }
+
+    pub fn user(&self) -> UserId {
+        self.user
     }
 
     /// Everyone: one entry per contact (all its addresses together) or per
     /// address you never added details to.
     async fn everyone(&self, now: i64) -> Result<Vec<Entry>> {
-        let rows = sqlx::query(STATS).bind(now).fetch_all(&self.pool).await?;
+        let rows = sqlx::query(STATS).bind(now).bind(self.user.0).fetch_all(&self.pool).await?;
         let mut stats: HashMap<String, Stats> = rows
             .iter()
             .map(|r| {
@@ -599,6 +611,7 @@ impl People {
         let sql = format!(
             "SELECT account_id, folder, uid, subject, date, unread, from_name, from_address, preview, files
              FROM messages WHERE lower(from_address) IN ({marks})
+               AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)
              ORDER BY datetime(date) DESC LIMIT ?"
         );
         // `sql` is built from `?` marks only (see `sql!`).
@@ -606,7 +619,7 @@ impl People {
         for e in &emails {
             q = q.bind(e);
         }
-        let rows = q.bind(i64::from(limit)).fetch_all(&self.pool).await?;
+        let rows = q.bind(self.user.0).bind(i64::from(limit)).fetch_all(&self.pool).await?;
         let mut messages = Vec::new();
         let mut files = Vec::new();
         for r in &rows {
@@ -654,6 +667,7 @@ fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::users::UserId;
     use crate::{
         mail::{Folder, FolderRole, MessageSummary, Person as From},
         store::{Database, NewAccount},
@@ -665,19 +679,22 @@ mod tests {
     async fn mailbox() -> (Database, crate::store::Store) {
         let db = Database::in_memory().await.unwrap();
         let account = db
-            .insert_account(&NewAccount {
-                name: "Me".into(),
-                email: "me@example.org".into(),
-                imap_host: "mail.example.org".into(),
-                imap_port: 993,
-                imap_user: "me".into(),
-                color: "work".into(),
-                password: "x".into(),
-                sender_name: String::new(),
-                smtp_host: None,
-                smtp_port: None,
-                smtp_security: None,
-            })
+            .insert_account(
+                UserId::ADMIN,
+                &NewAccount {
+                    name: "Me".into(),
+                    email: "me@example.org".into(),
+                    imap_host: "mail.example.org".into(),
+                    imap_port: 993,
+                    imap_user: "me".into(),
+                    color: "work".into(),
+                    password: "x".into(),
+                    sender_name: String::new(),
+                    smtp_host: None,
+                    smtp_port: None,
+                    smtp_security: None,
+                },
+            )
             .await
             .unwrap();
         let store = db.store(account.id);
@@ -753,7 +770,7 @@ mod tests {
         meeting(&db, "carla@acme.fr", 5).await;
         meeting(&db, "anna@example.org", -20).await;
 
-        let people = db.people();
+        let people = db.people(UserId::ADMIN);
         // An `async` closure: it owns its `ListQuery` while the future runs.
         let list =
             async |sort, filter| people.list(&ListQuery { sort, filter, ..ListQuery::default() }).await;
@@ -827,7 +844,7 @@ mod tests {
             .await
             .unwrap();
         meeting(&db, "claire.dubois@gmail.com", 3).await;
-        let people = db.people();
+        let people = db.people(UserId::ADMIN);
 
         let set = |name: &str, company: &str| PersonUpdate {
             name: Some(name.into()),
@@ -916,7 +933,7 @@ mod tests {
             .await
             .unwrap();
         meeting(&db, "ines@x.fr", 3).await;
-        let people = db.people();
+        let people = db.people(UserId::ADMIN);
         let today = chrono::Utc::now().date_naive();
         let in_days = |d: i64| (today + chrono::Duration::days(d)).format("--%m-%d").to_string();
         let fav = |birthday: Option<String>| PersonUpdate {

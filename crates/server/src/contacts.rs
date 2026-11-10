@@ -14,8 +14,6 @@
 //! `{email}` is one of their addresses, or `~42` (their contact) for
 //! someone without one.
 
-use std::sync::Arc;
-
 use axum::{
     Json, Router,
     body::Body,
@@ -27,11 +25,12 @@ use axum::{
 use havre_core::people::{
     PersonDetail,
     books::ImportReport,
-    sync::{ContactSettings, ContactSync},
+    sync::{ContactSettings, UserContacts},
 };
+use havre_core::users::UserId;
 use serde::Deserialize;
 
-use crate::{AppState, api::ApiError};
+use crate::{AppState, api::ApiError, auth::CurrentUser};
 
 /// A `.vcf` with photos can be big: 20 MB.
 const MAX_IMPORT: usize = 20 * 1024 * 1024;
@@ -48,15 +47,20 @@ pub fn routes() -> Router<AppState> {
         .route("/people/{email}/photo", get(photo))
 }
 
-fn contacts(state: &AppState) -> Result<&Arc<ContactSync>, ApiError> {
-    state
+/// `user`'s contacts sync: their sources, books and people only.
+fn contacts(state: &AppState, user: UserId) -> Result<UserContacts<'_>, ApiError> {
+    let sync = state
         .contacts
         .as_ref()
-        .ok_or_else(|| ApiError::BadRequest("Contacts aren't available in demo mode.".into()))
+        .ok_or_else(|| ApiError::BadRequest("Contacts aren't available in demo mode.".into()))?;
+    Ok(sync.for_user(user))
 }
 
-async fn settings(State(state): State<AppState>) -> Result<Json<ContactSettings>, ApiError> {
-    Ok(Json(contacts(&state)?.settings().await?))
+async fn settings(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<ContactSettings>, ApiError> {
+    Ok(Json(contacts(&state, user)?.settings().await?))
 }
 
 #[derive(Deserialize)]
@@ -66,10 +70,11 @@ struct Enabled {
 
 async fn set_source(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(key): Path<String>,
     Json(body): Json<Enabled>,
 ) -> Result<Json<ContactSettings>, ApiError> {
-    Ok(Json(contacts(&state)?.set_source(&key, body.enabled).await?))
+    Ok(Json(contacts(&state, user)?.set_source(&key, body.enabled).await?))
 }
 
 #[derive(Deserialize)]
@@ -79,13 +84,17 @@ struct Default {
 
 async fn set_default(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(body): Json<Default>,
 ) -> Result<Json<ContactSettings>, ApiError> {
-    Ok(Json(contacts(&state)?.set_default_book(body.book).await?))
+    Ok(Json(contacts(&state, user)?.set_default_book(body.book).await?))
 }
 
-async fn sync_now(State(state): State<AppState>) -> Result<Json<ContactSettings>, ApiError> {
-    let sync = contacts(&state)?;
+async fn sync_now(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<ContactSettings>, ApiError> {
+    let sync = contacts(&state, user)?;
     sync.sync_now().await?;
     Ok(Json(sync.settings().await?))
 }
@@ -99,25 +108,30 @@ struct NewPerson {
 
 async fn create(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(body): Json<NewPerson>,
 ) -> Result<Json<PersonDetail>, ApiError> {
     let db = state.mail.manager()?.database();
-    let page = db.people().create(&body.name, body.email.as_deref()).await?;
+    let page = db.people(user).create(&body.name, body.email.as_deref()).await?;
     // Into your default address book, if you chose one.
     if let Some(contacts) = &state.contacts {
-        contacts.push_later(page.person.contact);
+        contacts.push_later(user, page.person.contact);
     }
     Ok(Json(page))
 }
 
-async fn import(State(state): State<AppState>, body: String) -> Result<Json<ImportReport>, ApiError> {
+async fn import(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    body: String,
+) -> Result<Json<ImportReport>, ApiError> {
     let db = state.mail.manager()?.database();
-    Ok(Json(db.people().import_vcf(&body).await?))
+    Ok(Json(db.people(user).import_vcf(&body).await?))
 }
 
-async fn export(State(state): State<AppState>) -> Result<Response, ApiError> {
+async fn export(State(state): State<AppState>, CurrentUser(user): CurrentUser) -> Result<Response, ApiError> {
     let db = state.mail.manager()?.database();
-    let text = db.people().export_vcf().await?;
+    let text = db.people(user).export_vcf().await?;
     Ok((
         [
             (header::CONTENT_TYPE, "text/vcard; charset=utf-8"),
@@ -128,8 +142,12 @@ async fn export(State(state): State<AppState>) -> Result<Response, ApiError> {
         .into_response())
 }
 
-async fn photo(State(state): State<AppState>, Path(email): Path<String>) -> Result<Response, ApiError> {
-    let Some(photo) = contacts(&state)?.photo(&email).await? else {
+async fn photo(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(email): Path<String>,
+) -> Result<Response, ApiError> {
+    let Some(photo) = contacts(&state, user)?.photo(&email).await? else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     Ok(Response::builder()

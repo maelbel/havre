@@ -57,7 +57,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{AppState, api::ApiError};
+use crate::{AppState, api::ApiError, auth::Admin};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -89,29 +89,36 @@ fn ai(state: &AppState) -> Result<&Arc<Ai>, ApiError> {
     state.ai.as_ref().ok_or_else(|| ApiError::BadRequest("AI isn't available in demo mode.".into()))
 }
 
-async fn status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+/// AI is the admin's only: for anyone else it's simply not there (no 404,
+/// so the pages just hide every AI part, as when the app isn't installed).
+async fn status(
+    State(state): State<AppState>,
+    axum::Extension(who): axum::Extension<havre_core::auth::SignedIn>,
+) -> Result<Json<Value>, ApiError> {
     Ok(Json(match &state.ai {
+        Some(_) if !who.admin => json!({ "installed": false, "enabled": false, "search": false }),
         None => json!({ "installed": false, "enabled": false, "search": false }),
         Some(ai) => serde_json::to_value::<AiStatus>(ai.status().await?).unwrap_or_default(),
     }))
 }
 
-async fn settings(State(state): State<AppState>) -> Result<Json<AiSettings>, ApiError> {
+async fn settings(State(state): State<AppState>, _admin: Admin) -> Result<Json<AiSettings>, ApiError> {
     Ok(Json(ai(&state)?.settings().await?))
 }
 
 async fn update_settings(
     State(state): State<AppState>,
+    _admin: Admin,
     Json(update): Json<AiSettingsUpdate>,
 ) -> Result<Json<AiSettings>, ApiError> {
     Ok(Json(ai(&state)?.update_settings(&update).await?))
 }
 
-async fn models(State(state): State<AppState>) -> Result<Json<Vec<String>>, ApiError> {
+async fn models(State(state): State<AppState>, _admin: Admin) -> Result<Json<Vec<String>>, ApiError> {
     Ok(Json(ai(&state)?.models().await?))
 }
 
-async fn test(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+async fn test(State(state): State<AppState>, _admin: Admin) -> Result<Json<Value>, ApiError> {
     Ok(Json(json!({ "reply": ai(&state)?.test().await? })))
 }
 
@@ -238,6 +245,7 @@ struct SummarizeRequest {
 
 async fn summarize(
     State(state): State<AppState>,
+    _admin: Admin,
     Json(r): Json<SummarizeRequest>,
 ) -> Result<Response, ApiError> {
     let ai = Arc::clone(ai(&state)?);
@@ -255,7 +263,11 @@ struct DraftRequest {
     body: String,
 }
 
-async fn draft(State(state): State<AppState>, Json(r): Json<DraftRequest>) -> Result<Response, ApiError> {
+async fn draft(
+    State(state): State<AppState>,
+    _admin: Admin,
+    Json(r): Json<DraftRequest>,
+) -> Result<Response, ApiError> {
     let ai = Arc::clone(ai(&state)?);
     stream_text(move |out| async move { ai.draft_reply(r.draft, &r.instruction, &r.body, out).await }).await
 }
@@ -269,7 +281,11 @@ struct BriefRequest {
     refresh: bool,
 }
 
-async fn brief(State(state): State<AppState>, Json(r): Json<BriefRequest>) -> Result<Response, ApiError> {
+async fn brief(
+    State(state): State<AppState>,
+    _admin: Admin,
+    Json(r): Json<BriefRequest>,
+) -> Result<Response, ApiError> {
     let ai = Arc::clone(ai(&state)?);
     let local = LocalTime::from_js_offset(r.utc_offset);
     stream_text(move |out| async move { ai.brief(local, r.refresh, out).await }).await
@@ -283,6 +299,7 @@ struct SearchQuery {
 
 async fn search(
     State(state): State<AppState>,
+    _admin: Admin,
     Query(q): Query<SearchQuery>,
 ) -> Result<Json<Vec<Hit>>, ApiError> {
     Ok(Json(ai(&state)?.search(&q.q, q.limit.unwrap_or(20).min(50)).await?))
@@ -297,6 +314,7 @@ struct AskRequest {
 
 async fn ask(
     State(state): State<AppState>,
+    _admin: Admin,
     headers: HeaderMap,
     Json(r): Json<AskRequest>,
 ) -> Result<Response, ApiError> {
@@ -310,12 +328,16 @@ async fn ask(
     Ok(Json(ai.ask(&turns, local).await?).into_response())
 }
 
-async fn conversations(State(state): State<AppState>) -> Result<Json<Vec<ConversationSummary>>, ApiError> {
+async fn conversations(
+    State(state): State<AppState>,
+    _admin: Admin,
+) -> Result<Json<Vec<ConversationSummary>>, ApiError> {
     Ok(Json(ai(&state)?.conversations().await?))
 }
 
 async fn conversation(
     State(state): State<AppState>,
+    _admin: Admin,
     Path(id): Path<i64>,
 ) -> Result<Json<Conversation>, ApiError> {
     Ok(Json(ai(&state)?.conversation(id).await?))
@@ -333,6 +355,7 @@ struct AskIn {
 
 async fn ask_in(
     State(state): State<AppState>,
+    _admin: Admin,
     headers: HeaderMap,
     Json(r): Json<AskIn>,
 ) -> Result<Response, ApiError> {
@@ -354,6 +377,7 @@ struct Title {
 
 async fn rename_conversation(
     State(state): State<AppState>,
+    _admin: Admin,
     Path(id): Path<i64>,
     Json(t): Json<Title>,
 ) -> Result<Json<Conversation>, ApiError> {
@@ -364,6 +388,7 @@ async fn rename_conversation(
 
 async fn delete_conversation(
     State(state): State<AppState>,
+    _admin: Admin,
     Path(id): Path<i64>,
 ) -> Result<axum::http::StatusCode, ApiError> {
     ai(&state)?.delete_conversation(id).await?;
@@ -377,6 +402,7 @@ struct Done {
 
 async fn mark_done(
     State(state): State<AppState>,
+    _admin: Admin,
     Path((id, turn)): Path<(i64, i64)>,
     Json(d): Json<Done>,
 ) -> Result<axum::http::StatusCode, ApiError> {
@@ -384,12 +410,12 @@ async fn mark_done(
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
-async fn claude_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+async fn claude_status(State(state): State<AppState>, _admin: Admin) -> Result<Json<Value>, ApiError> {
     let status = ai(&state)?.claude_status().await?;
     Ok(Json(serde_json::to_value(status).unwrap_or_default()))
 }
 
-async fn claude_login_start(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+async fn claude_login_start(State(state): State<AppState>, _admin: Admin) -> Result<Json<Value>, ApiError> {
     Ok(Json(json!({ "url": ai(&state)?.claude_login_start().await? })))
 }
 
@@ -400,6 +426,7 @@ struct LoginCode {
 
 async fn claude_login_complete(
     State(state): State<AppState>,
+    _admin: Admin,
     Json(c): Json<LoginCode>,
 ) -> Result<Json<Value>, ApiError> {
     if c.code.trim().is_empty() {
@@ -409,12 +436,18 @@ async fn claude_login_complete(
     Ok(Json(json!({ "success": success, "output": output })))
 }
 
-async fn claude_login_cancel(State(state): State<AppState>) -> Result<axum::http::StatusCode, ApiError> {
+async fn claude_login_cancel(
+    State(state): State<AppState>,
+    _admin: Admin,
+) -> Result<axum::http::StatusCode, ApiError> {
     ai(&state)?.claude_login_cancel().await;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
-async fn claude_logout(State(state): State<AppState>) -> Result<axum::http::StatusCode, ApiError> {
+async fn claude_logout(
+    State(state): State<AppState>,
+    _admin: Admin,
+) -> Result<axum::http::StatusCode, ApiError> {
     ai(&state)?.claude_logout().await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -426,6 +459,7 @@ struct ActivityQuery {
 
 async fn activity(
     State(state): State<AppState>,
+    _admin: Admin,
     Query(q): Query<ActivityQuery>,
 ) -> Result<Json<Vec<havre_core::ai::activity::Activity>>, ApiError> {
     Ok(Json(ai(&state)?.activity(q.limit.unwrap_or(100).min(500)).await?))
@@ -441,13 +475,14 @@ struct Confirmed {
 /// The palette tells what you confirmed (created an event, opened a draft…).
 async fn confirmed(
     State(state): State<AppState>,
+    _admin: Admin,
     Json(c): Json<Confirmed>,
 ) -> Result<axum::http::StatusCode, ApiError> {
     ai(&state)?.log_confirmed(c.action.trim(), c.detail.trim()).await;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
-async fn health(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+async fn health(State(state): State<AppState>, _admin: Admin) -> Result<Json<Value>, ApiError> {
     Ok(Json(match ai(&state)?.health().await {
         Ok(()) => json!({ "ok": true }),
         Err(err) => json!({ "ok": false, "error": err.to_string() }),

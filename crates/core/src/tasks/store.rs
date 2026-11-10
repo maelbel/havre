@@ -4,11 +4,15 @@ use serde::Deserialize;
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
 use super::{COLORS, DAY, EventLink, Links, MailLink, PersonLink, RemoteList, RemoteTask, Task, TaskList};
-use crate::{Error, Result};
+use crate::{Error, Result, users::UserId};
 
+/// One user's lists and tasks. (Syncing a source uses the store of the
+/// source's owner; the reminder loop, which looks at everyone's, uses the
+/// free functions at the bottom.)
 #[derive(Clone)]
 pub struct TaskStore {
     pool: SqlitePool,
+    user: UserId,
 }
 
 /// A list plus what syncing needs.
@@ -75,8 +79,13 @@ fn now() -> i64 {
 }
 
 impl TaskStore {
-    pub(crate) fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub(crate) fn new(pool: SqlitePool, user: UserId) -> Self {
+        Self { pool, user }
+    }
+
+    /// Whose lists these are.
+    pub fn user(&self) -> UserId {
+        self.user
     }
 
     /// A transaction that takes the write lock at once. A plain `BEGIN`
@@ -97,28 +106,35 @@ impl TaskStore {
     pub(crate) async fn list_rows(&self) -> Result<Vec<ListRow>> {
         let rows = sqlx::query(sql!(
             "SELECT {LIST_COLUMNS} FROM {LIST_FROM}
+             WHERE l.user_id = ?
              ORDER BY l.source = 'local', l.caldav_id IS NOT NULL, l.account_id, l.caldav_id, l.is_default DESC,
                       l.name COLLATE NOCASE"
         ))
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.iter().map(list_from_row).collect())
     }
 
     pub(crate) async fn list_row(&self, id: i64) -> Result<ListRow> {
-        let row = sqlx::query(sql!("SELECT {LIST_COLUMNS} FROM {LIST_FROM} WHERE l.id = ?"))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?
-            .ok_or_else(|| Error::NotFound(format!("task list {id}")))?;
+        // Another user's list is "not found".
+        let row =
+            sqlx::query(sql!("SELECT {LIST_COLUMNS} FROM {LIST_FROM} WHERE l.id = ? AND l.user_id = ?"))
+                .bind(id)
+                .bind(self.user.0)
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or_else(|| Error::NotFound(format!("task list {id}")))?;
         Ok(list_from_row(&row))
     }
 
     /// The list new tasks go to.
     pub(crate) async fn default_list(&self) -> Result<i64> {
         let id: Option<i64> = sqlx::query_scalar(
-            "SELECT id FROM task_lists WHERE read_only = 0 ORDER BY is_default DESC, source = 'local' DESC, id LIMIT 1",
+            "SELECT id FROM task_lists WHERE user_id = ? AND read_only = 0
+             ORDER BY is_default DESC, source = 'local' DESC, id LIMIT 1",
         )
+        .bind(self.user.0)
         .fetch_optional(&self.pool)
         .await?;
         id.ok_or_else(|| Error::Config("There's no list to put the task in.".into()))
@@ -135,18 +151,21 @@ impl TaskStore {
     ) -> Result<()> {
         // `IS` (not `=`) so that NULL matches NULL.
         let existing: Vec<(i64, String)> = sqlx::query_as(
-            "SELECT id, remote_id FROM task_lists WHERE account_id IS ? AND caldav_id IS ? AND source = ?",
+            "SELECT id, remote_id FROM task_lists
+             WHERE account_id IS ? AND caldav_id IS ? AND source = ? AND user_id = ?",
         )
         .bind(account)
         .bind(caldav)
         .bind(source)
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         // The first account's main list becomes the default (instead of
         // Havre's Inbox) — unless you already chose another one.
         let has_default: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM task_lists WHERE is_default = 1 AND source <> 'local'",
+            "SELECT COUNT(*) > 0 FROM task_lists WHERE user_id = ? AND is_default = 1 AND source <> 'local'",
         )
+        .bind(self.user.0)
         .fetch_one(&self.pool)
         .await?;
         let mut tx = self.write().await?;
@@ -164,11 +183,15 @@ impl TaskStore {
                     let color = remote.color.clone().unwrap_or_else(|| COLORS[i % COLORS.len()].to_owned());
                     let default = remote.is_default && !has_default && !remote.read_only;
                     if default {
-                        sqlx::query("UPDATE task_lists SET is_default = 0").execute(&mut *tx).await?;
+                        sqlx::query("UPDATE task_lists SET is_default = 0 WHERE user_id = ?")
+                            .bind(self.user.0)
+                            .execute(&mut *tx)
+                            .await?;
                     }
                     sqlx::query(
-                        "INSERT INTO task_lists (source, account_id, caldav_id, remote_id, name, color, read_only, is_default)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO task_lists
+                            (source, account_id, caldav_id, remote_id, name, color, read_only, is_default, user_id)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     )
                     .bind(source)
                     .bind(account)
@@ -178,6 +201,7 @@ impl TaskStore {
                     .bind(color)
                     .bind(remote.read_only)
                     .bind(default)
+                    .bind(self.user.0)
                     .execute(&mut *tx)
                     .await?;
                 }
@@ -200,12 +224,15 @@ impl TaskStore {
         account: Option<i64>,
         caldav: Option<i64>,
     ) -> Result<()> {
-        sqlx::query("DELETE FROM task_lists WHERE account_id IS ? AND caldav_id IS ? AND source = ?")
-            .bind(account)
-            .bind(caldav)
-            .bind(source)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "DELETE FROM task_lists WHERE account_id IS ? AND caldav_id IS ? AND source = ? AND user_id = ?",
+        )
+        .bind(account)
+        .bind(caldav)
+        .bind(source)
+        .bind(self.user.0)
+        .execute(&self.pool)
+        .await?;
         self.keep_a_default().await
     }
 
@@ -213,9 +240,11 @@ impl TaskStore {
     async fn keep_a_default(&self) -> Result<()> {
         sqlx::query(
             "UPDATE task_lists SET is_default = 1
-             WHERE NOT EXISTS (SELECT 1 FROM task_lists WHERE is_default = 1)
-               AND id = (SELECT id FROM task_lists WHERE read_only = 0 ORDER BY source = 'local' DESC, id LIMIT 1)",
+             WHERE NOT EXISTS (SELECT 1 FROM task_lists WHERE user_id = ?1 AND is_default = 1)
+               AND id = (SELECT id FROM task_lists WHERE user_id = ?1 AND read_only = 0
+                         ORDER BY source = 'local' DESC, id LIMIT 1)",
         )
+        .bind(self.user.0)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -257,15 +286,20 @@ impl TaskStore {
         if name.is_empty() {
             return Err(Error::Config("Give the list a name.".into()));
         }
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_lists").fetch_one(&self.pool).await?;
-        let id =
-            sqlx::query("INSERT INTO task_lists (source, remote_id, name, color) VALUES ('local', ?, ?, ?)")
-                .bind(format!("local-{}", crate::agenda::random_id()))
-                .bind(name)
-                .bind(COLORS[count as usize % COLORS.len()])
-                .execute(&self.pool)
-                .await?
-                .last_insert_rowid();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_lists WHERE user_id = ?")
+            .bind(self.user.0)
+            .fetch_one(&self.pool)
+            .await?;
+        let id = sqlx::query(
+            "INSERT INTO task_lists (source, remote_id, name, color, user_id) VALUES ('local', ?, ?, ?, ?)",
+        )
+        .bind(format!("local-{}", crate::agenda::random_id()))
+        .bind(name)
+        .bind(COLORS[count as usize % COLORS.len()])
+        .bind(self.user.0)
+        .execute(&self.pool)
+        .await?
+        .last_insert_rowid();
         Ok(self.list_row(id).await?.list)
     }
 
@@ -310,7 +344,11 @@ impl TaskStore {
                 return Err(Error::Config(format!("“{}” is read-only.", row.list.name)));
             }
             let mut tx = self.write().await?;
-            sqlx::query("UPDATE task_lists SET is_default = (id = ?)").bind(id).execute(&mut *tx).await?;
+            sqlx::query("UPDATE task_lists SET is_default = (id = ?) WHERE user_id = ?")
+                .bind(id)
+                .bind(self.user.0)
+                .execute(&mut *tx)
+                .await?;
             tx.commit().await?;
         }
         Ok(self.list_row(id).await?.list)
@@ -322,9 +360,11 @@ impl TaskStore {
         if row.list.source != "local" {
             return Err(Error::Config("Delete this list in the app it comes from.".into()));
         }
-        let locals: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_lists WHERE source = 'local'")
-            .fetch_one(&self.pool)
-            .await?;
+        let locals: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM task_lists WHERE user_id = ? AND source = 'local'")
+                .bind(self.user.0)
+                .fetch_one(&self.pool)
+                .await?;
         if locals <= 1 {
             return Err(Error::Config("Keep at least one Havre list.".into()));
         }
@@ -369,7 +409,8 @@ impl TaskStore {
         let first = words.first().map(|w| format!("%{w}%"));
         let rows = sqlx::query(sql!(
             "SELECT {TASK_COLUMNS} FROM tasks t JOIN task_lists l ON l.id = t.list_id
-             WHERE (t.done_at IS NULL OR t.done_at >= ?)
+             WHERE l.user_id = ?
+               AND (t.done_at IS NULL OR t.done_at >= ?)
                AND (? IS NULL OR t.list_id = ?)
                AND (? IS NULL OR (t.done_at IS NOT NULL) = ?)
                AND (? IS NULL OR t.due >= ?)
@@ -380,6 +421,7 @@ impl TaskStore {
              ORDER BY t.done_at IS NOT NULL, t.due IS NULL, t.due, COALESCE(t.due_at, t.due), t.id
              LIMIT ?"
         ))
+        .bind(self.user.0)
         .bind(since)
         .bind(query.list)
         .bind(query.list)
@@ -413,9 +455,11 @@ impl TaskStore {
 
     pub(crate) async fn task_row(&self, id: i64) -> Result<TaskRow> {
         let row = sqlx::query(sql!(
-            "SELECT {TASK_COLUMNS} FROM tasks t JOIN task_lists l ON l.id = t.list_id WHERE t.id = ?"
+            "SELECT {TASK_COLUMNS} FROM tasks t JOIN task_lists l ON l.id = t.list_id
+             WHERE t.id = ? AND l.user_id = ?"
         ))
         .bind(id)
+        .bind(self.user.0)
         .fetch_optional(&self.pool)
         .await?
         .ok_or_else(|| Error::NotFound(format!("task {id}")))?;
@@ -425,6 +469,7 @@ impl TaskStore {
     /// Makes the stored tasks of a list match what the provider has. Links
     /// are kept; so is what the provider can't hold (`keeps`).
     pub(crate) async fn replace_tasks(&self, list: i64, remotes: &[RemoteTask], keeps: Keeps) -> Result<()> {
+        self.list_row(list).await?; // this user's list, or "not found"
         let mut tx = self.write().await?;
         for remote in remotes {
             save(&mut tx, list, remote, None, keeps).await?;
@@ -452,6 +497,7 @@ impl TaskStore {
         links: Option<&Links>,
         keeps: Keeps,
     ) -> Result<Task> {
+        self.list_row(list).await?; // this user's list, or "not found"
         let mut tx = self.write().await?;
         let id = save(&mut tx, list, remote, links, keeps).await?;
         tx.commit().await?;
@@ -459,26 +505,34 @@ impl TaskStore {
     }
 
     pub(crate) async fn delete_task(&self, id: i64) -> Result<()> {
-        sqlx::query("DELETE FROM tasks WHERE id = ?").bind(id).execute(&self.pool).await?;
-        Ok(())
-    }
-
-    /// Tasks whose reminder time has come and that weren't shown yet.
-    pub(crate) async fn due_reminders(&self, now: i64) -> Result<Vec<Task>> {
-        let rows = sqlx::query(sql!(
-            "SELECT {TASK_COLUMNS} FROM tasks t JOIN task_lists l ON l.id = t.list_id
-             WHERE t.remind_at IS NOT NULL AND t.remind_at <= ? AND t.reminded = 0 AND t.done_at IS NULL"
-        ))
-        .bind(now)
-        .fetch_all(&self.pool)
+        sqlx::query(
+            "DELETE FROM tasks WHERE id = ? AND list_id IN (SELECT id FROM task_lists WHERE user_id = ?)",
+        )
+        .bind(id)
+        .bind(self.user.0)
+        .execute(&self.pool)
         .await?;
-        Ok(rows.iter().map(|r| task_from_row(r).task).collect())
-    }
-
-    pub(crate) async fn mark_reminded(&self, id: i64) -> Result<()> {
-        sqlx::query("UPDATE tasks SET reminded = 1 WHERE id = ?").bind(id).execute(&self.pool).await?;
         Ok(())
     }
+}
+
+/// Everyone's tasks whose reminder time has come and that weren't shown yet,
+/// with whose they are (the reminder loop looks at all users at once).
+pub(crate) async fn due_reminders(pool: &SqlitePool, now: i64) -> Result<Vec<(UserId, Task)>> {
+    let rows = sqlx::query(sql!(
+        "SELECT {TASK_COLUMNS}, l.user_id FROM tasks t JOIN task_lists l ON l.id = t.list_id
+         WHERE t.remind_at IS NOT NULL AND t.remind_at <= ? AND t.reminded = 0 AND t.done_at IS NULL
+           AND l.user_id IS NOT NULL"
+    ))
+    .bind(now)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.iter().map(|r| (UserId(r.get("user_id")), task_from_row(r).task)).collect())
+}
+
+pub(crate) async fn mark_reminded(pool: &SqlitePool, id: i64) -> Result<()> {
+    sqlx::query("UPDATE tasks SET reminded = 1 WHERE id = ?").bind(id).execute(pool).await?;
+    Ok(())
 }
 
 /// Inserts or updates one task, by `(list, remote_id)`.
@@ -646,6 +700,7 @@ fn task_from_row(row: &SqliteRow) -> TaskRow {
 mod tests {
     use super::*;
     use crate::store::Database;
+    use crate::users::UserId;
 
     const KEEP_ALL: Keeps = Keeps { time: true, reminder: true };
 
@@ -656,14 +711,15 @@ mod tests {
     #[tokio::test]
     async fn lists_and_tasks_follow_the_provider() {
         let db = Database::in_memory().await.unwrap();
-        let store = db.tasks();
+        let store = db.tasks(UserId::ADMIN);
         // Havre's Inbox is there from the start, and is the default.
         let lists = store.lists().await.unwrap();
         assert_eq!(lists.len(), 1);
         assert!(lists[0].is_default && lists[0].source == "local");
 
         // A CalDAV server with two task lists (CalDAV needs no mail account).
-        let caldav = db.agenda().insert_caldav("Cloud", "https://c.example", "me", "pw").await.unwrap();
+        let caldav =
+            db.agenda(UserId::ADMIN).insert_caldav("Cloud", "https://c.example", "me", "pw").await.unwrap();
         let remotes = [
             RemoteList {
                 remote_id: "a".into(),
@@ -744,9 +800,9 @@ mod tests {
         assert!(store.tasks(&missing).await.unwrap().is_empty());
 
         // Reminders: due ones, once.
-        assert_eq!(store.due_reminders(day + 9 * 3600).await.unwrap().len(), 1);
-        store.mark_reminded(all[0].id).await.unwrap();
-        assert!(store.due_reminders(day + 9 * 3600).await.unwrap().is_empty());
+        assert_eq!(due_reminders(&store.pool, day + 9 * 3600).await.unwrap().len(), 1);
+        mark_reminded(&store.pool, all[0].id).await.unwrap();
+        assert!(due_reminders(&store.pool, day + 9 * 3600).await.unwrap().is_empty());
 
         // The server's lists go: their tasks too; the Inbox is the default again.
         store.remove_lists("caldav", None, Some(caldav)).await.unwrap();
@@ -766,7 +822,7 @@ mod tests {
     #[tokio::test]
     async fn havre_lists_and_sync_choices() {
         let db = Database::in_memory().await.unwrap();
-        let store = db.tasks();
+        let store = db.tasks(UserId::ADMIN);
         let home = store.create_local_list("Home").await.unwrap();
         assert_eq!(store.lists().await.unwrap().len(), 2);
         store.update_list(home.id, Some("Maison"), Some("#A9C79C"), Some(true)).await.unwrap();

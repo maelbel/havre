@@ -23,8 +23,8 @@ pub mod reminders;
 pub mod repeat;
 pub(crate) mod store;
 
-pub use manager::Agenda;
 pub(crate) use manager::random_id;
+pub use manager::{Agenda, UserAgenda};
 pub use repeat::Repeat;
 use serde::{Deserialize, Serialize};
 pub use store::{AgendaSettings, AgendaSettingsUpdate, AgendaStore, CalDavAccount};

@@ -148,6 +148,24 @@ Good first exercises: add a `--unread` flag to `mail list`; show the number
 of unread messages next to each folder (IMAP `STATUS`); add `mail archive <uid>`
 to the CLI (the core function already exists).
 
+## Several users
+
+Every piece of data belongs to one user (`crates/core/src/users.rs`). A few tables carry a `user_id` (accounts,
+CalDAV servers, calendars, task lists, notes, contacts, address books, labels, push devices, the per-user settings);
+everything else belongs to one of them (a message to its account, an event to its calendar).
+
+- **In the core**, a store that reads or writes someone's data is made with a `UserId`: `db.notes(user)`,
+  `db.tasks(user)`, `db.people(user)`, `db.files(user)`, `db.drafts(user)`, `db.apps(user)`,
+  `agenda.for_user(user)`, `contacts.for_user(user)`. Its queries ask for `user_id = ?` (or for the user's accounts
+  or calendars). An account's mail is reached with `db.mailbox(user, account)` or `accounts.engine(user, account)`,
+  which answer *not found* for anyone else's. Background work (sync, reminders, the outbox) loops over
+  `db.users().all()` or finds the owner from the data, and puts it on the events it sends (`AccountEvent.user`).
+- **In the server**, a handler takes `CurrentUser(user)` and passes it on; admin-only routes (AI, MCP tokens,
+  backups) take `Admin` (404 for anyone else).
+- **AI is the admin's** (`AI_USER`): its tools and index only see user 1's data.
+- **A new route** gets its line in `crates/server/src/isolation.rs`: that test asks every route as a second user,
+  with the first one's ids, and fails on a route it doesn't know.
+
 ## Previewing attachments
 
 Attachments are strangers' files, so the server never serves them for display (only common images): everything

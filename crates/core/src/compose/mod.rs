@@ -42,6 +42,7 @@ use crate::{
     accounts::AccountManager,
     config::ImapAuth,
     mail::{self, AttachmentData, FolderRole, MessageDetail, RenderOptions},
+    users::UserId,
 };
 
 // ---- Outgoing server ----------------------------------------------------------------
@@ -304,11 +305,15 @@ pub(crate) const SERVER_QUIET: i64 = 15;
 /// …and after a failure, tried again this much later.
 pub(crate) const SERVER_RETRY: i64 = 120;
 
-/// Drafts in the database.
+/// One user's drafts: those of their accounts.
 #[derive(Clone)]
 pub struct Drafts {
     pool: SqlitePool,
+    user: UserId,
 }
+
+/// In SQL: "a draft of one of the user's accounts" (binds the user).
+const MINE: &str = "account_id IN (SELECT id FROM accounts WHERE user_id = ?)";
 
 /// A new draft before it's saved: empty, or filled from a message.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -326,10 +331,15 @@ pub struct Prefill {
 }
 
 impl Drafts {
-    pub(crate) fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub(crate) fn new(pool: SqlitePool, user: UserId) -> Self {
+        Self { pool, user }
     }
 
+    pub fn user(&self) -> UserId {
+        self.user
+    }
+
+    /// The caller checked `account` is the user's.
     async fn insert(
         &self,
         account: i64,
@@ -390,15 +400,13 @@ impl Drafts {
 
     /// New messages are written formatted (the default) or as plain text.
     async fn mail_format_rich(&self) -> Result<bool> {
-        let format: String = sqlx::query_scalar("SELECT compose_format FROM mail_settings WHERE id = 1")
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(format != "plain")
+        Ok(self.mail_settings().await?.compose_format != "plain")
     }
 
     pub async fn get(&self, id: i64) -> Result<Draft> {
-        let row = sqlx::query("SELECT * FROM drafts WHERE id = ?")
+        let row = sqlx::query(sql!("SELECT * FROM drafts WHERE id = ? AND {MINE}"))
             .bind(id)
+            .bind(self.user.0)
             .fetch_optional(&self.pool)
             .await?
             .ok_or_else(|| Error::NotFound(format!("draft {id}")))?;
@@ -409,7 +417,10 @@ impl Drafts {
 
     /// Every draft, most recent first.
     pub async fn list(&self) -> Result<Vec<Draft>> {
-        let rows = sqlx::query("SELECT * FROM drafts ORDER BY updated_at DESC").fetch_all(&self.pool).await?;
+        let rows = sqlx::query(sql!("SELECT * FROM drafts WHERE {MINE} ORDER BY updated_at DESC"))
+            .bind(self.user.0)
+            .fetch_all(&self.pool)
+            .await?;
         let mut drafts: Vec<Draft> = rows.iter().map(draft_from_row).collect();
         for draft in &mut drafts {
             draft.attachments = self.attachments(draft.id).await?;
@@ -418,6 +429,10 @@ impl Drafts {
     }
 
     pub async fn update(&self, id: i64, update: &DraftUpdate) -> Result<Draft> {
+        // "From" one of your accounts only.
+        if let Some(account) = update.account {
+            crate::users::Users::new(self.pool.clone()).owns_account(self.user, account).await?;
+        }
         let mut body = update.body.clone();
         // Formatted text: cleaned (never trust what a page sends), its plain text made from it.
         let mut body_html: Option<Option<String>> = update.body_html.as_deref().map(|h| Some(html::clean(h)));
@@ -488,6 +503,9 @@ impl Drafts {
             sql.push(", account_id = ").push_bind(account);
         }
         sql.push(" WHERE id = ").push_bind(id);
+        sql.push(" AND account_id IN (SELECT id FROM accounts WHERE user_id = ")
+            .push_bind(self.user.0)
+            .push(")");
         if sql.build().execute(&self.pool).await?.rows_affected() == 0 {
             return Err(Error::NotFound(format!("draft {id}")));
         }
@@ -495,7 +513,11 @@ impl Drafts {
     }
 
     pub async fn delete(&self, id: i64) -> Result<()> {
-        sqlx::query("DELETE FROM drafts WHERE id = ?").bind(id).execute(&self.pool).await?;
+        sqlx::query(sql!("DELETE FROM drafts WHERE id = ? AND {MINE}"))
+            .bind(id)
+            .bind(self.user.0)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -513,6 +535,7 @@ impl Drafts {
     }
 
     pub async fn add_attachment(&self, draft: i64, file: &AttachmentData) -> Result<DraftAttachment> {
+        self.get(draft).await?; // one of yours
         let used: i64 = sqlx::query_scalar(
             "SELECT COALESCE(SUM(length(data)), 0) FROM draft_attachments WHERE draft_id = ?",
         )
@@ -537,6 +560,7 @@ impl Drafts {
     }
 
     pub async fn remove_attachment(&self, draft: i64, attachment: i64) -> Result<()> {
+        self.get(draft).await?; // one of yours
         sqlx::query("DELETE FROM draft_attachments WHERE id = ? AND draft_id = ?")
             .bind(attachment)
             .bind(draft)
@@ -573,10 +597,12 @@ impl Drafts {
                     OR (trim(body, ' ' || char(9, 10, 13)) <> ''
                         AND trim(body, ' ' || char(9, 10, 13)) <> '-- ' || char(10) || signature)
                     OR EXISTS (SELECT 1 FROM draft_attachments a WHERE a.draft_id = drafts.id))
+               AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)
              ORDER BY updated_at LIMIT 20",
         )
         .bind(now - SERVER_QUIET)
         .bind(now - SERVER_RETRY)
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?)
     }
@@ -1195,15 +1221,16 @@ impl AccountManager {
         send(&smtp, &message).await
     }
 
-    pub fn drafts(&self) -> Drafts {
-        self.database().drafts()
+    pub fn drafts(&self, user: UserId) -> Drafts {
+        self.database().drafts(user)
     }
 
     /// Starts a draft: empty, or a reply / forward of a message (with the
     /// forwarded message's attachments).
-    pub async fn new_draft(&self, start: NewDraft) -> Result<Draft> {
+    pub async fn new_draft(&self, user: UserId, start: NewDraft) -> Result<Draft> {
+        self.database().users().owns_account(user, start.account).await?;
         let account = self.database().account(start.account).await?;
-        let drafts = self.drafts();
+        let drafts = self.drafts(user);
         let source = match (start.kind, &start.folder, start.uid) {
             (DraftKind::New, _, _) => None,
             (_, Some(folder), Some(uid)) => Some((folder.clone(), uid)),
@@ -1214,7 +1241,7 @@ impl AccountManager {
             let id = drafts.insert(account.id, DraftKind::New, &prefill, None).await?;
             return drafts.get(id).await;
         };
-        let raw = self.engine(account.id).await?.raw(&folder, uid).await?;
+        let raw = self.engine(user, account.id).await?.raw(&folder, uid).await?;
         let own = vec![account.email.clone(), account.imap_user.clone()];
         let prefill = prefill(start.kind, &raw, &own);
         let id = drafts.insert(account.id, start.kind, &prefill, Some((&folder, uid))).await?;
@@ -1240,15 +1267,15 @@ impl AccountManager {
     /// Saves a draft's newest version in its account's Drafts folder, if the
     /// copy there is behind. A failure is recorded on the draft (shown in the
     /// compose window, tried again later), not returned: Havre's copy is safe.
-    pub async fn save_draft_to_server(&self, id: i64) -> Result<Draft> {
+    pub async fn save_draft_to_server(&self, user: UserId, id: i64) -> Result<Draft> {
         let _one_at_a_time = self.drafts_lock.lock().await;
-        let drafts = self.drafts();
+        let drafts = self.drafts(user);
         let draft = drafts.get(id).await?;
         // Waiting to be sent: kept out of the Drafts folder (see `outbox`).
         if !draft.server_pending || draft.is_empty() || draft.send_at.is_some() {
             return Ok(draft);
         }
-        match self.write_server_copy(&draft).await {
+        match self.write_server_copy(&drafts, &draft).await {
             Ok((folder, uid)) => {
                 drafts.saved_on_server(id, draft.server.version, draft.account, &folder, uid).await?;
             }
@@ -1261,9 +1288,9 @@ impl AccountManager {
     }
 
     /// Writes the copy; returns where it went.
-    async fn write_server_copy(&self, draft: &Draft) -> Result<(String, Option<u32>)> {
+    async fn write_server_copy(&self, drafts: &Drafts, draft: &Draft) -> Result<(String, Option<u32>)> {
         let account = self.database().account(draft.account).await?;
-        let engine = self.engine(account.id).await?;
+        let engine = self.engine(drafts.user(), account.id).await?;
         let folder = engine
             .store()
             .folders()
@@ -1272,7 +1299,6 @@ impl AccountManager {
             .find(|f| f.folder.role == FolderRole::Drafts)
             .map(|f| f.folder.path)
             .ok_or_else(|| Error::Config(NO_DRAFTS_FOLDER.into()))?;
-        let drafts = self.drafts();
         let message_id = match &draft.server.message_id {
             Some(id) => id.clone(),
             None => {
@@ -1309,7 +1335,8 @@ impl AccountManager {
         };
         match removed {
             Ok(()) => {
-                if let Ok(engine) = self.engine(account).await {
+                // The draft's own (former) account: found in the user's draft.
+                if let Ok(engine) = self.engine_any_user(account).await {
                     engine.request_sync(Some(folder.to_owned()));
                 }
                 true
@@ -1332,21 +1359,27 @@ impl AccountManager {
     }
 
     /// Discards a draft: in Havre and on the server.
-    pub async fn discard_draft(&self, id: i64) -> Result<()> {
+    pub async fn discard_draft(&self, user: UserId, id: i64) -> Result<()> {
         let _one_at_a_time = self.drafts_lock.lock().await;
-        let draft = self.drafts().get(id).await?;
+        let draft = self.drafts(user).get(id).await?;
         self.remove_server_copy(&draft).await;
-        self.drafts().delete(id).await
+        self.drafts(user).delete(id).await
     }
 
     /// A draft from the server's Drafts folder (started in another app),
     /// opened to finish it in Havre: recipients, subject, text and
     /// attachments, linked to that copy so saving replaces it. Opening the
     /// same one again gives the same Havre draft.
-    pub async fn draft_from_message(&self, account: i64, folder: &str, uid: u32) -> Result<Draft> {
+    pub async fn draft_from_message(
+        &self,
+        user: UserId,
+        account: i64,
+        folder: &str,
+        uid: u32,
+    ) -> Result<Draft> {
         let _one_at_a_time = self.drafts_lock.lock().await;
-        let drafts = self.drafts();
-        let raw = self.engine(account).await?.raw(folder, uid).await?;
+        let drafts = self.drafts(user);
+        let raw = self.engine(user, account).await?.raw(folder, uid).await?;
         let message = MessageParser::default()
             .parse(&raw)
             .ok_or_else(|| Error::Config("This draft can't be read.".into()))?;
@@ -1403,8 +1436,8 @@ impl AccountManager {
 
     /// Sends a draft, files a copy in Sent, marks the original as answered,
     /// and deletes the draft (and its copy in the Drafts folder).
-    pub async fn send_draft(&self, id: i64) -> Result<SendOutcome> {
-        let drafts = self.drafts();
+    pub async fn send_draft(&self, user: UserId, id: i64) -> Result<SendOutcome> {
+        let drafts = self.drafts(user);
         let draft = drafts.get(id).await?;
         let account = self.database().account(draft.account).await?;
         let smtp = self.database().smtp_config(account.id).await?;
@@ -1414,7 +1447,7 @@ impl AccountManager {
         tracing::info!(account = account.email, "message sent");
 
         let mut outcome = SendOutcome { saved_to_sent: true, warning: None };
-        let engine = self.engine(account.id).await.ok();
+        let engine = self.engine(user, account.id).await.ok();
         let sent_folder = match &engine {
             Some(engine) => engine
                 .store()
@@ -1487,16 +1520,26 @@ pub(crate) async fn drafts_loop(manager: std::sync::Weak<AccountManager>) {
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
         let Some(manager) = manager.upgrade() else { return };
-        let due = match manager.drafts().due_on_server(now()).await {
-            Ok(due) => due,
+        // Each user's drafts in turn.
+        let users = match manager.database().users().all().await {
+            Ok(users) => users,
             Err(err) => {
-                tracing::warn!(%err, "reading drafts to save");
+                tracing::warn!(%err, "reading users");
                 continue;
             }
         };
-        for id in due {
-            if let Err(err) = manager.save_draft_to_server(id).await {
-                tracing::warn!(draft = id, "{err}");
+        for user in users {
+            let due = match manager.drafts(user).due_on_server(now()).await {
+                Ok(due) => due,
+                Err(err) => {
+                    tracing::warn!(%err, "reading drafts to save");
+                    continue;
+                }
+            };
+            for id in due {
+                if let Err(err) = manager.save_draft_to_server(user, id).await {
+                    tracing::warn!(draft = id, "{err}");
+                }
             }
         }
     }
@@ -1505,6 +1548,7 @@ pub(crate) async fn drafts_loop(manager: std::sync::Weak<AccountManager>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::users::UserId;
 
     async fn two_accounts() -> (crate::store::Database, i64, i64) {
         let db = crate::store::Database::in_memory().await.unwrap();
@@ -1512,19 +1556,22 @@ mod tests {
         for (email, signature) in [("me@work.org", "Maël Belliard\nAcme · +33 1 23"), ("me@home.org", "Maël")]
         {
             let account = db
-                .insert_account(&crate::store::NewAccount {
-                    name: email.into(),
-                    email: email.into(),
-                    imap_host: "mail.example.org".into(),
-                    imap_port: 993,
-                    imap_user: email.into(),
-                    color: "work".into(),
-                    password: "x".into(),
-                    sender_name: String::new(),
-                    smtp_host: None,
-                    smtp_port: None,
-                    smtp_security: None,
-                })
+                .insert_account(
+                    UserId::ADMIN,
+                    &crate::store::NewAccount {
+                        name: email.into(),
+                        email: email.into(),
+                        imap_host: "mail.example.org".into(),
+                        imap_port: 993,
+                        imap_user: email.into(),
+                        color: "work".into(),
+                        password: "x".into(),
+                        sender_name: String::new(),
+                        smtp_host: None,
+                        smtp_port: None,
+                        smtp_security: None,
+                    },
+                )
                 .await
                 .unwrap();
             let update =
@@ -1538,7 +1585,7 @@ mod tests {
     #[tokio::test]
     async fn signatures_in_new_messages_replies_and_when_from_changes() {
         let (db, work, home) = two_accounts().await;
-        let drafts = db.drafts();
+        let drafts = db.drafts(UserId::ADMIN);
         // Plain-text messages here (rich ones: the next test).
         let plain = outbox::MailSettings { undo_seconds: 10, compose_format: "plain".into() };
         drafts.set_mail_settings(&plain).await.unwrap();
@@ -1569,7 +1616,7 @@ mod tests {
     #[tokio::test]
     async fn rich_drafts_signatures_and_replies() {
         let (db, work, home) = two_accounts().await;
-        let drafts = db.drafts();
+        let drafts = db.drafts(UserId::ADMIN);
         // A formatted signature for work.
         let sig = crate::store::AccountUpdate {
             signature_html: Some(

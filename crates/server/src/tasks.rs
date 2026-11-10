@@ -32,7 +32,7 @@ use havre_core::tasks::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{AppState, api::ApiError};
+use crate::{AppState, api::ApiError, auth::CurrentUser};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -56,16 +56,18 @@ fn tasks(state: &AppState) -> Result<&Arc<Tasks>, ApiError> {
 
 async fn list_tasks(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(q): Query<TaskQuery>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
-    Ok(Json(tasks(&state)?.store().tasks(&q).await?))
+    Ok(Json(tasks(&state)?.store(user).tasks(&q).await?))
 }
 
 async fn create(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(input): Json<TaskInput>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
-    Ok((StatusCode::CREATED, Json(tasks(&state)?.create(&input).await?)))
+    Ok((StatusCode::CREATED, Json(tasks(&state)?.create(user, &input).await?)))
 }
 
 #[derive(Deserialize)]
@@ -80,13 +82,18 @@ struct QuickAdd {
 
 async fn quick(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(q): Json<QuickAdd>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
-    Ok((StatusCode::CREATED, Json(tasks(&state)?.quick_add(&q.text, q.utc_offset, q.links).await?)))
+    Ok((StatusCode::CREATED, Json(tasks(&state)?.quick_add(user, &q.text, q.utc_offset, q.links).await?)))
 }
 
-async fn parse(State(state): State<AppState>, Json(q): Json<QuickAdd>) -> Result<Json<Parsed>, ApiError> {
-    Ok(Json(tasks(&state)?.parse(&q.text, q.utc_offset).await?))
+async fn parse(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(q): Json<QuickAdd>,
+) -> Result<Json<Parsed>, ApiError> {
+    Ok(Json(tasks(&state)?.parse(user, &q.text, q.utc_offset).await?))
 }
 
 #[derive(Deserialize)]
@@ -110,10 +117,11 @@ struct FromMail {
 /// after a move) and to its sender.
 async fn from_mail(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(r): Json<FromMail>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
     let tasks = tasks(&state)?;
-    let store = state.mail.manager()?.database().store(r.account);
+    let store = state.mail.manager()?.database().mailbox(user, r.account).await?;
     let (subject, from_name, from_address, message_id) = store.mail_link(&r.folder, r.uid).await?;
     let from = from_name
         .clone()
@@ -132,7 +140,7 @@ async fn from_mail(
         person: from_address.filter(|a| a.contains('@')).map(|email| PersonLink { email, name: from_name }),
         event: None,
     };
-    let parsed = tasks.parse(&r.text, r.utc_offset).await?;
+    let parsed = tasks.parse(user, &r.text, r.utc_offset).await?;
     // A day picked in the menu wins; the time typed stays only on that day.
     let due = r.due.or(parsed.due);
     let due_at = if due == parsed.due { parsed.due_at } else { None };
@@ -144,19 +152,24 @@ async fn from_mail(
         links: Some(links),
         ..TaskInput::default()
     };
-    Ok((StatusCode::CREATED, Json(tasks.create(&input).await?)))
+    Ok((StatusCode::CREATED, Json(tasks.create(user, &input).await?)))
 }
 
-async fn one(State(state): State<AppState>, Path(id): Path<i64>) -> Result<Json<Task>, ApiError> {
-    Ok(Json(tasks(&state)?.store().task(id).await?))
+async fn one(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Task>, ApiError> {
+    Ok(Json(tasks(&state)?.store(user).task(id).await?))
 }
 
 async fn update(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(input): Json<TaskInput>,
 ) -> Result<Json<Task>, ApiError> {
-    Ok(Json(tasks(&state)?.update(id, &input).await?))
+    Ok(Json(tasks(&state)?.update(user, id, &input).await?))
 }
 
 #[derive(Deserialize)]
@@ -166,14 +179,19 @@ struct Done {
 
 async fn set_done(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(d): Json<Done>,
 ) -> Result<Json<Task>, ApiError> {
-    Ok(Json(tasks(&state)?.set_done(id, d.done).await?))
+    Ok(Json(tasks(&state)?.set_done(user, id, d.done).await?))
 }
 
-async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
-    tasks(&state)?.delete(id).await?;
+async fn delete(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    tasks(&state)?.delete(user, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -188,13 +206,14 @@ struct MailLocation {
 /// been archived or moved), else where it was.
 async fn locate_mail(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
 ) -> Result<Json<MailLocation>, ApiError> {
-    let task = tasks(&state)?.store().task(id).await?;
+    let task = tasks(&state)?.store(user).task(id).await?;
     let mail = task.links.mail.ok_or_else(|| {
         ApiError::Core(havre_core::Error::NotFound("This task wasn't made from an email.".into()))
     })?;
-    let store = state.mail.manager()?.database().store(mail.account);
+    let store = state.mail.manager()?.database().mailbox(user, mail.account).await?;
     if let Some(message_id) = &mail.message_id
         && let Some((folder, uid)) = store.locate(message_id).await?
     {
@@ -208,8 +227,11 @@ async fn locate_mail(
     }
 }
 
-async fn lists(State(state): State<AppState>) -> Result<Json<Vec<TaskList>>, ApiError> {
-    Ok(Json(tasks(&state)?.store().lists().await?))
+async fn lists(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<TaskList>>, ApiError> {
+    Ok(Json(tasks(&state)?.store(user).lists().await?))
 }
 
 #[derive(Deserialize)]
@@ -219,10 +241,11 @@ struct NewList {
 
 async fn create_list(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(l): Json<NewList>,
 ) -> Result<(StatusCode, Json<TaskList>), ApiError> {
     let tasks = tasks(&state)?;
-    let list = tasks.store().create_local_list(&l.name).await?;
+    let list = tasks.store(user).create_local_list(&l.name).await?;
     tasks.wake();
     Ok((StatusCode::CREATED, Json(list)))
 }
@@ -236,25 +259,34 @@ struct ListUpdate {
 
 async fn update_list(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(u): Json<ListUpdate>,
 ) -> Result<Json<TaskList>, ApiError> {
-    let store = tasks(&state)?.store();
+    let store = tasks(&state)?.store(user);
     Ok(Json(store.update_list(id, u.name.as_deref(), u.color.as_deref(), u.is_default).await?))
 }
 
-async fn delete_list(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
-    tasks(&state)?.store().delete_local_list(id).await?;
+async fn delete_list(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    tasks(&state)?.store(user).delete_local_list(id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Syncs every user's task lists (nothing of theirs is sent back).
 async fn sync_now(State(state): State<AppState>) -> Result<StatusCode, ApiError> {
     tasks(&state)?.sync_now().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn sources(State(state): State<AppState>) -> Result<Json<Vec<TaskSource>>, ApiError> {
-    Ok(Json(tasks(&state)?.sources().await?))
+async fn sources(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<TaskSource>>, ApiError> {
+    Ok(Json(tasks(&state)?.sources(user).await?))
 }
 
 #[derive(Deserialize)]
@@ -264,8 +296,9 @@ struct Enabled {
 
 async fn set_source(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(key): Path<String>,
     Json(e): Json<Enabled>,
 ) -> Result<Json<Vec<TaskSource>>, ApiError> {
-    Ok(Json(tasks(&state)?.set_sync(&key, e.enabled).await?))
+    Ok(Json(tasks(&state)?.set_sync(user, &key, e.enabled).await?))
 }
