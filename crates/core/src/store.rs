@@ -1190,6 +1190,26 @@ impl Store {
             .await?)
     }
 
+    /// Which of these messages are still in `folder` (Havre's copy). Used
+    /// before acting on a list made a while ago (the assistant's proposals).
+    pub async fn present(&self, folder: &str, uids: &[u32]) -> Result<Vec<u32>> {
+        let mut there = Vec::new();
+        for &uid in uids {
+            let found: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM messages WHERE account_id = ? AND folder = ? AND uid = ?)",
+            )
+            .bind(self.account)
+            .bind(folder)
+            .bind(uid as i64)
+            .fetch_one(&self.pool)
+            .await?;
+            if found {
+                there.push(uid);
+            }
+        }
+        Ok(there)
+    }
+
     /// Marks one message read/unread and keeps the folder counter right.
     pub async fn set_unread(&self, folder: &str, uid: u32, unread: bool) -> Result<()> {
         let mut tx = self.pool.begin().await?;
