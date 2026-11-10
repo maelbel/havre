@@ -108,6 +108,15 @@ const who = (e: FileEmail) => (e.sent ? 'You sent' : e.from || 'Unknown sender')
 
 // ---- The open file -------------------------------------------------------------------
 const selected = computed(() => files.value.find((f) => f.key === selectedKey.value) ?? null)
+// Previews (PDFs, text, audio, video, images): small in the pane, larger in a window.
+const previewable = computed(() => !!selected.value && previewKind(selected.value.name, selected.value.mime, selected.value.size) !== 'none')
+const previewOpen = ref(false)
+watch(selectedKey, () => (previewOpen.value = false))
+const previewFile = computed(() =>
+  previewOpen.value && selected.value
+    ? { url: fileUrl(selected.value), name: selected.value.name, mime: selected.value.mime, size: selected.value.size }
+    : null,
+)
 const fullDate = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -303,8 +312,16 @@ const splitPanes: SplitPaneSpec[] = [
           />
         </div>
         <div class="file-body">
-          <div class="preview" :style="{ '--t': fileTint(selected.kind) }">
-            <img v-if="fileHasPreview(selected)" :src="fileUrl(selected)" :alt="`Preview of ${selected.name}`" loading="lazy" />
+          <div class="preview" :class="{ tall: previewable }" :style="{ '--t': fileTint(selected.kind) }">
+            <LazyFilePreview
+              v-if="previewable"
+              :url="fileUrl(selected)"
+              :name="selected.name"
+              :mime="selected.mime"
+              :size="selected.size"
+              compact
+              class="pane-preview"
+            />
             <span v-else class="mono big-ext" aria-hidden="true">{{ fileExt(selected.name) }}</span>
           </div>
           <div>
@@ -312,7 +329,14 @@ const splitPanes: SplitPaneSpec[] = [
             <div class="faint small">{{ fileKindName(selected.kind) }} · {{ fileSize(selected.size) }}</div>
           </div>
           <div class="actions">
-            <UButton icon="i-havre-download" :href="fileUrl(selected)" :download="selected.name">
+            <UButton v-if="previewable" icon="i-havre-eye" type="button" @click="previewOpen = true">Open</UButton>
+            <UButton
+              icon="i-havre-download"
+              :color="previewable ? 'neutral' : 'primary'"
+              :variant="previewable ? 'outline' : 'solid'"
+              :href="fileUrl(selected)"
+              :download="selected.name"
+            >
               Download
             </UButton>
             <UButton color="neutral" variant="outline" :to="messageLink(selected)">Open the email</UButton>
@@ -358,6 +382,11 @@ const splitPanes: SplitPaneSpec[] = [
     </aside>
     </template>
     </SplitView>
+    <FilePreviewModal :file="previewFile" @close="previewOpen = false">
+      <template v-if="selected" #actions>
+        <UButton color="neutral" variant="outline" :to="messageLink(selected)">Open the email</UButton>
+      </template>
+    </FilePreviewModal>
   </div>
 </template>
 
@@ -641,7 +670,13 @@ h2 {
   justify-content: center;
   overflow: hidden;
 }
-.preview img {
+.preview.tall {
+  height: 240px;
+}
+.pane-preview {
+  width: 100%;
+}
+.pane-preview :deep(.image) {
   width: 100%;
   height: 100%;
   object-fit: cover;
