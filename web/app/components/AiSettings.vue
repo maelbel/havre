@@ -376,7 +376,7 @@ onBeforeUnmount(() => clearInterval(poll))
           :model-value="saved.read_mail"
           :disabled="!!busy"
           label="Mail"
-          description="summaries, drafts, search"
+          description="summaries, drafts, search; archiving, moving and marking (you confirm)"
           class="grow"
           @update:model-value="setRead('read_mail', !saved.read_mail)"
         />

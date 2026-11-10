@@ -486,16 +486,16 @@ async function confirmAll() {
   const todo = pending.value?.left ?? []
   if (!todo.length || running.value) return
   running.value = true
-  const said: string[] = []
+  const runs: AiRun[] = []
   try {
     for (const p of todo) {
-      const msg = await run(p, true)
+      const result = await run(p, true)
       done.value.add(p)
-      if (msg) said.push(msg)
+      if (result) runs.push(result)
     }
-    toast.show(said.join(' · '))
+    aiReport(toast, runs)
   } catch (err) {
-    if (said.length) toast.show(said.join(' · '))
+    aiReport(toast, runs)
     toast.show(apiErrorMessage(err), { tone: 'error' })
   } finally {
     running.value = false

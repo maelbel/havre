@@ -215,18 +215,18 @@ async function confirm(t: AiStoredTurn, editEmail = false) {
   const conv = current.value
   if (!conv || running.value != null) return
   running.value = t.id
-  const said: string[] = []
+  const runs: AiRun[] = []
   try {
     for (const { p, k } of left(t)) {
       // "Edit email": the email opens in compose instead of being sent.
-      const msg = await runAiProposal(p, !(editEmail && p.kind === 'email'))
-      if (msg) said.push(msg)
+      const run = await runAiProposal(p, !(editEmail && p.kind === 'email'))
+      if (run) runs.push(run)
       await markProposalDone(conv.id, t.id, k)
       t.done = [...t.done, k]
     }
-    if (said.length) toast.show(said.join(' · '))
+    aiReport(toast, runs)
   } catch (err) {
-    if (said.length) toast.show(said.join(' · '))
+    aiReport(toast, runs)
     toast.show(apiErrorMessage(err), { tone: 'error' })
   } finally {
     running.value = null
@@ -328,6 +328,9 @@ const IDEAS = [
         </div>
         <div class="can-row" :class="{ off: !settings.read_mail }">
           <HIcon :name="settings.read_mail ? 'check' : 'minus'" :size="14" /><span class="grow">Write emails</span><span class="faint tiny">you confirm</span>
+        </div>
+        <div class="can-row" :class="{ off: !settings.read_mail }">
+          <HIcon :name="settings.read_mail ? 'check' : 'minus'" :size="14" /><span class="grow">Archive, move, mark</span><span class="faint tiny">propose</span>
         </div>
         <div class="can-row" :class="{ off: !settings.read_agenda }">
           <HIcon :name="settings.read_agenda ? 'check' : 'minus'" :size="14" /><span class="grow">Agenda</span><span class="faint tiny">propose</span>
