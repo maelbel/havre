@@ -3,7 +3,7 @@
 // once you confirmed it. Names start with `ai`: composables share one
 // auto-import namespace.
 import type { AgendaEvent, Calendar } from '~/composables/useAgenda'
-import type { AiAnswer, AiProposal } from '~/composables/useAi'
+import type { AiAnswer, AiMailVerb, AiProposal } from '~/composables/useAi'
 import type { Draft } from '~/composables/useCompose'
 import type { NoteSummary } from '~/composables/useNotes'
 import type { Task } from '~/composables/useTasks'
@@ -134,6 +134,13 @@ export function aiProposalTitle(p: AiProposal) {
   if (p.kind === 'note') return `Write the note “${p.title}”`
   if (p.kind === 'append_note') return `Add to the note “${p.title}”`
   if (p.kind === 'complete_task') return `Mark “${p.title}” as done`
+  if (p.kind === 'mail_action') return aiMailTitle(p.action, p.emails.length, p.folder)
+  if (p.kind === 'answer_invitation') {
+    if (p.answer === 'accepted') return `Accept “${p.title}”`
+    if (p.answer === 'declined') return `Decline “${p.title}”`
+    return `Answer “${p.title}”: maybe`
+  }
+  if (p.kind === 'edit_note') return `Edit the note “${p.title}”`
   const to = aiRecipients(p)
   return to.length === 1 ? `Email ${nameIn(to[0])}` : `Email the ${to.length} recipients`
 }
@@ -145,6 +152,61 @@ const AI_PROPOSAL_APP: Record<AiProposal['kind'], string> = {
   note: 'Notes',
   append_note: 'Notes',
   complete_task: 'Tasks',
+  mail_action: 'Mail',
+  answer_invitation: 'Agenda',
+  edit_note: 'Notes',
+}
+
+/** "Archive 3 emails", "Move 1 email to Clients", "Mark 4 emails as read". */
+export function aiMailTitle(action: AiMailVerb, n: number, folder: string | null) {
+  const emails = n === 1 ? '1 email' : `${n} emails`
+  switch (action) {
+    case 'archive':
+      return `Archive ${emails}`
+    case 'trash':
+      return `Move ${emails} to the trash`
+    case 'move':
+      return `Move ${emails} to ${folder}`
+    case 'read':
+      return `Mark ${emails} as read`
+    case 'unread':
+      return `Mark ${emails} as unread`
+    case 'star':
+      return `Star ${emails}`
+    case 'unstar':
+      return `Unstar ${emails}`
+  }
+}
+
+/**
+ * Shows what confirmed proposals did, with *Undo* when some can be undone.
+ * The toaster comes from the caller (`useToasts()` in its setup).
+ */
+export function aiReport(
+  toast: ReturnType<typeof useToasts>,
+  runs: AiRun[],
+) {
+  if (!runs.length) return
+  const undos = runs.flatMap((r) => (r.undo ? [r.undo] : []))
+  const undo = async () => {
+    try {
+      for (const u of undos) await u()
+      toast.show('Undone')
+    } catch (err) {
+      toast.show(apiErrorMessage(err), { tone: 'error' })
+    }
+  }
+  toast.show(
+    runs.map((r) => r.said).join(' · '),
+    undos.length ? { action: { label: 'Undo', run: () => void undo() }, duration: 8000 } : {},
+  )
+}
+
+/** What running a proposal did, and how to take it back when it can be. */
+export interface AiRun {
+  said: string
+  /** Undo (mail actions): puts the emails back as they were. */
+  undo?: () => Promise<void>
 }
 /** "Agenda + Mail": which apps the proposals touch. */
 export function aiProposalApps(proposals: AiProposal[]) {
@@ -168,12 +230,93 @@ export async function aiConflicts(p: AiProposal): Promise<string[]> {
 
 /**
  * Runs a proposal you confirmed: creates or moves the event, writes the
- * email, adds or ticks the task, writes or adds to the note. `send: false` opens the email in
- * compose instead of sending it.
- * Returns what to tell you ("Created “Kick-off”"), or null. Each run is
- * noted in Settings › AI › activity.
+ * email, adds or ticks the task, writes, adds to or edits the note, acts on
+ * emails, answers an invitation. `send: false` opens the email in compose
+ * instead of sending it.
+ * Returns what to tell you ("Created “Kick-off”") and, for emails, how to
+ * undo it; or null. Each run is noted in Settings › AI › activity.
  */
-export async function runAiProposal(p: AiProposal, send: boolean): Promise<string | null> {
+export async function runAiProposal(p: AiProposal, send: boolean): Promise<AiRun | null> {
+  if (p.kind === 'mail_action') return runMailAction(p)
+  const said = await runOther(p, send)
+  return said ? { said } : null
+}
+
+/**
+ * Emails: the same calls as Mail's own buttons, one per account and folder.
+ * Only the emails still where the assistant saw them are touched (the card
+ * may be minutes old).
+ */
+async function runMailAction(p: Extract<AiProposal, { kind: 'mail_action' }>): Promise<AiRun> {
+  const groups = new Map<string, { account: number; folder: string; to: string | null; uids: number[] }>()
+  for (const e of p.emails) {
+    const key = `${e.account}\n${e.folder}\n${e.to ?? ''}`
+    const g = groups.get(key) ?? { account: e.account, folder: e.folder, to: e.to, uids: [] }
+    g.uids.push(e.uid)
+    groups.set(key, g)
+  }
+  const undos: (() => Promise<unknown>)[] = []
+  let acted = 0
+  for (const g of groups.values()) {
+    const { uids } = await $fetch<{ uids: number[] }>('/api/mail/present', {
+      method: 'POST',
+      body: { account: g.account, folder: g.folder, uids: g.uids },
+    })
+    if (!uids.length) continue
+    const sel = { account: g.account, folder: g.folder, uids }
+    if (p.action === 'archive' || p.action === 'trash' || p.action === 'move') {
+      const out = await applyMailAction(g.account, p.action, g.folder, uids, g.to ?? undefined)
+      if (out.result === 'moved') undos.push(() => undoMove(g.account, out.to, g.folder, out.message_ids))
+    } else {
+      // Read / unread / star / unstar: undoing sets the opposite.
+      const flags = (on: boolean) =>
+        p.action === 'read' || p.action === 'unread' ? { seen: on === (p.action === 'read') } : { flagged: on === (p.action === 'star') }
+      await setFlags(sel, flags(true))
+      undos.push(() => setFlags(sel, flags(false)))
+    }
+    acted += uids.length
+  }
+  const gone = p.emails.length - acted
+  if (!acted) throw new Error('Those emails aren’t where they were any more: nothing was changed.')
+  const title = aiMailTitle(p.action, acted, p.folder)
+  logConfirmed('Organized mail', title)
+  // "Archive 3 emails" → "Archived 3 emails"
+  const done = title
+    .replace(/^Archive/, 'Archived')
+    .replace(/^Move/, 'Moved')
+    .replace(/^Mark/, 'Marked')
+    .replace(/^Star/, 'Starred')
+    .replace(/^Unstar/, 'Unstarred')
+  return {
+    said: gone ? `${done} (${gone} had already moved)` : done,
+    undo: async () => {
+      for (const undo of undos) await undo()
+    },
+  }
+}
+
+async function runOther(p: Exclude<AiProposal, { kind: 'mail_action' }>, send: boolean): Promise<string | null> {
+  if (p.kind === 'answer_invitation') {
+    await $fetch('/api/agenda/invitation/respond', {
+      method: 'POST',
+      body: { account: p.account, folder: p.folder, uid: p.uid, index: p.index, response: p.answer },
+    })
+    const said = p.answer === 'accepted' ? 'Accepted' : p.answer === 'declined' ? 'Declined' : 'Answered maybe to'
+    logConfirmed('Answered an invitation', `${said} ${p.title}`)
+    return `${said} “${p.title}”`
+  }
+  if (p.kind === 'edit_note') {
+    // The note as it is now: the passage must still be there, once.
+    const note = await fetchNote(p.note)
+    if (note.body.split(p.find).length !== 2) {
+      throw new Error(`“${note.title}” changed since: open it to make the change yourself.`)
+    }
+    // A function as the replacement: `$&` and such in the text stay as they are.
+    const body = note.body.replace(p.find, () => p.replace)
+    await saveNote(note.id, noteInput(note, { body }))
+    logConfirmed('Edited a note', note.title)
+    return `Edited “${note.title}”`
+  }
   if (p.kind === 'event') {
     const calendars = await $fetch<Calendar[]>('/api/agenda/calendars')
     const writable = calendars.filter((c) => !c.read_only && c.enabled)

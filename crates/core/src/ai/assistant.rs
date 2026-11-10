@@ -115,7 +115,99 @@ pub enum Proposal {
         task: i64,
         title: String,
     },
+    /// Archive, trash, move, mark or star emails the assistant found.
+    MailAction {
+        action: MailVerb,
+        /// The folder's name for `move` (to show; each email has its own `to`).
+        folder: Option<String>,
+        emails: Vec<ProposedEmail>,
+    },
+    /// Answer the invitation in an email.
+    AnswerInvitation {
+        account: i64,
+        folder: String,
+        uid: u32,
+        /// Which attachment is the invitation.
+        index: usize,
+        /// `accepted`, `tentative` or `declined` (what Mail's buttons send).
+        answer: String,
+        title: String,
+        start: i64,
+        end: i64,
+        all_day: bool,
+        organizer: Option<String>,
+        /// What else you have at that time (titles).
+        conflicts: Vec<String>,
+    },
+    /// Replace a passage of a note (found exactly once in it).
+    EditNote {
+        note: i64,
+        title: String,
+        find: String,
+        replace: String,
+    },
 }
+
+/// What a mail proposal does to its emails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MailVerb {
+    Archive,
+    /// To the trash, as in Mail: never deleted for good.
+    Trash,
+    Move,
+    Read,
+    Unread,
+    Star,
+    Unstar,
+}
+
+impl MailVerb {
+    fn parse(word: &str) -> Result<Self> {
+        Ok(match word {
+            "archive" => MailVerb::Archive,
+            "trash" | "delete" => MailVerb::Trash,
+            "move" => MailVerb::Move,
+            "read" => MailVerb::Read,
+            "unread" => MailVerb::Unread,
+            "star" => MailVerb::Star,
+            "unstar" => MailVerb::Unstar,
+            other => {
+                return Err(Error::Config(format!(
+                    "“{other}” isn't one of archive, trash, move, read, unread, star, unstar"
+                )));
+            }
+        })
+    }
+
+    /// "archiving", for the step shown while the assistant works.
+    fn doing(self) -> &'static str {
+        match self {
+            MailVerb::Archive => "archiving",
+            MailVerb::Trash => "trashing",
+            MailVerb::Move => "moving",
+            MailVerb::Read => "marking as read",
+            MailVerb::Unread => "marking as unread",
+            MailVerb::Star => "starring",
+            MailVerb::Unstar => "unstarring",
+        }
+    }
+}
+
+/// An email in a mail proposal: where it is, and what the card shows.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ProposedEmail {
+    pub account: i64,
+    pub folder: String,
+    pub uid: u32,
+    pub from: String,
+    pub subject: String,
+    /// Where it goes, for `move`: a folder of its own account.
+    pub to: Option<String>,
+}
+
+/// At most this many emails in one mail proposal.
+const MAX_PROPOSED_EMAILS: usize = 50;
 
 /// A note's to-do line a task would be made from.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -253,6 +345,9 @@ pub fn tools(set: ToolSet) -> Vec<Tool> {
             "propose_note",
             "propose_note_append",
             "propose_task_done",
+            "propose_mail_action",
+            "propose_invitation_answer",
+            "propose_note_edit",
         ],
         ToolSet::External => &[
             "search_mail",
@@ -275,10 +370,19 @@ pub fn tools(set: ToolSet) -> Vec<Tool> {
 /// their app in the dock: without it, the model isn't even told they exist.
 pub fn allowed(name: &str, s: &super::settings::AiSettings) -> bool {
     match name {
-        "search_mail" | "read_email" | "unread_mail" | "create_draft" | "propose_email" => s.read_mail,
+        "search_mail"
+        | "read_email"
+        | "unread_mail"
+        | "create_draft"
+        | "propose_email"
+        | "propose_mail_action" => s.read_mail,
+        // Answering touches both: the email and your calendar.
+        "propose_invitation_answer" => s.read_mail && s.read_agenda,
         "list_events" | "find_free_time" | "propose_event" | "propose_move" => s.read_agenda,
         "search_people" => s.read_people,
-        "search_notes" | "read_note" | "propose_note" | "propose_note_append" => s.notes_app && s.read_notes,
+        "search_notes" | "read_note" | "propose_note" | "propose_note_append" | "propose_note_edit" => {
+            s.notes_app && s.read_notes
+        }
         "list_tasks" | "propose_task" | "propose_task_done" => s.tasks_app && s.read_tasks,
         "today" => s.read_mail || s.read_agenda,
         _ => true,
@@ -296,6 +400,9 @@ pub fn is_read_only(name: &str) -> bool {
             | "propose_note"
             | "propose_note_append"
             | "propose_task_done"
+            | "propose_mail_action"
+            | "propose_invitation_answer"
+            | "propose_note_edit"
             | "create_draft"
     )
 }
@@ -455,6 +562,38 @@ fn all_tools() -> Vec<Tool> {
             }, "required": ["task"] }),
         },
         Tool {
+            name: "propose_mail_action",
+            description: "Propose doing something to emails found with search_mail or unread_mail (ids like \
+                          m3): archive, trash (the trash, never deleted for good), move (to a folder of their \
+                          account, by name), read, unread, star, unstar. The user sees the emails and confirms; \
+                          nothing changes with this call. Up to 50 emails.",
+            schema: json!({ "type": "object", "properties": {
+                "ids": { "type": "array", "items": { "type": "string" }, "description": "e.g. [\"m3\", \"m5\"]" },
+                "action": { "type": "string", "enum": ["archive", "trash", "move", "read", "unread", "star", "unstar"] },
+                "folder": { "type": "string", "description": "For move: the folder's name, e.g. Clients" }
+            }, "required": ["ids", "action"] }),
+        },
+        Tool {
+            name: "propose_invitation_answer",
+            description: "Propose answering the meeting invitation in an email (an id like m3). The user sees \
+                          the meeting and confirms; the organizer gets the answer then, not with this call.",
+            schema: json!({ "type": "object", "properties": {
+                "id": { "type": "string", "description": "e.g. m3" },
+                "answer": { "type": "string", "enum": ["accept", "tentative", "decline"] }
+            }, "required": ["id", "answer"] }),
+        },
+        Tool {
+            name: "propose_note_edit",
+            description: "Propose replacing a passage of an existing note (an id like n1; read_note gives its \
+                          exact text). `find` must appear exactly once in the note. The user sees the passage \
+                          before and after and confirms; nothing changes with this call.",
+            schema: json!({ "type": "object", "properties": {
+                "note": { "type": "string", "description": "A note id like n1" },
+                "find": { "type": "string", "description": "The exact text to replace, as in the note" },
+                "replace": { "type": "string", "description": "The new text (empty: remove the passage)" }
+            }, "required": ["note", "find", "replace"] }),
+        },
+        Tool {
             name: "propose_email",
             description: "Propose an email. The user sees it in the compose window and sends it themselves.",
             schema: json!({ "type": "object", "properties": {
@@ -535,10 +674,16 @@ impl Ai {
         let tasks = allowed("list_tasks", &settings);
         let mut what = vec!["mail", "calendar"];
         let mut propose = vec!["propose_event / propose_move / propose_email"];
+        if allowed("propose_mail_action", &settings) {
+            propose.push("propose_mail_action (archive, trash, move, read, star emails)");
+        }
+        if allowed("propose_invitation_answer", &settings) {
+            propose.push("propose_invitation_answer");
+        }
         let mut cite = vec!["[m3]", "[e2]"];
         if notes {
             what.push("notes");
-            propose.push("propose_note / propose_note_append");
+            propose.push("propose_note / propose_note_append / propose_note_edit");
             cite.push("[n1]");
         }
         if tasks {
@@ -960,6 +1105,38 @@ impl Session<'_> {
                 self.st.answer.proposals.push(Proposal::CompleteTask { task: task.id, title: task.title });
                 Ok("Shown to the user with a Confirm button. It is not ticked yet.".into())
             }
+            "propose_mail_action" => self.propose_mail_action(input).await,
+            "propose_invitation_answer" => self.propose_invitation_answer(&text("id"), &text("answer")).await,
+            "propose_note_edit" => {
+                let note = self.note_id(&text("note"))?;
+                // The passage as the model wrote it: spaces count, it must match the note.
+                let find = input["find"].as_str().unwrap_or_default().to_owned();
+                let replace = input["replace"].as_str().unwrap_or_default().to_owned();
+                if find.trim().is_empty() {
+                    return Err(Error::Config("say which passage to change (`find`)".into()));
+                }
+                if find == replace {
+                    return Err(Error::Config("`find` and `replace` are the same: nothing changes".into()));
+                }
+                let view = self.ai.db().notes().view(note).await?;
+                match view.note.body.matches(find.as_str()).count() {
+                    0 => {
+                        return Err(Error::Config(
+                            "that passage isn't in the note: read_note shows its exact text".into(),
+                        ));
+                    }
+                    1 => {}
+                    n => {
+                        return Err(Error::Config(format!(
+                            "that passage is in the note {n} times: give a longer one that appears once"
+                        )));
+                    }
+                }
+                let title = view.note.title;
+                self.step("propose_note_edit", format!("Prepared a change to “{title}”"));
+                self.st.answer.proposals.push(Proposal::EditNote { note, title, find, replace });
+                Ok("Shown to the user with a Confirm button. The note is not changed yet.".into())
+            }
             "propose_email" => {
                 let subject = text("subject");
                 self.step("propose_email", format!("Prepared an email “{subject}”"));
@@ -1108,6 +1285,136 @@ impl Session<'_> {
             "Saved in Havre's Drafts (from {}). It is not sent: the user opens it in Havre to review and send.",
             account.email
         ))
+    }
+
+    // ---- Acting on mail -----------------------------------------------------------------
+
+    /// `propose_mail_action`: only emails this conversation found (`m3`),
+    /// still where they were; for *move*, a folder of each email's account.
+    async fn propose_mail_action(&mut self, input: &serde_json::Value) -> Result<String> {
+        let verb = MailVerb::parse(input["action"].as_str().unwrap_or_default().trim())?;
+        let mut ids: Vec<String> = input["ids"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str()).map(|s| s.trim().to_owned()).collect())
+            .unwrap_or_default();
+        // The same email twice counts once (`insert` is false the second time).
+        let mut seen = std::collections::HashSet::new();
+        ids.retain(|id| seen.insert(id.clone()));
+        if ids.is_empty() {
+            return Err(Error::Config("give the emails' ids (from search_mail or unread_mail)".into()));
+        }
+        if ids.len() > MAX_PROPOSED_EMAILS {
+            return Err(Error::Config(format!("at most {MAX_PROPOSED_EMAILS} emails at once")));
+        }
+        let folder_name = input["folder"].as_str().unwrap_or_default().trim().to_owned();
+        if verb == MailVerb::Move && folder_name.is_empty() {
+            return Err(Error::Config("say which folder to move them to".into()));
+        }
+        let mut emails = Vec::new();
+        for id in &ids {
+            let (account, folder, uid) = self.st.message_ids.get(id).cloned().ok_or_else(|| {
+                Error::NotFound(format!("email {id} (use search_mail or unread_mail first)"))
+            })?;
+            let there: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM messages WHERE account_id = ? AND folder = ? AND uid = ?)",
+            )
+            .bind(account)
+            .bind(&folder)
+            .bind(uid as i64)
+            .fetch_one(&self.ai.db().pool())
+            .await?;
+            if !there {
+                return Err(Error::Config(format!("{id} isn't in that folder any more")));
+            }
+            let to = if verb == MailVerb::Move {
+                let path = self.folder_named(account, &folder_name).await?;
+                if path == folder {
+                    return Err(Error::Config(format!("{id} is already in {folder_name}")));
+                }
+                Some(path)
+            } else {
+                None
+            };
+            let hit = self.st.answer.messages.get(id);
+            let from = hit
+                .and_then(|h| h.from.as_ref())
+                .and_then(|p| p.name.clone().filter(|n| !n.is_empty()).or(p.address.clone()))
+                .unwrap_or_default();
+            let subject = hit.map(|h| h.subject.clone()).unwrap_or_default();
+            emails.push(ProposedEmail { account, folder, uid, from, subject, to });
+        }
+        let n = emails.len();
+        let what = if n == 1 { "1 email".to_owned() } else { format!("{n} emails") };
+        self.step("propose_mail_action", format!("Prepared {} {what}", verb.doing()));
+        let folder = (verb == MailVerb::Move).then_some(folder_name);
+        self.st.answer.proposals.push(Proposal::MailAction { action: verb, folder, emails });
+        Ok("Shown to the user with a button. Nothing is changed yet.".into())
+    }
+
+    /// A folder of `account` by its name ("Clients", "clients", "INBOX/Clients"),
+    /// or an error listing the folders there are.
+    async fn folder_named(&self, account: i64, name: &str) -> Result<String> {
+        let folders = self.ai.db().store(account).folders().await?;
+        let wanted = name.to_lowercase();
+        let found = folders
+            .iter()
+            .find(|f| f.folder.name.to_lowercase() == wanted || f.folder.path.to_lowercase() == wanted);
+        match found {
+            Some(f) => Ok(f.folder.path.clone()),
+            None => {
+                let names: Vec<&str> = folders.iter().map(|f| f.folder.name.as_str()).collect();
+                Err(Error::Config(format!(
+                    "there's no folder “{name}”; the folders are: {}",
+                    names.join(", ")
+                )))
+            }
+        }
+    }
+
+    /// `propose_invitation_answer`: the invitation in an email, read like
+    /// Mail's invitation card.
+    async fn propose_invitation_answer(&mut self, id: &str, answer: &str) -> Result<String> {
+        let answer = match answer {
+            "accept" | "accepted" | "yes" => "accepted",
+            "tentative" | "maybe" => "tentative",
+            "decline" | "declined" | "no" => "declined",
+            other => return Err(Error::Config(format!("“{other}” isn't accept, tentative or decline"))),
+        };
+        let (account, folder, uid) =
+            self.st.message_ids.get(id).cloned().ok_or_else(|| {
+                Error::NotFound(format!("email {id} (use search_mail or unread_mail first)"))
+            })?;
+        let raw = self.ai.accounts().engine(account).await?.raw(&folder, uid).await?;
+        let digest = crate::mail::Digest::of(&raw);
+        let ics = digest
+            .files
+            .iter()
+            .find(|f| f.mime == "text/calendar" || f.name.to_lowercase().ends_with(".ics"))
+            .ok_or_else(|| Error::Config(format!("{id} has no invitation")))?;
+        let view =
+            crate::invitations::view(self.ai.accounts(), self.ai.agenda(), account, &folder, uid, ics.index)
+                .await?;
+        if view.method == "CANCEL" {
+            return Err(Error::Config(format!("{id} is a cancellation: there's nothing to answer")));
+        }
+        if !view.can_respond {
+            return Err(Error::Config(format!("{id} can't be answered (it's the user's own meeting)")));
+        }
+        self.step("propose_invitation_answer", format!("Prepared an answer to “{}”", view.title));
+        self.st.answer.proposals.push(Proposal::AnswerInvitation {
+            account,
+            folder,
+            uid,
+            index: ics.index,
+            answer: answer.to_owned(),
+            title: view.title,
+            start: view.start,
+            end: view.end,
+            all_day: view.all_day,
+            organizer: view.organizer,
+            conflicts: view.conflicts.into_iter().map(|e| e.title).collect(),
+        });
+        Ok("Shown to the user with a button. The organizer isn't answered yet.".into())
     }
 
     // ---- Notes and tasks ------------------------------------------------------------
@@ -1710,6 +2017,255 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    /// Runs a tool as the assistant would.
+    async fn tool(ai: &Ai, st: &mut ToolState, name: &str, input: serde_json::Value) -> Result<String> {
+        ai.run_tool(st, ToolSet::Assistant, &call(name, input)).await
+    }
+
+    /// The id (`m2`) the conversation gave the email with this subject.
+    fn found(st: &ToolState, subject: &str) -> String {
+        st.answer.messages.iter().find(|(_, h)| h.subject == subject).map(|(id, _)| id.clone()).unwrap()
+    }
+
+    /// A mailbox with an inbox, an archive and a Clients folder, and these
+    /// unread emails in the inbox (uid, sender, subject).
+    async fn mailbox(db: &Database, me: &str, mail: &[(u32, &str, &str)]) -> i64 {
+        use crate::mail::{FolderRole, MessageSummary, Person};
+        use crate::store::tests::{folder, new_account};
+        let account = db.insert_account(&new_account(me)).await.unwrap().id;
+        let store = db.store(account);
+        store
+            .replace_folders(&[
+                folder("INBOX", FolderRole::Inbox),
+                folder("Archive", FolderRole::Archive),
+                folder("Clients", FolderRole::Other),
+            ])
+            .await
+            .unwrap();
+        let messages: Vec<MessageSummary> = mail
+            .iter()
+            .map(|(uid, from, subject)| MessageSummary {
+                uid: *uid,
+                from: Some(Person { name: Some((*from).into()), address: Some(format!("{uid}@x.test")) }),
+                subject: (*subject).into(),
+                date: Some(chrono::Utc::now().to_rfc3339()),
+                unread: true,
+                ..Default::default()
+            })
+            .collect();
+        store.upsert_messages("INBOX", &messages).await.unwrap();
+        account
+    }
+
+    #[tokio::test]
+    async fn proposes_mail_actions_on_emails_it_found() {
+        let db = Database::in_memory().await.unwrap();
+        let account =
+            mailbox(&db, "me@x.test", &[(1, "Acme", "Promo"), (2, "Claire", "Lyon"), (3, "Bob", "Hi")]).await;
+        let ai = ai(&db).await;
+        let mut st = ToolState::new(LocalTime::server(), "test");
+
+        // Only emails found in this conversation.
+        assert!(
+            tool(&ai, &mut st, "propose_mail_action", json!({ "ids": ["m1"], "action": "archive" }))
+                .await
+                .is_err()
+        );
+        tool(&ai, &mut st, "unread_mail", json!({})).await.unwrap();
+        let (promo, lyon) = (found(&st, "Promo"), found(&st, "Lyon"));
+        tool(
+            &ai,
+            &mut st,
+            "propose_mail_action",
+            json!({ "ids": [promo, promo, lyon], "action": "archive" }),
+        )
+        .await
+        .unwrap();
+        tool(
+            &ai,
+            &mut st,
+            "propose_mail_action",
+            json!({ "ids": [lyon], "action": "move", "folder": "clients" }),
+        )
+        .await
+        .unwrap();
+        tool(&ai, &mut st, "propose_mail_action", json!({ "ids": [promo], "action": "read" })).await.unwrap();
+
+        // Explains what's wrong instead.
+        let err = |r: Result<String>| r.unwrap_err().to_string();
+        let nowhere = err(tool(
+            &ai,
+            &mut st,
+            "propose_mail_action",
+            json!({ "ids": [lyon], "action": "move", "folder": "Nowhere" }),
+        )
+        .await);
+        assert!(nowhere.contains("INBOX") && nowhere.contains("Clients"), "{nowhere}");
+        assert!(
+            err(tool(&ai, &mut st, "propose_mail_action", json!({ "ids": [lyon], "action": "move" })).await)
+                .contains("which folder")
+        );
+        assert!(
+            err(tool(&ai, &mut st, "propose_mail_action", json!({ "ids": [lyon], "action": "burn" })).await)
+                .contains("isn't one of")
+        );
+        let many: Vec<String> = (0..51).map(|i| format!("m{i}")).collect();
+        assert!(
+            err(tool(&ai, &mut st, "propose_mail_action", json!({ "ids": many, "action": "read" })).await)
+                .contains("at most 50")
+        );
+        // Moved elsewhere since it was found.
+        sqlx::query("DELETE FROM messages WHERE uid = 3").execute(&db.pool()).await.unwrap();
+        let bob = found(&st, "Hi");
+        assert!(
+            err(tool(&ai, &mut st, "propose_mail_action", json!({ "ids": [bob], "action": "trash" })).await)
+                .contains("any more")
+        );
+
+        let email = |uid: u32, from: &str, subject: &str, to: Option<&str>| ProposedEmail {
+            account,
+            folder: "INBOX".into(),
+            uid,
+            from: from.into(),
+            subject: subject.into(),
+            to: to.map(str::to_owned),
+        };
+        assert_eq!(
+            st.answer.proposals,
+            [
+                Proposal::MailAction {
+                    action: MailVerb::Archive,
+                    folder: None,
+                    emails: vec![email(1, "Acme", "Promo", None), email(2, "Claire", "Lyon", None)],
+                },
+                Proposal::MailAction {
+                    action: MailVerb::Move,
+                    folder: Some("clients".into()),
+                    emails: vec![email(2, "Claire", "Lyon", Some("Clients"))],
+                },
+                Proposal::MailAction {
+                    action: MailVerb::Read,
+                    folder: None,
+                    emails: vec![email(1, "Acme", "Promo", None)]
+                },
+            ]
+        );
+        // Nothing changed: still in the inbox, still unread.
+        let unread: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE folder = 'INBOX' AND unread = 1")
+                .fetch_one(&db.pool())
+                .await
+                .unwrap();
+        assert_eq!(unread, 2);
+        // The JSON the page reads.
+        let json = serde_json::to_value(&st.answer.proposals[1]).unwrap();
+        assert_eq!((json["kind"].as_str(), json["action"].as_str()), (Some("mail_action"), Some("move")));
+    }
+
+    #[tokio::test]
+    async fn proposes_answering_an_invitation() {
+        let db = Database::in_memory().await.unwrap();
+        // The sample invitation is from Claire to mael@example.net.
+        let account =
+            mailbox(&db, "mael@example.net", &[(5, "Claire Dubois", "Kick-off"), (6, "Bob", "Hi")]).await;
+        let store = db.store(account);
+        store.store_body("INBOX", 5, include_bytes!("../mail/testdata/5-invitation.eml")).await.unwrap();
+        store.store_body("INBOX", 6, b"Subject: Hi\r\n\r\nJust a note.\r\n").await.unwrap();
+        let ai = ai(&db).await;
+        let mut st = ToolState::new(LocalTime::server(), "test");
+        tool(&ai, &mut st, "unread_mail", json!({})).await.unwrap();
+        let (invite, plain) = (found(&st, "Kick-off"), found(&st, "Hi"));
+        assert!(
+            tool(&ai, &mut st, "propose_invitation_answer", json!({ "id": plain, "answer": "accept" }))
+                .await
+                .is_err()
+        );
+        assert!(
+            tool(&ai, &mut st, "propose_invitation_answer", json!({ "id": invite, "answer": "perhaps" }))
+                .await
+                .is_err()
+        );
+        tool(&ai, &mut st, "propose_invitation_answer", json!({ "id": invite, "answer": "accept" }))
+            .await
+            .unwrap();
+        let Proposal::AnswerInvitation { title, answer, uid, organizer, .. } = &st.answer.proposals[0] else {
+            panic!("{:?}", st.answer.proposals)
+        };
+        assert_eq!((title.as_str(), answer.as_str(), *uid), ("Kick-off atelier Lyon", "accepted", 5));
+        assert!(organizer.as_deref().is_some_and(|o| o.contains("Claire")), "{organizer:?}");
+    }
+
+    #[tokio::test]
+    async fn your_own_meeting_has_nothing_to_answer() {
+        let db = Database::in_memory().await.unwrap();
+        let account = mailbox(&db, "claire@example.org", &[(5, "Claire Dubois", "Kick-off")]).await;
+        db.store(account)
+            .store_body("INBOX", 5, include_bytes!("../mail/testdata/5-invitation.eml"))
+            .await
+            .unwrap();
+        let ai = ai(&db).await;
+        let mut st = ToolState::new(LocalTime::server(), "test");
+        ai.run_tool(&mut st, ToolSet::Assistant, &call("unread_mail", json!({}))).await.unwrap();
+        let err = ai
+            .run_tool(
+                &mut st,
+                ToolSet::Assistant,
+                &call("propose_invitation_answer", json!({ "id": "m1", "answer": "accept" })),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("can't be answered"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn proposes_changing_a_passage_of_a_note() {
+        let db = Database::in_memory().await.unwrap();
+        dock(&db, "notes", true).await;
+        let ai = ai(&db).await;
+        let body = "Atelier le 14 novembre.\n\n- Salle 3\n- Salle 3\n";
+        let note = db
+            .notes()
+            .create(&NoteInput { title: "Atelier Lyon".into(), body: body.into(), ..Default::default() })
+            .await
+            .unwrap();
+        let mut st = ToolState::new(LocalTime::server(), "test");
+        tool(&ai, &mut st, "search_notes", json!({ "query": "Atelier" })).await.unwrap();
+        let edit = |find: &str, replace: &str| json!({ "note": "n1", "find": find, "replace": replace });
+        let err = |r: Result<String>| r.unwrap_err().to_string();
+        assert!(
+            err(tool(&ai, &mut st, "propose_note_edit", edit("le 15 novembre", "x")).await)
+                .contains("isn't in the note")
+        );
+        assert!(
+            err(tool(&ai, &mut st, "propose_note_edit", edit("- Salle 3", "- Salle 4")).await)
+                .contains("2 times")
+        );
+        assert!(
+            err(tool(&ai, &mut st, "propose_note_edit", edit("le 14", "le 14")).await).contains("the same")
+        );
+        tool(&ai, &mut st, "propose_note_edit", edit("le 14 novembre", "le 20 novembre")).await.unwrap();
+        assert_eq!(
+            st.answer.proposals,
+            [Proposal::EditNote {
+                note: note.note.id,
+                title: "Atelier Lyon".into(),
+                find: "le 14 novembre".into(),
+                replace: "le 20 novembre".into(),
+            }]
+        );
+        assert_eq!(db.notes().view(note.note.id).await.unwrap().note.body, body, "not changed yet");
+    }
+
+    #[test]
+    fn acting_tools_stay_out_of_mcp() {
+        let external: Vec<&str> = tools(ToolSet::External).iter().map(|t| t.name).collect();
+        for name in ["propose_mail_action", "propose_invitation_answer", "propose_note_edit"] {
+            assert!(!external.contains(&name), "{name}");
+            assert!(!is_read_only(name), "{name}");
+            assert!(tools(ToolSet::Assistant).iter().any(|t| t.name == name), "{name}");
+        }
     }
 
     #[tokio::test]

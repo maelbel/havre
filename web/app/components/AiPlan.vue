@@ -3,7 +3,8 @@ import type { AiProposal } from '~/composables/useAi'
 
 // What the assistant proposes to do, as numbered steps to review: the
 // event (and whether that time is free), the move, the email, the task (to
-// add or to tick), the note (to write or to add to). Nothing here
+// add or to tick), the note (to write, add to or edit), emails to archive,
+// move or mark, an invitation to answer. Nothing here
 // runs anything — the confirm buttons are the caller's (Ctrl+K's bar, the
 // AI app's), so the same steps look the same everywhere.
 const props = defineProps<{
@@ -36,6 +37,15 @@ const LOOK: Record<AiProposal['kind'], { icon: 'mail' | 'calendar' | 'task' | 'n
   note: { icon: 'note', tint: 'var(--c-personal)' },
   append_note: { icon: 'note', tint: 'var(--c-personal)' },
   complete_task: { icon: 'task', tint: 'var(--c-hol)' },
+  mail_action: { icon: 'mail', tint: 'var(--c-work)' },
+  answer_invitation: { icon: 'calendar', tint: 'var(--c-lyon)' },
+  edit_note: { icon: 'note', tint: 'var(--c-personal)' },
+}
+/** A long list of emails shows its first ones, then "and 12 more". */
+const SHOWN = 6
+function invitationWhen(p: Extract<AiProposal, { kind: 'answer_invitation' }>) {
+  if (p.all_day) return `All day, ${new Date(p.start * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })}`
+  return `${aiDayTime(p.start)} – ${timeLabel(new Date(p.end * 1000))}`
 }
 const who = (p: { name: string | null; email: string }) => p.name || p.email
 </script>
@@ -89,6 +99,33 @@ const who = (p: { name: string | null; email: string }) => p.name || p.email
         </template>
         <template v-else-if="p.kind === 'complete_task'">
           <div class="times">Ticked in Tasks (and in its list's app, at the next sync)</div>
+        </template>
+        <template v-else-if="p.kind === 'mail_action'">
+          <ul class="emails">
+            <li v-for="e in p.emails.slice(0, SHOWN)" :key="`${e.account}:${e.folder}:${e.uid}`">
+              <span class="efrom">{{ e.from || 'Unknown sender' }}</span>
+              <span class="esub">{{ e.subject || '(no subject)' }}</span>
+            </li>
+            <li v-if="p.emails.length > SHOWN" class="faint">and {{ p.emails.length - SHOWN }} more</li>
+          </ul>
+          <div class="times">{{ p.action === 'trash' ? 'To the trash, as in Mail: you can take them back.' : 'You can undo it right after.' }}</div>
+        </template>
+        <template v-else-if="p.kind === 'answer_invitation'">
+          <div class="times mono">{{ invitationWhen(p) }}</div>
+          <div v-if="p.organizer" class="chips">
+            <span class="chip"><HIcon name="people" :size="11" /> {{ p.organizer.split(' <')[0] }}</span>
+          </div>
+          <div class="times">The organizer gets your answer by email.</div>
+          <div v-if="p.answer !== 'declined' && p.conflicts.length" class="conflict">
+            <HIcon name="alert" :size="13" /> Overlaps {{ p.conflicts.map((t) => `“${t}”`).join(', ') }}
+          </div>
+        </template>
+        <template v-else-if="p.kind === 'edit_note'">
+          <!-- Both as text: shown, never run as HTML. -->
+          <div class="diff">
+            <div class="before"><span class="eyebrow">Before</span><div class="mbody">{{ p.find }}</div></div>
+            <div class="after"><span class="eyebrow">After</span><div class="mbody">{{ p.replace || '(removed)' }}</div></div>
+          </div>
         </template>
         <template v-if="p.kind === 'event' || p.kind === 'move'">
           <div v-if="conflicts.get(p) && conflicts.get(p)!.length" class="conflict">
@@ -225,5 +262,56 @@ const who = (p: { name: string | null; email: string }) => p.name || p.email
   gap: 4px;
   color: var(--ok);
   font-size: 13px;
+}
+/* Emails to act on: sender, then subject. */
+.emails {
+  list-style: none;
+  margin: 8px 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.emails li {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.efrom {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.esub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+/* A note's passage, before and after. */
+.diff {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.diff > div {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.diff .mbody {
+  white-space: pre-wrap;
+  font-size: 13px;
+  margin-top: 4px;
+}
+.before .mbody {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--muted) 60%, transparent);
 }
 </style>

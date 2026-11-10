@@ -9,6 +9,7 @@
 //! | POST   | /mail/labels `{account, folder, uids, label, on}` | add or remove a label |
 //! | POST   | /mail/snooze `{account, folder, uids, until}` | snooze until a time (`null`: wake up now) |
 //! | POST   | /mail/undo `{account, from, to, message_ids}` | move messages back after archive/move/delete |
+//! | POST   | /mail/present `{account, folder, uids}` | which are still there `{uids}` (before acting on an old list) |
 //! | POST   | /labels `{name, color}` | new label |
 //! | PATCH  | /labels/{id} `{name?, color?}` | rename, recolor |
 //! | DELETE | /labels/{id} | delete a label (messages stay) |
@@ -37,6 +38,7 @@ pub fn routes() -> Router<AppState> {
         .route("/mail/labels", post(label_messages))
         .route("/mail/snooze", post(snooze))
         .route("/mail/undo", post(undo))
+        .route("/mail/present", post(present))
         .route("/labels", post(create_label))
         .route("/labels/{id}", patch(update_label).delete(delete_label))
 }
@@ -231,4 +233,16 @@ async fn update_label(
 async fn delete_label(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
     manager(&state)?.database().delete_label(id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/mail/present`: which of these messages are still in the folder.
+/// The assistant's cards check before acting (a card can be minutes old).
+async fn present(State(state): State<AppState>, Json(s): Json<Selection>) -> Result<Json<Value>, ApiError> {
+    s.check()?;
+    let uids = match &state.mail {
+        // Demo: nothing moves on its own.
+        MailSource::Demo(_) => s.uids.clone(),
+        MailSource::Accounts(m) => m.database().store(s.account).present(&s.folder, &s.uids).await?,
+    };
+    Ok(Json(json!({ "uids": uids })))
 }

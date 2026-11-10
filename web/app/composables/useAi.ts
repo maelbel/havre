@@ -235,6 +235,33 @@ export type AiProposal =
   | { kind: 'append_note'; note: number; title: string; text: string }
   /** Tick an existing task. */
   | { kind: 'complete_task'; task: number; title: string }
+  /** Archive, trash, move, mark or star emails the assistant found. */
+  | {
+      kind: 'mail_action'
+      action: AiMailVerb
+      /** The folder's name, for `move`. */
+      folder: string | null
+      emails: { account: number; folder: string; uid: number; from: string; subject: string; to: string | null }[]
+    }
+  /** Answer the invitation in an email. */
+  | {
+      kind: 'answer_invitation'
+      account: number
+      folder: string
+      uid: number
+      index: number
+      answer: 'accepted' | 'tentative' | 'declined'
+      title: string
+      start: number
+      end: number
+      all_day: boolean
+      organizer: string | null
+      conflicts: string[]
+    }
+  /** Replace a passage of a note. */
+  | { kind: 'edit_note'; note: number; title: string; find: string; replace: string }
+
+export type AiMailVerb = 'archive' | 'trash' | 'move' | 'read' | 'unread' | 'star' | 'unstar'
 
 export interface AiAnswer {
   text: string

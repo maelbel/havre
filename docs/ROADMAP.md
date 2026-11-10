@@ -30,7 +30,11 @@ Each step teaches something and leaves the app working.
 ## 3 · Login, then write mail ✅
 - ✅ OAuth2 sign-in for Microsoft 365 / Outlook.com and Gmail / Google Workspace (window like Thunderbird, PKCE, XOAUTH2).
 - ✅ **Login for Havre itself** (single owner): first-run password, Argon2, session cookies, throttling, Settings › Security.
-- Later: several users, passkeys.
+- Later: **several users**, each with their own mail accounts, calendars, contacts, notes, tasks, files and AI
+  conversations, kept apart (the family on one Havre); **sign-in with SSO** (OpenID Connect: Authentik, and others
+  like Keycloak or Authelia), so an account made in Authentik is enough to use Havre, with the owner deciding who
+  may sign in (a group). **AI for the admin only**: the AI provider costs money and has limits, so other users
+  don't see the AI app or any AI part, and their mail isn't sent to it or indexed for it. Passkeys.
 - ✅ Compose, reply, reply all, forward with SMTP (`lettre`): password or OAuth2 (`XOAUTH2`), copy filed in Sent, `\Answered` flag.
 - ✅ Drafts saved as you type, attachments, recipient suggestions; SMTP settings and sender name per account.
 - Later: ~~rich text editor~~ (step 25), ~~signatures, undo send, send later~~ (step 24). (Drafts on the server: step 17.)
@@ -41,7 +45,11 @@ Each step teaches something and leaves the app working.
 - ✅ Local copy kept in sync (5 min, live updates); Havre's own local calendar.
 - ✅ `.ics` invitations detected in mail → "Add to Agenda".
 - ✅ Reply to invitations (accept / maybe / decline) and a shared People list with Mail: see step 5.
-- Later: drag to move, reminders. (Repeating events: step 16.)
+- Later: ~~drag to move, reminders~~ (step 21). (Repeating events: step 16.)
+- Later: **import into Havre's own calendar**, to keep your agenda local: copy the events of the calendars Havre
+  can manage (Microsoft, Google, CalDAV) or of an `.ics` file into it, choosing how: which calendars, how far back
+  and ahead, a one-time copy or kept in step, what to do with duplicates, and whether repeating events, reminders,
+  guests and online-meeting links come along.
 - *Learned:* REST APIs, WebDAV/XML, iCalendar and `RRULE` expansion, time zones.
 
 ## 5 · App platform ✅
@@ -69,7 +77,7 @@ Each step teaches something and leaves the app working.
 - ✅ Claude Code: as an AI provider (`claude -p`, your Claude plan), Havre as an MCP server for Claude Code and
   other AI apps (tokens in Settings › Claude Code), and the repo set up for coding with it (`CLAUDE.md`,
   `.claude/`).
-- Later: thread-level summaries, more tools (move/archive mail, answer invitations).
+- Later: thread-level summaries, ~~more tools (move/archive mail, answer invitations)~~ (step 28).
 - *Learned:* traits vs. enums for providers, HTTP streaming (SSE in, chunked text out), tool calling,
   embeddings and cosine similarity, prompt injection and why actions need confirmation.
 
@@ -297,7 +305,8 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - ✅ New proposals, confirmed by you: `propose_note_append` (text added at the end of a note) and
   `propose_task_done` (tick a task), for notes and tasks the assistant found, with their apps in the dock.
 - ✅ Tested on recorded streams cut at every byte, and with a pretend model server (tokio's `TcpListener`).
-- Later: changing a note's existing text, the assistant deleting anything (never without a click).
+- Later: ~~changing a note's existing text~~ (step 28), the assistant deleting events, tasks or notes (never without a
+  click).
 - *Learned:* putting a protocol together from pieces of any size (buffer until a full line, JSON from fragments),
   `tokio::join!` and `async move` blocks, an unbounded channel and an `AtomicBool` shared between tasks,
   cancelling by dropping a `Receiver`; on the web, `ReadableStream`, `AbortController`, and why a click's default
@@ -459,3 +468,22 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - *Learned:* why strangers' files never get your origin, `fetch` + `TextDecoder` + `Blob` + object URLs, Web Workers,
   `IntersectionObserver` for drawing on demand, sizing placeholders so scrolling lands right, lazy components and
   dynamic `import()`, polyfilled "legacy" builds.
+
+## 28 · The assistant acts, with your click ✅
+- ✅ Three new tools that only *prepare*: `propose_mail_action` (archive, trash, move to a folder by name, read,
+  unread, star, unstar; up to 50 emails it found, checked to still be there; an unknown folder is answered with the
+  list), `propose_invitation_answer` (read like Mail's invitation card; not for cancellations or your own meetings),
+  `propose_note_edit` (a passage found exactly once). They follow Settings › AI's switches and stay out of MCP.
+- ✅ Cards listing what each touches (senders and subjects, the folder; the meeting, its organizer and conflicts; the
+  passage before and after). **Confirm** uses Mail's own calls (`/mail/actions`, `/mail/flags`) with *Undo*, answers
+  the invitation, saves the note. Stale cards: only emails still there are touched (`POST /mail/present`), a note
+  changed since is left alone, and the button says so.
+- ✅ Tested: each tool (ids only from what it found, missing folder, the 50 limit, a moved email, a plain email, your
+  own meeting, a passage missing or found twice; nothing changed before Confirm; out of MCP); in Chromium with the
+  AI mock against Dovecot and SMTP: archive then Undo, read and star from one answer, a move with one email moved
+  meanwhile, an invitation accepted (the `REPLY` sent), a note edited and a stale one kept, the activity log, light
+  and phone. The local AI mock (kept outside the repository) now streams tool calls and has these scripts.
+- Later: deleting events, tasks or notes from the assistant, labels and snoozing, changing an event's details.
+- *Learned:* tools a model can't misuse (only ids it found, errors that teach it), propose-then-confirm, checking at
+  confirm time that nothing changed, undo on the same path as the app's buttons, Rust's borrow rules with closures
+  (`&mut` held by a closure blocks other reads: a plain function instead).
