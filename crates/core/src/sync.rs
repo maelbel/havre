@@ -38,6 +38,7 @@ use crate::{
         imap::{Session, connect, folders_in_session, is_flagged, is_unread, summaries},
     },
     store::{Flags, FolderInfo, FolderState, Store},
+    users::UserId,
 };
 
 /// Headers fetched per round trip. Small enough that the first screen of a
@@ -133,12 +134,18 @@ struct Request {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AccountEvent {
     pub account: i64,
+    /// Whose it is: the page only sends a user their own events (a reminder's
+    /// title, a new email's folder…). Not sent to the browser.
+    #[serde(skip)]
+    pub user: UserId,
     #[serde(flatten)]
     pub event: SyncEvent,
 }
 
 pub struct SyncEngine {
     account: i64,
+    /// Whose account it is: its events go to that user's pages only.
+    user: UserId,
     config: ImapConfig,
     store: Store,
     events: broadcast::Sender<AccountEvent>,
@@ -155,6 +162,7 @@ impl SyncEngine {
     /// Events go to `events`, shared by all accounts.
     pub fn start(
         account: i64,
+        user: UserId,
         config: ImapConfig,
         store: Store,
         events: broadcast::Sender<AccountEvent>,
@@ -162,6 +170,7 @@ impl SyncEngine {
         let (requests, inbox) = mpsc::unbounded_channel();
         let engine = Arc::new(Self {
             account,
+            user,
             config,
             store,
             events,
@@ -183,6 +192,10 @@ impl SyncEngine {
 
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    pub fn user(&self) -> UserId {
+        self.user
     }
 
     pub fn config(&self) -> &ImapConfig {
@@ -229,7 +242,7 @@ impl SyncEngine {
 
     fn emit(&self, event: SyncEvent) {
         // `send` fails only when nobody listens: that's fine.
-        let _ = self.events.send(AccountEvent { account: self.account, event });
+        let _ = self.events.send(AccountEvent { account: self.account, user: self.user, event });
     }
 
     fn update_status(&self, change: impl FnOnce(&mut SyncStatus)) {

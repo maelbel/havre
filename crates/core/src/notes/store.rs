@@ -7,11 +7,14 @@ use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
 use super::markdown::{self, Block};
 use super::{EventLink, MailLink, Note, NoteInput, NotePerson, NoteSummary, NoteView, PersonLink};
+use crate::users::UserId;
 use crate::{Error, Result};
 
 #[derive(Clone)]
 pub struct NoteStore {
     pool: SqlitePool,
+    /// Whose notes: every query asks for this user's only.
+    user: UserId,
 }
 
 /// Which notes to list (`GET /api/notes?…`). Every filter is optional.
@@ -42,8 +45,8 @@ fn now() -> i64 {
 }
 
 impl NoteStore {
-    pub(crate) fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub(crate) fn new(pool: SqlitePool, user: UserId) -> Self {
+        Self { pool, user }
     }
 
     /// Takes the write lock at once (see `TaskStore::write` for why).
@@ -62,7 +65,8 @@ impl NoteStore {
         let person = query.person.as_ref().map(|p| p.trim().to_lowercase());
         let rows = sqlx::query(sql!(
             "SELECT {COLUMNS} FROM notes n
-             WHERE (? IS NULL OR n.title LIKE ? OR n.body LIKE ?)
+             WHERE n.user_id = ?
+               AND (? IS NULL OR n.title LIKE ? OR n.body LIKE ?)
                AND (? IS NULL OR EXISTS (SELECT 1 FROM note_people p WHERE p.note_id = n.id AND p.email = ?))
                AND (? IS NULL OR n.event_uid = ?)
                AND (? IS NULL OR n.event_start = ?)
@@ -70,6 +74,7 @@ impl NoteStore {
                AND (? IS NULL OR n.pinned = ?)
              ORDER BY n.pinned DESC, n.updated_at DESC, n.id DESC"
         ))
+        .bind(self.user.0)
         .bind(&first)
         .bind(&first)
         .bind(&first)
@@ -114,12 +119,17 @@ impl NoteStore {
 
     /// How many notes there are (the App library's Notes card).
     pub async fn count(&self) -> Result<i64> {
-        Ok(sqlx::query_scalar("SELECT COUNT(*) FROM notes").fetch_one(&self.pool).await?)
+        Ok(sqlx::query_scalar("SELECT COUNT(*) FROM notes WHERE user_id = ?")
+            .bind(self.user.0)
+            .fetch_one(&self.pool)
+            .await?)
     }
 
     pub async fn note(&self, id: i64) -> Result<Note> {
-        let row = sqlx::query(sql!("SELECT {COLUMNS} FROM notes WHERE id = ?"))
+        // Another user's note is "not found", like one that doesn't exist.
+        let row = sqlx::query(sql!("SELECT {COLUMNS} FROM notes WHERE id = ? AND user_id = ?"))
             .bind(id)
+            .bind(self.user.0)
             .fetch_optional(&self.pool)
             .await?
             .ok_or_else(|| Error::NotFound(format!("note {id}")))?;
@@ -152,12 +162,15 @@ impl NoteStore {
     pub async fn create(&self, input: &NoteInput) -> Result<NoteView> {
         let now = now();
         let mut tx = self.write().await?;
-        let id = sqlx::query("INSERT INTO notes (title, body, created_at, updated_at) VALUES ('', '', ?, ?)")
-            .bind(now)
-            .bind(now)
-            .execute(&mut *tx)
-            .await?
-            .last_insert_rowid();
+        let id = sqlx::query(
+            "INSERT INTO notes (title, body, created_at, updated_at, user_id) VALUES ('', '', ?, ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .bind(self.user.0)
+        .execute(&mut *tx)
+        .await?
+        .last_insert_rowid();
         write_note(&mut tx, id, input, now).await?;
         tx.commit().await?;
         self.view(id).await
@@ -174,9 +187,10 @@ impl NoteStore {
 
     pub async fn set_pinned(&self, id: i64, pinned: bool) -> Result<NoteView> {
         // Pinning isn't an edit: `updated_at` stays.
-        let done = sqlx::query("UPDATE notes SET pinned = ? WHERE id = ?")
+        let done = sqlx::query("UPDATE notes SET pinned = ? WHERE id = ? AND user_id = ?")
             .bind(pinned)
             .bind(id)
+            .bind(self.user.0)
             .execute(&self.pool)
             .await?;
         if done.rows_affected() == 0 {
@@ -188,7 +202,11 @@ impl NoteStore {
     pub async fn delete(&self, id: i64) -> Result<()> {
         // `note_people` and `note_tasks` go with it (`ON DELETE CASCADE`);
         // the tasks themselves stay in Tasks.
-        sqlx::query("DELETE FROM notes WHERE id = ?").bind(id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM notes WHERE id = ? AND user_id = ?")
+            .bind(id)
+            .bind(self.user.0)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -198,10 +216,11 @@ impl NoteStore {
         let note = self.note(id).await?;
         let body = markdown::set_todo(&note.body, line, done)
             .ok_or_else(|| Error::Config("This line is no longer a to-do. Reload the note.".into()))?;
-        sqlx::query("UPDATE notes SET body = ?, updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE notes SET body = ?, updated_at = ? WHERE id = ? AND user_id = ?")
             .bind(&body)
             .bind(now())
             .bind(id)
+            .bind(self.user.0)
             .execute(&self.pool)
             .await?;
         let view = self.view(id).await?;
@@ -226,6 +245,7 @@ impl NoteStore {
 
     /// Remembers that the to-do `text` became task `task`.
     pub async fn link_task(&self, id: i64, text: &str, task: i64) -> Result<NoteView> {
+        self.note(id).await?; // yours, or "not found"
         sqlx::query(
             "INSERT INTO note_tasks (note_id, text, task_id) VALUES (?, ?, ?)
              ON CONFLICT (note_id, text) DO UPDATE SET task_id = excluded.task_id",
@@ -241,9 +261,11 @@ impl NoteStore {
     /// Everyone with notes about them, most notes first.
     pub async fn people(&self) -> Result<Vec<NotePerson>> {
         let rows: Vec<(String, Option<String>, i64)> = sqlx::query_as(
-            "SELECT email, MAX(name), COUNT(*) FROM note_people GROUP BY email
-             ORDER BY COUNT(*) DESC, MAX(name) COLLATE NOCASE",
+            "SELECT p.email, MAX(p.name), COUNT(*) FROM note_people p JOIN notes n ON n.id = p.note_id
+             WHERE n.user_id = ? GROUP BY p.email
+             ORDER BY COUNT(*) DESC, MAX(p.name) COLLATE NOCASE",
         )
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|(email, name, notes)| NotePerson { email, name, notes }).collect())
@@ -260,10 +282,13 @@ impl NoteStore {
 
     /// Every note's people at once (one query instead of one per note).
     async fn all_people(&self) -> Result<HashMap<i64, Vec<PersonLink>>> {
-        let rows: Vec<(i64, String, Option<String>)> =
-            sqlx::query_as("SELECT note_id, email, name FROM note_people ORDER BY rowid")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+            "SELECT p.note_id, p.email, p.name FROM note_people p JOIN notes n ON n.id = p.note_id
+                 WHERE n.user_id = ? ORDER BY p.rowid",
+        )
+        .bind(self.user.0)
+        .fetch_all(&self.pool)
+        .await?;
         let mut map: HashMap<i64, Vec<PersonLink>> = HashMap::new();
         for (id, email, name) in rows {
             // `entry(..).or_default()`: the Vec for that note, made empty
@@ -357,6 +382,7 @@ mod tests {
     use crate::notes::from_meeting;
     use crate::store::Database;
     use crate::tasks::TaskQuery;
+    use crate::users::UserId;
 
     fn person(email: &str, name: &str) -> PersonLink {
         PersonLink { email: email.into(), name: Some(name.into()) }
@@ -365,7 +391,7 @@ mod tests {
     #[tokio::test]
     async fn notes_and_their_links() {
         let db = Database::in_memory().await.unwrap();
-        let notes = db.notes();
+        let notes = db.notes(UserId::ADMIN);
 
         // From a meeting: its title, its people, the headings.
         let kickoff = EventLink { uid: "kick@lyon".into(), title: "Lyon kick-off".into(), start: 1_000 };
@@ -434,7 +460,7 @@ mod tests {
         // Deleting a note keeps its tasks.
         notes.delete(note.note.id).await.unwrap();
         assert!(notes.note(note.note.id).await.is_err());
-        assert_eq!(db.tasks().tasks(&TaskQuery::default()).await.unwrap().len(), 1);
+        assert_eq!(db.tasks(UserId::ADMIN).tasks(&TaskQuery::default()).await.unwrap().len(), 1);
         assert_eq!(notes.people().await.unwrap().len(), 0, "its people went with it");
     }
 }

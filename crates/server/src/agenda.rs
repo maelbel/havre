@@ -21,8 +21,6 @@
 //! | GET · PATCH | /agenda/settings `{default_reminder?, default_all_day_reminder?}` | what new events start with (`null`: no reminder) |
 //! | PUT    | /agenda/time-zone `{zone}` | the browser's time zone, to ring all-day reminders at your 9:00 |
 
-use std::sync::Arc;
-
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -31,13 +29,13 @@ use axum::{
 };
 use havre_core::{
     agenda::{
-        Agenda, AgendaSettings, AgendaSettingsUpdate, CalDavAccount, Calendar, Event, EventInput, Scope,
+        AgendaSettings, AgendaSettingsUpdate, CalDavAccount, Calendar, Event, EventInput, Scope, UserAgenda,
     },
     invitations::{self, InvitationView},
 };
 use serde::Deserialize;
 
-use crate::{AppState, api::ApiError};
+use crate::{AppState, api::ApiError, auth::CurrentUser};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -59,15 +57,19 @@ pub fn routes() -> Router<AppState> {
         .route("/agenda/time-zone", axum::routing::put(set_time_zone))
 }
 
-async fn settings(State(state): State<AppState>) -> Result<Json<AgendaSettings>, ApiError> {
-    Ok(Json(agenda(&state)?.store().settings().await?))
+async fn settings(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<AgendaSettings>, ApiError> {
+    Ok(Json(agenda(&state, user)?.store().settings().await?))
 }
 
 async fn update_settings(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(update): Json<AgendaSettingsUpdate>,
 ) -> Result<Json<AgendaSettings>, ApiError> {
-    Ok(Json(agenda(&state)?.store().update_settings(&update).await?))
+    Ok(Json(agenda(&state, user)?.store().update_settings(&update).await?))
 }
 
 #[derive(Deserialize)]
@@ -77,21 +79,27 @@ struct TimeZone {
 
 async fn set_time_zone(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(t): Json<TimeZone>,
 ) -> Result<StatusCode, ApiError> {
-    agenda(&state)?.store().set_time_zone(&t.zone).await?;
+    agenda(&state, user)?.store().set_time_zone(&t.zone).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn agenda(state: &AppState) -> Result<&Arc<Agenda>, ApiError> {
-    state
+/// `user`'s Agenda: every handler goes through it, so it only sees their calendars.
+fn agenda(state: &AppState, user: havre_core::users::UserId) -> Result<UserAgenda<'_>, ApiError> {
+    let agenda = state
         .agenda
         .as_ref()
-        .ok_or_else(|| ApiError::BadRequest("The Agenda isn't available in demo mode.".into()))
+        .ok_or_else(|| ApiError::BadRequest("The Agenda isn't available in demo mode.".into()))?;
+    Ok(agenda.for_user(user))
 }
 
-async fn calendars(State(state): State<AppState>) -> Result<Json<Vec<Calendar>>, ApiError> {
-    Ok(Json(agenda(&state)?.store().calendars().await?))
+async fn calendars(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<Calendar>>, ApiError> {
+    Ok(Json(agenda(&state, user)?.store().calendars().await?))
 }
 
 #[derive(Deserialize)]
@@ -103,10 +111,11 @@ struct CalendarUpdate {
 
 async fn update_calendar(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(update): Json<CalendarUpdate>,
 ) -> Result<Json<Calendar>, ApiError> {
-    let calendar = agenda(&state)?
+    let calendar = agenda(&state, user)?
         .update_calendar(id, update.enabled, update.color.as_deref(), update.is_default)
         .await?;
     Ok(Json(calendar))
@@ -120,16 +129,18 @@ struct Period {
 
 async fn events(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(p): Query<Period>,
 ) -> Result<Json<Vec<Event>>, ApiError> {
-    Ok(Json(agenda(&state)?.events(p.from, p.to).await?))
+    Ok(Json(agenda(&state, user)?.events(p.from, p.to).await?))
 }
 
 async fn create_event(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(input): Json<EventInput>,
 ) -> Result<(StatusCode, Json<Event>), ApiError> {
-    Ok((StatusCode::CREATED, Json(agenda(&state)?.create(&input).await?)))
+    Ok((StatusCode::CREATED, Json(agenda(&state, user)?.create(&input).await?)))
 }
 
 /// `?scope=`: which occurrences of a repeating event (ignored for the others).
@@ -141,29 +152,37 @@ struct ScopeQuery {
 
 async fn update_event(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Query(q): Query<ScopeQuery>,
     Json(input): Json<EventInput>,
 ) -> Result<Json<Event>, ApiError> {
-    Ok(Json(agenda(&state)?.update(id, &input, q.scope).await?))
+    Ok(Json(agenda(&state, user)?.update(id, &input, q.scope).await?))
 }
 
 async fn delete_event(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Query(q): Query<ScopeQuery>,
 ) -> Result<StatusCode, ApiError> {
-    agenda(&state)?.delete(id, q.scope).await?;
+    agenda(&state, user)?.delete(id, q.scope).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn sync_now(State(state): State<AppState>) -> Result<StatusCode, ApiError> {
-    agenda(&state)?.sync_now().await?;
+async fn sync_now(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<StatusCode, ApiError> {
+    agenda(&state, user)?.sync_now().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn caldav_accounts(State(state): State<AppState>) -> Result<Json<Vec<CalDavAccount>>, ApiError> {
-    Ok(Json(agenda(&state)?.store().caldav_accounts().await?))
+async fn caldav_accounts(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<CalDavAccount>>, ApiError> {
+    Ok(Json(agenda(&state, user)?.store().caldav_accounts().await?))
 }
 
 #[derive(Deserialize)]
@@ -178,14 +197,19 @@ struct NewCalDav {
 /// Checks the address and login by listing the calendars, then saves.
 async fn add_caldav(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(new): Json<NewCalDav>,
 ) -> Result<(StatusCode, Json<CalDavAccount>), ApiError> {
-    let added = agenda(&state)?.add_caldav(&new.name, &new.url, &new.username, &new.password).await?;
+    let added = agenda(&state, user)?.add_caldav(&new.name, &new.url, &new.username, &new.password).await?;
     Ok((StatusCode::CREATED, Json(added)))
 }
 
-async fn remove_caldav(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
-    agenda(&state)?.remove_caldav(id).await?;
+async fn remove_caldav(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    agenda(&state, user)?.remove_caldav(id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -202,11 +226,12 @@ struct Invitation {
 /// "Add to Agenda" on an invitation received by email.
 async fn add_invitation(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(inv): Json<Invitation>,
 ) -> Result<(StatusCode, Json<Vec<Event>>), ApiError> {
-    let file = state.mail.attachment(inv.account, &inv.folder, inv.uid, inv.index).await?;
+    let file = state.mail.attachment(user, inv.account, &inv.folder, inv.uid, inv.index).await?;
     let text = String::from_utf8_lossy(&file.bytes);
-    let added = agenda(&state)?.add_from_ics(&text, inv.calendar).await?;
+    let added = agenda(&state, user)?.add_from_ics(&text, inv.calendar).await?;
     Ok((StatusCode::CREATED, Json(added)))
 }
 
@@ -222,18 +247,20 @@ struct InvitationRef {
 /// The card Mail shows above an invitation.
 async fn invitation(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(r): Query<InvitationRef>,
 ) -> Result<Json<InvitationView>, ApiError> {
     let accounts = state.mail.manager()?;
-    Ok(Json(invitations::view(accounts, agenda(&state)?, r.account, &r.folder, r.uid, r.index).await?))
+    Ok(Json(invitations::view(accounts, &agenda(&state, user)?, r.account, &r.folder, r.uid, r.index).await?))
 }
 
 /// The Agenda's "Found in Mail": invitations still waiting for you.
 async fn found_in_mail(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<invitations::FoundInvitation>>, ApiError> {
     let accounts = state.mail.manager()?;
-    Ok(Json(invitations::found_in_mail(accounts, agenda(&state)?, 6).await?))
+    Ok(Json(invitations::found_in_mail(accounts, &agenda(&state, user)?, 6).await?))
 }
 
 #[derive(Deserialize)]
@@ -247,19 +274,30 @@ struct InvitationAnswer {
 /// Accept / Maybe / Decline, straight from Mail.
 async fn respond_invitation(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(a): Json<InvitationAnswer>,
 ) -> Result<Json<InvitationView>, ApiError> {
     let r = a.invitation;
     let accounts = state.mail.manager()?;
-    let view =
-        invitations::respond(accounts, agenda(&state)?, r.account, &r.folder, r.uid, r.index, &a.response)
-            .await?;
+    let view = invitations::respond(
+        accounts,
+        &agenda(&state, user)?,
+        r.account,
+        &r.folder,
+        r.uid,
+        r.index,
+        &a.response,
+    )
+    .await?;
     Ok(Json(view))
 }
 
-async fn pending_invitations(State(state): State<AppState>) -> Result<Json<Vec<Event>>, ApiError> {
+async fn pending_invitations(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<Event>>, ApiError> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    Ok(Json(agenda(&state)?.store().pending_invitations(now as i64).await?))
+    Ok(Json(agenda(&state, user)?.store().pending_invitations(now as i64).await?))
 }
 
 #[derive(Deserialize)]
@@ -269,20 +307,22 @@ struct Answer {
 
 async fn respond_event(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(a): Json<Answer>,
 ) -> Result<Json<Event>, ApiError> {
-    Ok(Json(agenda(&state)?.respond(id, &a.response).await?))
+    Ok(Json(agenda(&state, user)?.respond(id, &a.response).await?))
 }
 
 /// "Related emails" in the event panel: what its people sent lately.
 async fn related(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
 ) -> Result<Json<havre_core::people::Related>, ApiError> {
-    let event = agenda(&state)?.store().event(id).await?;
+    let event = agenda(&state, user)?.store().event(id).await?;
     let db = state.mail.manager()?.database();
-    let mine: Vec<String> = db.accounts().await?.into_iter().map(|a| a.email.to_lowercase()).collect();
+    let mine: Vec<String> = db.accounts(user).await?.into_iter().map(|a| a.email.to_lowercase()).collect();
     let mut emails: Vec<String> = event.attendees.iter().map(|a| a.email.to_lowercase()).collect();
     if let Some(o) = &event.organizer {
         let address = o.rsplit_once('<').map_or(o.as_str(), |(_, a)| a.trim_end_matches('>'));
@@ -291,5 +331,5 @@ async fn related(
     emails.retain(|e| e.contains('@') && !mine.contains(e));
     emails.sort();
     emails.dedup();
-    Ok(Json(db.people().related(&emails, 6).await?))
+    Ok(Json(db.people(user).related(&emails, 6).await?))
 }

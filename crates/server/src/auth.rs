@@ -2,7 +2,9 @@
 //!
 //! - `/api/auth/*` routes: first-run setup, sign in, sign out, password.
 //! - [`require_session`]: a middleware in front of every other API route;
-//!   without a valid session cookie the answer is `401`.
+//!   without a valid session cookie the answer is `401`. It notes who is
+//!   signed in, which handlers read with the [`CurrentUser`] (anyone) or
+//!   [`Admin`] (the admin only) extractors.
 //! - [`same_origin`]: refuses requests that change something when they come
 //!   from another website (CSRF protection, on top of `SameSite` cookies).
 //!
@@ -17,13 +19,16 @@ use std::{
 
 use axum::{
     Extension, Json, Router,
-    extract::{ConnectInfo, Request, State},
-    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
+    extract::{ConnectInfo, FromRequestParts, Request, State},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use havre_core::auth::{Auth, SESSION_DAYS, SessionInfo};
+use havre_core::{
+    auth::{Auth, SESSION_DAYS, SessionInfo, SignedIn},
+    users::UserId,
+};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -38,6 +43,41 @@ const LOCKOUT: Duration = Duration::from_secs(15 * 60);
 /// The session token of the current request, put there by [`require_session`].
 #[derive(Clone)]
 pub struct SessionToken(pub String);
+
+/// Who is asking: a handler that takes `CurrentUser(user)` acts as `user`
+/// (their mail, their calendars…). An *extractor*: Axum builds it from the
+/// request before calling the handler, like `Json` or `State`.
+#[derive(Clone, Copy, Debug)]
+pub struct CurrentUser(pub UserId);
+
+/// Like [`CurrentUser`], for routes that are the admin's only (AI, backups,
+/// MCP tokens). Anyone else gets `404 Not Found`, as if the route didn't
+/// exist: no hint of what's there.
+#[derive(Clone, Copy, Debug)]
+pub struct Admin;
+
+/// What `require_session` noted on the request.
+fn signed_in(parts: &Parts) -> Result<SignedIn, ApiError> {
+    // Missing only if a route forgot the middleware: refuse rather than guess.
+    parts.extensions.get::<SignedIn>().copied().ok_or(ApiError::Unauthorized)
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for CurrentUser {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, ApiError> {
+        Ok(CurrentUser(signed_in(parts)?.user))
+    }
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for Admin {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, ApiError> {
+        let who = signed_in(parts)?;
+        if who.admin { Ok(Admin) } else { Err(ApiError::NotFound) }
+    }
+}
 
 /// Counts wrong passwords per address, to slow down password guessing.
 #[derive(Clone, Default)]
@@ -92,16 +132,20 @@ async fn status(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Some(auth) = &state.auth else {
         // Demo mode: nothing to protect.
-        return Ok(Json(json!({ "enabled": false, "setup_needed": false, "signed_in": true })));
+        return Ok(Json(
+            json!({ "enabled": false, "setup_needed": false, "signed_in": true, "admin": true }),
+        ));
     };
-    let signed_in = match cookie_token(&headers) {
+    let who = match cookie_token(&headers) {
         Some(token) => auth.check_session(&token).await?,
-        None => false,
+        None => None,
     };
     Ok(Json(json!({
         "enabled": true,
         "setup_needed": !auth.is_set_up().await?,
-        "signed_in": signed_in,
+        "signed_in": who.is_some(),
+        // The page hides what's the admin's only (AI, backups).
+        "admin": who.is_some_and(|w| w.admin),
     })))
 }
 
@@ -175,46 +219,53 @@ struct ChangePassword {
 /// `POST /api/auth/password` — also signs out the other browsers.
 async fn change_password(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Extension(SessionToken(token)): Extension<SessionToken>,
     Json(body): Json<ChangePassword>,
 ) -> Result<StatusCode, ApiError> {
-    enabled(&state)?.change_password(&body.current, &body.new, &token).await?;
+    enabled(&state)?.change_password(user, &body.current, &body.new, &token).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /api/auth/sessions` — signed-in browsers.
 async fn sessions(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Extension(SessionToken(token)): Extension<SessionToken>,
 ) -> Result<Json<Vec<SessionInfo>>, ApiError> {
-    Ok(Json(enabled(&state)?.sessions(&token).await?))
+    Ok(Json(enabled(&state)?.sessions(user, &token).await?))
 }
 
 /// `DELETE /api/auth/sessions/others` — "sign out everywhere else".
 async fn sign_out_others(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Extension(SessionToken(token)): Extension<SessionToken>,
 ) -> Result<StatusCode, ApiError> {
-    enabled(&state)?.sign_out_others(&token).await?;
+    enabled(&state)?.sign_out_others(user, &token).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 // ---- Middlewares ---------------------------------------------------------------------
 
-/// Lets the request through only with a valid session cookie.
+/// Lets the request through only with a valid session cookie, and notes
+/// whose it is (read by [`CurrentUser`] and [`Admin`]).
 pub async fn require_session(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
     let Some(auth) = &state.auth else {
+        // Demo mode: one person, the admin.
         request.extensions_mut().insert(SessionToken(String::new()));
+        request.extensions_mut().insert(SignedIn { user: UserId::ADMIN, admin: true });
         return next.run(request).await;
     };
     let token = cookie_token(request.headers());
-    let valid = match &token {
-        Some(token) => auth.check_session(token).await.unwrap_or(false),
-        None => false,
+    let who = match &token {
+        Some(token) => auth.check_session(token).await.unwrap_or(None),
+        None => None,
     };
-    match token {
-        Some(token) if valid => {
+    match (token, who) {
+        (Some(token), Some(who)) => {
             request.extensions_mut().insert(SessionToken(token));
+            request.extensions_mut().insert(who);
             next.run(request).await
         }
         _ => (

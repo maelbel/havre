@@ -149,8 +149,9 @@ impl People {
                     EXISTS (SELECT 1 FROM contact_links l LEFT JOIN contact_photos p ON p.link_id = l.id
                             WHERE l.contact_id = c.id
                               AND ((l.photo_url IS NOT NULL AND p.link_id IS NULL) OR length(p.data) > 0)) AS photo
-             FROM contacts c ORDER BY c.id",
+             FROM contacts c WHERE c.user_id = ? ORDER BY c.id",
         )
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -176,7 +177,8 @@ impl People {
     }
 
     pub(super) async fn contact_of(&self, email: &str) -> Result<Option<i64>> {
-        Ok(sqlx::query_scalar("SELECT contact_id FROM contact_emails WHERE email = ?")
+        Ok(sqlx::query_scalar("SELECT contact_id FROM contact_emails WHERE user_id = ? AND email = ?")
+            .bind(self.user.0)
             .bind(email)
             .fetch_optional(&self.pool)
             .await?)
@@ -188,10 +190,12 @@ impl People {
         match key {
             Key::Address(email) => self.contact_for(email).await,
             Key::Contact(id) => {
-                let found: Option<i64> = sqlx::query_scalar("SELECT id FROM contacts WHERE id = ?")
-                    .bind(id)
-                    .fetch_optional(&self.pool)
-                    .await?;
+                let found: Option<i64> =
+                    sqlx::query_scalar("SELECT id FROM contacts WHERE id = ? AND user_id = ?")
+                        .bind(id)
+                        .bind(self.user.0)
+                        .fetch_optional(&self.pool)
+                        .await?;
                 found.ok_or_else(|| Error::NotFound(format!("person ~{id}")))
             }
         }
@@ -203,13 +207,16 @@ impl People {
             return Ok(id);
         }
         let mut tx = self.pool.begin().await?;
-        let id: i64 =
-            sqlx::query_scalar("INSERT INTO contacts (created_at, updated_at) VALUES (?, ?) RETURNING id")
-                .bind(now())
-                .bind(now())
-                .fetch_one(&mut *tx)
-                .await?;
-        sqlx::query("INSERT INTO contact_emails (email, contact_id, position) VALUES (?, ?, 0)")
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (user_id, created_at, updated_at) VALUES (?, ?, ?) RETURNING id",
+        )
+        .bind(self.user.0)
+        .bind(now())
+        .bind(now())
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query("INSERT INTO contact_emails (user_id, email, contact_id, position) VALUES (?, ?, ?, 0)")
+            .bind(self.user.0)
             .bind(email)
             .bind(id)
             .execute(&mut *tx)
@@ -226,16 +233,18 @@ impl People {
         if name.is_empty() && email.is_none() {
             return Err(Error::Config("Give a name or an address.".into()));
         }
-        let id = match &email {
-            Some(email) => self.contact_for(email).await?,
-            None => {
-                sqlx::query_scalar("INSERT INTO contacts (created_at, updated_at) VALUES (?, ?) RETURNING id")
-                    .bind(now())
-                    .bind(now())
-                    .fetch_one(&self.pool)
-                    .await?
-            }
-        };
+        let id =
+            match &email {
+                Some(email) => self.contact_for(email).await?,
+                None => sqlx::query_scalar(
+                    "INSERT INTO contacts (user_id, created_at, updated_at) VALUES (?, ?, ?) RETURNING id",
+                )
+                .bind(self.user.0)
+                .bind(now())
+                .bind(now())
+                .fetch_one(&self.pool)
+                .await?,
+            };
         if !name.is_empty() {
             sqlx::query("UPDATE contacts SET name = ?, updated_at = ? WHERE id = ?")
                 .bind(&name)
@@ -343,12 +352,20 @@ impl People {
         let mut old_keys = vec![format!("~{keep}")];
         let theirs: Option<i64> = match &other {
             Key::Address(email) => {
-                sqlx::query_scalar("SELECT contact_id FROM contact_emails WHERE email = ?")
+                sqlx::query_scalar("SELECT contact_id FROM contact_emails WHERE user_id = ? AND email = ?")
+                    .bind(self.user.0)
                     .bind(email)
                     .fetch_optional(&mut *tx)
                     .await?
             }
-            Key::Contact(id) => Some(*id),
+            // Only one of yours: someone else's contact is "not found" below.
+            Key::Contact(id) => {
+                sqlx::query_scalar("SELECT id FROM contacts WHERE id = ? AND user_id = ?")
+                    .bind(id)
+                    .bind(self.user.0)
+                    .fetch_optional(&mut *tx)
+                    .await?
+            }
         };
         match theirs {
             Some(same) if same == keep => {} // already one person
@@ -395,12 +412,15 @@ impl People {
                 let Key::Address(email) = &other else {
                     return Err(Error::NotFound("this person".into()));
                 };
-                sqlx::query("INSERT INTO contact_emails (email, contact_id, position) VALUES (?, ?, ?)")
-                    .bind(email)
-                    .bind(keep)
-                    .bind(next)
-                    .execute(&mut *tx)
-                    .await?;
+                sqlx::query(
+                    "INSERT INTO contact_emails (user_id, email, contact_id, position) VALUES (?, ?, ?, ?)",
+                )
+                .bind(self.user.0)
+                .bind(email)
+                .bind(keep)
+                .bind(next)
+                .execute(&mut *tx)
+                .await?;
             }
         }
         // Their key now: the main address, else `~keep`. Tasks and notes
@@ -413,18 +433,31 @@ impl People {
         .await?;
         let key = main.unwrap_or_else(|| format!("~{keep}"));
         for old in old_keys.iter().filter(|old| **old != key) {
-            sqlx::query("UPDATE tasks SET person = ? WHERE person = ?")
-                .bind(&key)
-                .bind(old)
-                .execute(&mut *tx)
-                .await?;
+            // Your tasks and notes only: someone else's "~12" is another person.
+            sqlx::query(
+                "UPDATE tasks SET person = ? WHERE person = ?
+                   AND list_id IN (SELECT id FROM task_lists WHERE user_id = ?)",
+            )
+            .bind(&key)
+            .bind(old)
+            .bind(self.user.0)
+            .execute(&mut *tx)
+            .await?;
             // `OR IGNORE`: a note already about them under the new key keeps that row.
-            sqlx::query("UPDATE OR IGNORE note_people SET email = ? WHERE email = ?")
-                .bind(&key)
+            sqlx::query(
+                "UPDATE OR IGNORE note_people SET email = ? WHERE email = ?
+                   AND note_id IN (SELECT id FROM notes WHERE user_id = ?)",
+            )
+            .bind(&key)
+            .bind(old)
+            .bind(self.user.0)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("DELETE FROM note_people WHERE email = ? AND note_id IN (SELECT id FROM notes WHERE user_id = ?)")
                 .bind(old)
+                .bind(self.user.0)
                 .execute(&mut *tx)
                 .await?;
-            sqlx::query("DELETE FROM note_people WHERE email = ?").bind(old).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         self.person(&format!("~{keep}")).await
@@ -447,7 +480,11 @@ impl People {
         if self.contact_of(&other).await? != Some(mine) {
             return Err(Error::NotFound(format!("{other} on this person")));
         }
-        sqlx::query("DELETE FROM contact_emails WHERE email = ?").bind(&other).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM contact_emails WHERE user_id = ? AND email = ?")
+            .bind(self.user.0)
+            .bind(&other)
+            .execute(&self.pool)
+            .await?;
         if let Key::Address(email) = &key {
             sqlx::query(
                 "UPDATE contact_emails SET position = CASE WHEN email = ? THEN 0 ELSE position + 1 END

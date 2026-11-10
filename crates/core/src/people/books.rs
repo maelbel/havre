@@ -136,7 +136,8 @@ const LINK_COLUMNS: &str = "id, contact_id, book_id, remote_id, href, etag, raw,
 
 /// `IS` compares like `=` but also matches two NULLs (an account's books have
 /// no CalDAV server, and the reverse).
-const SAME_SOURCE: &str = "source = ? AND account_id IS ? AND caldav_id IS ?";
+/// The last `?` is the user.
+const SAME_SOURCE: &str = "source = ? AND account_id IS ? AND caldav_id IS ? AND user_id = ?";
 
 impl People {
     // ---- Sources and books ---------------------------------------------------------------
@@ -165,8 +166,9 @@ impl People {
     pub async fn books(&self) -> Result<Vec<Book>> {
         let rows = sqlx::query(
             "SELECT b.*, (SELECT COUNT(*) FROM contact_links l WHERE l.book_id = b.id) AS contacts
-             FROM contact_books b ORDER BY b.id",
+             FROM contact_books b WHERE b.user_id = ? ORDER BY b.id",
         )
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -209,6 +211,7 @@ impl People {
             .bind(source)
             .bind(account)
             .bind(caldav)
+            .bind(self.user.0)
             .fetch_all(&self.pool)
             .await?;
         for book in books {
@@ -225,8 +228,8 @@ impl People {
                 }
                 None => {
                     sqlx::query(
-                        "INSERT INTO contact_books (source, account_id, caldav_id, remote_id, name, read_only)
-                         VALUES (?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO contact_books (source, account_id, caldav_id, remote_id, name, read_only, user_id)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)",
                     )
                     .bind(source)
                     .bind(account)
@@ -234,6 +237,7 @@ impl People {
                     .bind(&book.remote_id)
                     .bind(&book.name)
                     .bind(book.read_only)
+                    .bind(self.user.0)
                     .execute(&self.pool)
                     .await?;
                 }
@@ -255,6 +259,7 @@ impl People {
             .bind(source)
             .bind(account)
             .bind(caldav)
+            .bind(self.user.0)
             .fetch_all(&self.pool)
             .await?;
         for id in ids {
@@ -265,7 +270,11 @@ impl People {
 
     async fn remove_book(&self, id: i64) -> Result<()> {
         // `ON DELETE CASCADE` removes the links (and their photos).
-        sqlx::query("DELETE FROM contact_books WHERE id = ?").bind(id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM contact_books WHERE id = ? AND user_id = ?")
+            .bind(id)
+            .bind(self.user.0)
+            .execute(&self.pool)
+            .await?;
         self.prune().await
     }
 
@@ -283,6 +292,7 @@ impl People {
             .bind(source)
             .bind(account)
             .bind(caldav)
+            .bind(self.user.0)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -293,13 +303,14 @@ impl People {
         sqlx::query(
             "UPDATE contact_books SET sync_token = COALESCE(?, sync_token), error = ?,
                     synced_at = CASE WHEN ? IS NULL THEN ? ELSE synced_at END
-             WHERE id = ?",
+             WHERE id = ? AND user_id = ?",
         )
         .bind(token)
         .bind(error)
         .bind(error)
         .bind(now())
         .bind(id)
+        .bind(self.user.0)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -307,15 +318,17 @@ impl People {
 
     /// Forgets where to start: the next sync reads the whole book.
     pub async fn reset_book_token(&self, id: i64) -> Result<()> {
-        sqlx::query("UPDATE contact_books SET sync_token = NULL WHERE id = ?")
+        sqlx::query("UPDATE contact_books SET sync_token = NULL WHERE id = ? AND user_id = ?")
             .bind(id)
+            .bind(self.user.0)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
     pub async fn default_book(&self) -> Result<Option<i64>> {
-        Ok(sqlx::query_scalar("SELECT default_book FROM contact_settings WHERE id = 1")
+        Ok(sqlx::query_scalar("SELECT default_book FROM contact_settings WHERE user_id = ?")
+            .bind(self.user.0)
             .fetch_optional(&self.pool)
             .await?
             .flatten())
@@ -327,24 +340,37 @@ impl People {
         {
             return Err(Error::Config("This address book is read-only: pick another one.".into()));
         }
-        sqlx::query("UPDATE contact_settings SET default_book = ? WHERE id = 1")
-            .bind(book)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO contact_settings (user_id, default_book) VALUES (?, ?)
+             ON CONFLICT (user_id) DO UPDATE SET default_book = excluded.default_book",
+        )
+        .bind(self.user.0)
+        .bind(book)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
     // ---- Links -----------------------------------------------------------------------------
 
     pub async fn links(&self, book: i64) -> Result<Vec<Link>> {
-        let sql = format!("SELECT {LINK_COLUMNS} FROM contact_links WHERE book_id = ? ORDER BY id");
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(book).fetch_all(&self.pool).await?;
+        let sql = format!(
+            "SELECT {LINK_COLUMNS} FROM contact_links WHERE book_id = ? AND book_id IN (SELECT id FROM contact_books WHERE user_id = ?) ORDER BY id"
+        );
+        let rows =
+            sqlx::query(sqlx::AssertSqlSafe(sql)).bind(book).bind(self.user.0).fetch_all(&self.pool).await?;
         Ok(rows.iter().map(link_from).collect())
     }
 
     pub async fn links_of(&self, contact: i64) -> Result<Vec<Link>> {
-        let sql = format!("SELECT {LINK_COLUMNS} FROM contact_links WHERE contact_id = ? ORDER BY id");
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(contact).fetch_all(&self.pool).await?;
+        let sql = format!(
+            "SELECT {LINK_COLUMNS} FROM contact_links WHERE contact_id = ? AND book_id IN (SELECT id FROM contact_books WHERE user_id = ?) ORDER BY id"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(contact)
+            .bind(self.user.0)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows.iter().map(link_from).collect())
     }
 
@@ -378,10 +404,13 @@ impl People {
             None => {
                 let mut found = None;
                 for email in &remote.emails {
-                    found = sqlx::query_scalar("SELECT contact_id FROM contact_emails WHERE email = ?")
-                        .bind(email)
-                        .fetch_optional(&mut *tx)
-                        .await?;
+                    found = sqlx::query_scalar(
+                        "SELECT contact_id FROM contact_emails WHERE user_id = ? AND email = ?",
+                    )
+                    .bind(self.user.0)
+                    .bind(email)
+                    .fetch_optional(&mut *tx)
+                    .await?;
                     if found.is_some() {
                         break;
                     }
@@ -390,8 +419,10 @@ impl People {
                     Some(id) => id,
                     None => {
                         sqlx::query_scalar(
-                            "INSERT INTO contacts (from_sync, created_at, updated_at) VALUES (1, ?, ?) RETURNING id",
+                            "INSERT INTO contacts (user_id, from_sync, created_at, updated_at)
+                             VALUES (?, 1, ?, ?) RETURNING id",
                         )
+                        .bind(self.user.0)
                         .bind(now())
                         .bind(now())
                         .fetch_one(&mut *tx)
@@ -404,12 +435,13 @@ impl People {
         // someone else stays theirs: Havre doesn't merge people on its own).
         for email in &remote.emails {
             sqlx::query(
-                "INSERT INTO contact_emails (email, contact_id, position)
-                 VALUES (?1, ?2, (SELECT COALESCE(MAX(position) + 1, 0) FROM contact_emails WHERE contact_id = ?2))
-                 ON CONFLICT (email) DO NOTHING",
+                "INSERT INTO contact_emails (email, contact_id, position, user_id)
+                 VALUES (?1, ?2, (SELECT COALESCE(MAX(position) + 1, 0) FROM contact_emails WHERE contact_id = ?2), ?3)
+                 ON CONFLICT (user_id, email) DO NOTHING",
             )
             .bind(email)
             .bind(contact)
+            .bind(self.user.0)
             .execute(&mut *tx)
             .await?;
         }
@@ -546,7 +578,11 @@ impl People {
     /// The contact left the address book: the link goes, and the person too
     /// if they only came from address books (see [`People::prune`]).
     pub async fn remove_link(&self, link: i64) -> Result<()> {
-        sqlx::query("DELETE FROM contact_links WHERE id = ?").bind(link).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM contact_links WHERE id = ? AND book_id IN (SELECT id FROM contact_books WHERE user_id = ?)")
+            .bind(link)
+            .bind(self.user.0)
+            .execute(&self.pool)
+            .await?;
         self.prune().await
     }
 
@@ -554,9 +590,10 @@ impl People {
     /// more, unless you made them a favourite or said what they are.
     async fn prune(&self) -> Result<()> {
         sqlx::query(
-            "DELETE FROM contacts WHERE from_sync = 1 AND favorite = 0 AND kind IS NULL
+            "DELETE FROM contacts WHERE user_id = ? AND from_sync = 1 AND favorite = 0 AND kind IS NULL
                AND NOT EXISTS (SELECT 1 FROM contact_links l WHERE l.contact_id = contacts.id)",
         )
+        .bind(self.user.0)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -571,9 +608,10 @@ impl People {
             "SELECT l.id, l.remote_id, l.photo_url, b.source, b.account_id, p.mime, p.data, p.fetched_at
              FROM contact_links l JOIN contact_books b ON b.id = l.book_id
              LEFT JOIN contact_photos p ON p.link_id = l.id
-             WHERE l.contact_id = ? ORDER BY l.id",
+             WHERE l.contact_id = ? AND b.user_id = ? ORDER BY l.id",
         )
         .bind(contact)
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -639,8 +677,9 @@ impl People {
                 None => {
                     report.added += 1;
                     sqlx::query_scalar(
-                        "INSERT INTO contacts (created_at, updated_at) VALUES (?, ?) RETURNING id",
+                        "INSERT INTO contacts (user_id, created_at, updated_at) VALUES (?, ?, ?) RETURNING id",
                     )
+                    .bind(self.user.0)
                     .bind(now())
                     .bind(now())
                     .fetch_one(&mut *tx)
@@ -649,12 +688,13 @@ impl People {
             };
             for email in &emails {
                 sqlx::query(
-                    "INSERT INTO contact_emails (email, contact_id, position)
-                     VALUES (?1, ?2, (SELECT COALESCE(MAX(position) + 1, 0) FROM contact_emails WHERE contact_id = ?2))
-                     ON CONFLICT (email) DO NOTHING",
+                    "INSERT INTO contact_emails (email, contact_id, position, user_id)
+                     VALUES (?1, ?2, (SELECT COALESCE(MAX(position) + 1, 0) FROM contact_emails WHERE contact_id = ?2), ?3)
+                     ON CONFLICT (user_id, email) DO NOTHING",
                 )
                 .bind(email)
                 .bind(id)
+                .bind(self.user.0)
                 .execute(&mut *tx)
                 .await?;
             }
@@ -777,6 +817,7 @@ async fn save_photo(tx: &mut sqlx::SqliteConnection, link: i64, mime: &str, data
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::users::UserId;
     use crate::{people::Phone, store::Database};
 
     fn remote(id: &str, name: &str, emails: &[&str]) -> RemoteContact {
@@ -809,7 +850,7 @@ mod tests {
     #[tokio::test]
     async fn address_books_merge_field_by_field() {
         let db = Database::in_memory().await.unwrap();
-        let people = db.people();
+        let people = db.people(UserId::ADMIN);
         // Claire is in Havre with your note, and a company Google doesn't know yet.
         people
             .update(
@@ -880,7 +921,7 @@ mod tests {
     #[tokio::test]
     async fn people_without_an_address_and_leaving_a_book() {
         let db = Database::in_memory().await.unwrap();
-        let people = db.people();
+        let people = db.people(UserId::ADMIN);
         let book = google_book(&people).await;
 
         // A plumber with only a phone: a person of their own, keyed by contact.
@@ -904,13 +945,13 @@ mod tests {
             people: vec![crate::tasks::PersonLink { email: marc.email.clone(), name: None }],
             ..Default::default()
         };
-        db.notes().create(&note).await.unwrap();
+        db.notes(UserId::ADMIN).create(&note).await.unwrap();
         // …you give him an address: his page moves to it, and the note follows.
         let page = people.merge(&marc.email, "marc@plomberie.fr").await.unwrap();
         assert_eq!(page.person.email, "marc@plomberie.fr");
         let about =
             crate::notes::NoteQuery { person: Some("marc@plomberie.fr".into()), ..Default::default() };
-        assert_eq!(db.notes().notes(&about).await.unwrap().len(), 1);
+        assert_eq!(db.notes(UserId::ADMIN).notes(&about).await.unwrap().len(), 1);
 
         // Deleted from Google: he leaves Havre too (he only came from there)…
         people.remove_link(link).await.unwrap();
@@ -938,7 +979,7 @@ mod tests {
     #[tokio::test]
     async fn the_same_person_in_two_books_and_merging() {
         let db = Database::in_memory().await.unwrap();
-        let people = db.people();
+        let people = db.people(UserId::ADMIN);
         let google = google_book(&people).await;
         people
             .replace_books(
@@ -971,7 +1012,7 @@ mod tests {
     #[tokio::test]
     async fn applying_a_listing() {
         let db = Database::in_memory().await.unwrap();
-        let people = db.people();
+        let people = db.people(UserId::ADMIN);
         let book = google_book(&people).await;
         let (a, b) = (remote("r/a", "Ann", &["a@x.org"]), remote("r/b", "Ben", &["b@x.org"]));
         let first = Changes { contacts: vec![a.clone(), b.clone()], full: true, ..Changes::default() };
@@ -1006,7 +1047,7 @@ mod tests {
     #[tokio::test]
     async fn vcf_files_in_and_out() {
         let db = Database::in_memory().await.unwrap();
-        let people = db.people();
+        let people = db.people(UserId::ADMIN);
         people
             .update(
                 "claire@acme.fr",

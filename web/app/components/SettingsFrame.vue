@@ -4,13 +4,19 @@ import type { IconName } from './HIcon.vue'
 // Settings, as in the design: a list of sections on the left, one section
 // at a time on the right.
 const auth = useAuthStatus()
+// Backups and connections are the admin's (the whole Havre, and AI apps).
+const admin = useIsAdmin()
 const sections = computed(() => [
   { to: '/settings', label: 'Accounts', exact: true, icon: 'mail' as IconName },
   { to: '/settings/calendars', label: 'Calendars', icon: 'calendar' as IconName },
   ...(auth.value?.enabled ? [{ to: '/settings/security', label: 'Security', icon: 'shield' as IconName }] : []),
   { to: '/settings/notifications', label: 'Notifications', icon: 'bell' as IconName },
-  { to: '/settings/backups', label: 'Backups', icon: 'archive' as IconName },
-  { to: '/settings/connections', label: 'Connections (MCP)', icon: 'command' as IconName },
+  ...(admin.value
+    ? [
+        { to: '/settings/backups', label: 'Backups', icon: 'archive' as IconName },
+        { to: '/settings/connections', label: 'Connections (MCP)', icon: 'command' as IconName },
+      ]
+    : []),
 ])
 // Every app in the dock has a page: its settings, or what it is.
 const { apps } = useApps()

@@ -20,11 +20,13 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
-use crate::{Error, Result, mail::FileInfo};
+use crate::{Error, Result, mail::FileInfo, users::UserId};
 
 #[derive(Clone)]
 pub struct FileStore {
     pool: SqlitePool,
+    /// Whose files: the attachments of their accounts' mail.
+    user: UserId,
 }
 
 /// Which files to list (`GET /api/files?…`). Every filter is optional.
@@ -133,8 +135,8 @@ struct Found {
 }
 
 impl FileStore {
-    pub(crate) fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub(crate) fn new(pool: SqlitePool, user: UserId) -> Self {
+        Self { pool, user }
     }
 
     /// Every attachment Havre knows of, newest email first. Files in the
@@ -151,8 +153,10 @@ impl FileStore {
                   json_each(m.files) j
              WHERE m.files IS NOT NULL AND m.files != '[]'
                AND f.role NOT IN ('trash', 'junk', 'drafts', 'all')
+               AND m.account_id IN (SELECT id FROM accounts WHERE user_id = ?)
              ORDER BY datetime(m.date) DESC, m.uid DESC",
         )
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?;
         let mut out = Vec::new();
@@ -312,17 +316,26 @@ impl FileStore {
     /// The setting: how many of the newest emails of each Inbox and Sent to
     /// look through (0: all).
     pub async fn depth(&self) -> Result<i64> {
-        Ok(sqlx::query_scalar("SELECT depth FROM files_settings WHERE id = 1").fetch_one(&self.pool).await?)
+        let depth: Option<i64> = sqlx::query_scalar("SELECT depth FROM files_settings WHERE user_id = ?")
+            .bind(self.user.0)
+            .fetch_optional(&self.pool)
+            .await?;
+        // Never set: the table's default.
+        Ok(depth.unwrap_or(2000))
     }
 
     pub async fn set_depth(&self, depth: i64) -> Result<()> {
         if !(0..=1_000_000).contains(&depth) {
             return Err(Error::Config("Choose how many emails to look through.".into()));
         }
-        sqlx::query("UPDATE files_settings SET depth = ? WHERE id = 1")
-            .bind(depth)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO files_settings (user_id, depth) VALUES (?, ?)
+             ON CONFLICT (user_id) DO UPDATE SET depth = excluded.depth",
+        )
+        .bind(self.user.0)
+        .bind(depth)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -331,10 +344,13 @@ impl FileStore {
         let depth = self.depth().await?;
         // In SQLite, `LIMIT -1` means no limit: "all of them".
         let limit = if depth == 0 { -1 } else { depth };
-        let folders: Vec<(i64, String)> =
-            sqlx::query_as("SELECT account_id, path FROM folders WHERE role IN ('inbox', 'sent')")
-                .fetch_all(&self.pool)
-                .await?;
+        let folders: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT account_id, path FROM folders WHERE role IN ('inbox', 'sent')
+                   AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
+        )
+        .bind(self.user.0)
+        .fetch_all(&self.pool)
+        .await?;
         let (mut looked, mut total) = (0, 0);
         for (account, path) in folders {
             let (n, done): (i64, i64) = sqlx::query_as(
@@ -404,6 +420,7 @@ pub fn version_key(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::store::Database;
+    use crate::users::UserId;
 
     #[test]
     fn kinds() {
@@ -452,7 +469,11 @@ mod tests {
     #[tokio::test]
     async fn one_list_with_copies_and_versions() {
         let db = Database::in_memory().await.unwrap();
-        let account = db.insert_account(&crate::store::tests::new_account("me@x.test")).await.unwrap().id;
+        let account = db
+            .insert_account(UserId::ADMIN, &crate::store::tests::new_account("me@x.test"))
+            .await
+            .unwrap()
+            .id;
         db.store(account)
             .replace_folders(&[
                 crate::store::tests::folder("INBOX", crate::mail::FolderRole::Inbox),
@@ -498,7 +519,7 @@ mod tests {
         )
         .await;
 
-        let files = db.files();
+        let files = db.files(UserId::ADMIN);
         let list = files.list(&FileQuery::default()).await.unwrap();
         let names: Vec<&str> = list.files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["devis-q4-v2.pdf", "devis-q4.pdf"], "newest first; no Trash, no invitation");
@@ -519,7 +540,11 @@ mod tests {
     #[tokio::test]
     async fn progress_counts_the_newest_of_inbox_and_sent() {
         let db = Database::in_memory().await.unwrap();
-        let account = db.insert_account(&crate::store::tests::new_account("me@x.test")).await.unwrap().id;
+        let account = db
+            .insert_account(UserId::ADMIN, &crate::store::tests::new_account("me@x.test"))
+            .await
+            .unwrap()
+            .id;
         db.store(account)
             .replace_folders(&[crate::store::tests::folder("INBOX", crate::mail::FolderRole::Inbox)])
             .await
@@ -537,7 +562,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let files = db.files();
+        let files = db.files(UserId::ADMIN);
         files.set_depth(3).await.unwrap();
         let p = files.progress().await.unwrap();
         assert_eq!((p.looked, p.total), (2, 3), "the newest 3: two looked at");

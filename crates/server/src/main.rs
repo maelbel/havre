@@ -11,6 +11,8 @@ mod auth;
 mod backups;
 mod contacts;
 mod files;
+#[cfg(test)]
+mod isolation;
 mod mail_source;
 mod mcp;
 mod notes;
@@ -130,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
         if let Ok(config) = ImapConfig::from_env() {
             manager.import_from_env(config).await?;
         }
-        let count = manager.database().accounts().await?.len();
+        let count = manager.database().all_accounts().await?.len();
         if count == 0 {
             tracing::info!("no mail account yet: add one in the web UI (Settings)");
         } else {

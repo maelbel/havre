@@ -17,6 +17,7 @@ use crate::{
     oauth::{self, DeviceCode, OAuthApp, Poll, Provider},
     store::{Account, AccountUpdate, Database, NewAccount},
     sync::{AccountEvent, SyncEngine, SyncEvent, SyncState, SyncStatus},
+    users::UserId,
 };
 
 /// An account plus what the UI shows next to it.
@@ -51,6 +52,8 @@ struct SignIn {
 /// What the sign-in is for: a new account, or reconnecting one.
 #[derive(Clone)]
 struct Target {
+    /// Who is signing in: the account will be theirs.
+    owner: UserId,
     name: String,
     email: String,
     /// Your name for recipients (empty: the one from the sign-in).
@@ -152,7 +155,7 @@ impl AccountManager {
             sign_ins: Mutex::new(HashMap::new()),
             drafts_lock: Mutex::new(()),
         });
-        for account in manager.db.accounts().await? {
+        for account in manager.db.all_accounts().await? {
             if let Err(err) = manager.start_engine(account.id).await {
                 tracing::warn!(account = account.email, "cannot start syncing: {err}");
             }
@@ -181,25 +184,36 @@ impl AccountManager {
     }
 
     async fn start_engine(&self, id: i64) -> Result<()> {
+        let user =
+            self.db.users().of_account(id).await?.ok_or_else(|| Error::NotFound(format!("account {id}")))?;
         let config = self.db.imap_config(id).await?;
-        let engine = SyncEngine::start(id, config, self.db.store(id), self.events.clone());
+        let engine = SyncEngine::start(id, user, config, self.db.store(id), self.events.clone());
         if let Some(old) = self.engines.write().await.insert(id, engine) {
             old.stop();
         }
         Ok(())
     }
 
-    /// The sync engine of an account.
-    pub async fn engine(&self, id: i64) -> Result<Arc<SyncEngine>> {
+    /// The sync engine of one of `user`'s accounts. Another user's account
+    /// is "not found", like one that doesn't exist.
+    pub async fn engine(&self, user: UserId, id: i64) -> Result<Arc<SyncEngine>> {
+        let engine = self.engine_any_user(id).await?;
+        if engine.user() == user { Ok(engine) } else { Err(Error::NotFound(format!("account {id}"))) }
+    }
+
+    /// The sync engine of an account, whoever's it is: for background work
+    /// (the outbox, drafts, snoozes) that found the account in its own data.
+    /// `pub(crate)`: the server can't call it, so a request can't skip the check.
+    pub(crate) async fn engine_any_user(&self, id: i64) -> Result<Arc<SyncEngine>> {
         self.engines.read().await.get(&id).cloned().ok_or_else(|| {
             Error::NotFound(format!("account {id} (or its password can't be read: re-enter it in Settings)"))
         })
     }
 
-    pub async fn accounts(&self) -> Result<Vec<AccountView>> {
+    pub async fn accounts(&self, user: UserId) -> Result<Vec<AccountView>> {
         let engines = self.engines.read().await;
         let mut views = Vec::new();
-        for account in self.db.accounts().await? {
+        for account in self.db.accounts(user).await? {
             let engine = engines.get(&account.id);
             let status = engine.map(|e| e.status()).unwrap_or(SyncStatus {
                 state: SyncState::Error,
@@ -230,7 +244,7 @@ impl AccountManager {
     }
 
     /// Checks the connection, saves the account, starts syncing it.
-    pub async fn add(&self, new: NewAccount) -> Result<Account> {
+    pub async fn add(&self, owner: UserId, new: NewAccount) -> Result<Account> {
         validate(&new.name, &new.email, &new.imap_host)?;
         let user = if new.imap_user.trim().is_empty() { new.email.trim() } else { new.imap_user.trim() };
         test_connection(&ImapConfig {
@@ -241,15 +255,16 @@ impl AccountManager {
             ca_file: std::env::var("HAVRE_IMAP_CA_FILE").ok().filter(|v| !v.trim().is_empty()),
         })
         .await?;
-        let account = self.db.insert_account(&new).await?;
+        let account = self.db.insert_account(owner, &new).await?;
         self.start_engine(account.id).await?;
-        self.announce(account.id);
+        self.announce(owner, account.id);
         Ok(account)
     }
 
     /// Edits an account. If the connection settings change, they are tested
     /// first, and syncing restarts with them.
-    pub async fn update(&self, id: i64, update: AccountUpdate) -> Result<Account> {
+    pub async fn update(&self, user: UserId, id: i64, update: AccountUpdate) -> Result<Account> {
+        self.db.users().owns_account(user, id).await?;
         let current = self.db.account(id).await?;
         validate(
             update.name.as_deref().unwrap_or(&current.name),
@@ -282,25 +297,26 @@ impl AccountManager {
         if update.touches_connection() {
             self.start_engine(id).await?;
         }
-        self.announce(id);
+        self.announce(user, id);
         Ok(account)
     }
 
     /// Stops syncing and deletes the account with its local copy.
     /// (Nothing is deleted on the mail server.)
-    pub async fn remove(&self, id: i64) -> Result<()> {
+    pub async fn remove(&self, user: UserId, id: i64) -> Result<()> {
+        self.db.users().owns_account(user, id).await?;
         if let Some(engine) = self.engines.write().await.remove(&id) {
             engine.stop();
         }
         self.db.delete_account(id).await?;
-        self.announce(id);
+        self.announce(user, id);
         Ok(())
     }
 
     /// Adds the account from the `.env` file, the first time only, so
     /// existing setups keep working after the move to accounts in Settings.
     pub async fn import_from_env(&self, config: ImapConfig) -> Result<()> {
-        if !self.db.accounts().await?.is_empty() {
+        if !self.db.accounts(UserId::ADMIN).await?.is_empty() {
             return Ok(());
         }
         tracing::info!(user = config.username, "importing the account from .env");
@@ -310,19 +326,22 @@ impl AccountManager {
         let email = if config.username.contains('@') { config.username.clone() } else { String::new() };
         let account = self
             .db
-            .insert_account(&NewAccount {
-                name: email.split('@').nth(1).unwrap_or("Mail").to_owned(),
-                email: if email.is_empty() { config.username.clone() } else { email },
-                color: "work".into(),
-                imap_host: config.host,
-                imap_port: config.port,
-                imap_user: config.username,
-                password,
-                sender_name: String::new(),
-                smtp_host: None,
-                smtp_port: None,
-                smtp_security: None,
-            })
+            .insert_account(
+                UserId::ADMIN,
+                &NewAccount {
+                    name: email.split('@').nth(1).unwrap_or("Mail").to_owned(),
+                    email: if email.is_empty() { config.username.clone() } else { email },
+                    color: "work".into(),
+                    imap_host: config.host,
+                    imap_port: config.port,
+                    imap_user: config.username,
+                    password,
+                    sender_name: String::new(),
+                    smtp_host: None,
+                    smtp_port: None,
+                    smtp_security: None,
+                },
+            )
             .await?;
         self.start_engine(account.id).await
     }
@@ -331,10 +350,11 @@ impl AccountManager {
 
     /// Starts a sign-in: the provider's page to open in a window (`browser`),
     /// or (Microsoft) a code to type at microsoft.com/devicelogin (`code`).
-    pub async fn start_oauth(&self, request: OAuthRequest) -> Result<SignInStart> {
+    pub async fn start_oauth(&self, owner: UserId, request: OAuthRequest) -> Result<SignInStart> {
         let (provider, host, port, user) = match request.reconnect {
             // Reconnecting: same provider, server and user as before.
             Some(id) => {
+                self.db.users().owns_account(owner, id).await?;
                 let account = self.db.account(id).await?;
                 let provider = Provider::parse(&account.auth)
                     .ok_or_else(|| Error::Config("this account uses a password, not OAuth2".into()))?;
@@ -376,6 +396,7 @@ impl AccountManager {
             ))
         })?;
         let target = Target {
+            owner,
             name: request.name.trim().to_owned(),
             email: request.email.trim().to_owned(),
             sender_name: request.sender_name.trim().to_owned(),
@@ -485,9 +506,10 @@ impl AccountManager {
 
     /// Called by the UI every few seconds. For a code, only asks Microsoft
     /// when the interval it asked for has passed.
-    pub async fn poll_oauth(&self, flow: &str) -> Result<SignInState> {
+    pub async fn poll_oauth(&self, user: UserId, flow: &str) -> Result<SignInState> {
         let mut sign_ins = self.sign_ins.lock().await;
-        let Some(sign_in) = sign_ins.get_mut(flow) else {
+        // Someone else's sign-in is "over" for you (its flow id is secret anyway).
+        let Some(sign_in) = sign_ins.get_mut(flow).filter(|s| s.target.owner == user) else {
             return Ok(SignInState::Failed { message: "This sign-in is over. Start again.".into() });
         };
         let now = Instant::now();
@@ -589,16 +611,16 @@ impl AccountManager {
                     smtp_port: None,
                     smtp_security: None,
                 };
-                self.db.insert_oauth_account(&new, app.provider, &refresh, app.scopes()).await?
+                self.db.insert_oauth_account(target.owner, &new, app.provider, &refresh, app.scopes()).await?
             }
         };
         self.start_engine(account.id).await?;
-        self.announce(account.id);
+        self.announce(target.owner, account.id);
         Ok(account)
     }
 
-    fn announce(&self, id: i64) {
-        let _ = self.events.send(AccountEvent { account: id, event: SyncEvent::Accounts });
+    fn announce(&self, user: UserId, id: i64) {
+        let _ = self.events.send(AccountEvent { account: id, user, event: SyncEvent::Accounts });
     }
 }
 
@@ -704,7 +726,7 @@ async fn snooze_loop(manager: std::sync::Weak<AccountManager>) {
             }
         };
         for (account, folder, uid) in due {
-            let result = match manager.engine(account).await {
+            let result = match manager.engine_any_user(account).await {
                 Ok(engine) => engine.wake(&folder, uid).await,
                 Err(err) => Err(err),
             };

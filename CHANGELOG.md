@@ -6,6 +6,13 @@ All notable changes to Havre are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Ready for several users** (step 29a): every piece of data now belongs to someone, and every request, query and
+  background job keeps to its user. Nothing changes for you: you're the admin (user 1) and everything stays yours.
+  Adding the people of your family comes next (step 29b), then signing in with Authentik (step 30). AI, MCP
+  connections and backups will be the admin's only.
+
 ## [0.5.0] - 2026-11-10
 
 Notifications you can act on, previews of PDFs, texts, audio and video, and an assistant that organizes your

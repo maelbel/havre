@@ -19,6 +19,7 @@ const router = useRouter()
 const toast = useToasts()
 const { toggle: toggleTheme } = useTheme()
 const { status: ai } = useAiStatus()
+const admin = useIsAdmin()
 const accounts = useAccounts()
 const isMac = import.meta.client && /Mac|iPhone|iPad/.test(navigator.platform)
 
@@ -106,7 +107,9 @@ const commands = computed<Item[]>(() => [
         { id: 'ai-settings', group: 'Go to', label: 'Settings › AI', icon: 'sparkle' as IconName, keywords: 'ai model ollama claude', run: go('/settings/ai') },
       ]
     : []),
-  { id: 'mcp-settings', group: 'Go to', label: 'Settings › Connections (MCP)', icon: 'command', keywords: 'mcp connect claude code ai', run: go('/settings/connections') },
+  ...(admin.value
+    ? [{ id: 'mcp-settings', group: 'Go to', label: 'Settings › Connections (MCP)', icon: 'command' as IconName, keywords: 'mcp connect claude code ai', run: go('/settings/connections') }]
+    : []),
   { id: 'write', group: 'Actions', label: 'New message', hint: 'C in Mail', keys: true, icon: 'pen', keywords: 'write compose email', run: newMessage },
   { id: 'event', group: 'Actions', label: 'New event', hint: 'N in Agenda', keys: true, icon: 'plus', keywords: 'meeting create', run: go('/agenda?new=1') },
   {

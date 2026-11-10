@@ -28,6 +28,7 @@ use crate::{
     Error, Result,
     accounts::AccountManager,
     sync::{AccountEvent, SyncEvent},
+    users::UserId,
 };
 
 /// The undo delays offered (seconds; 0 = off).
@@ -68,10 +69,13 @@ pub struct SendReply {
 
 impl Drafts {
     pub async fn mail_settings(&self) -> Result<MailSettings> {
-        let (undo_seconds, compose_format) =
-            sqlx::query_as("SELECT undo_seconds, compose_format FROM mail_settings WHERE id = 1")
-                .fetch_one(&self.pool)
+        let row: Option<(i64, String)> =
+            sqlx::query_as("SELECT undo_seconds, compose_format FROM mail_settings WHERE user_id = ?")
+                .bind(self.user.0)
+                .fetch_optional(&self.pool)
                 .await?;
+        // Never changed: the defaults (10 s to undo, rich text).
+        let (undo_seconds, compose_format) = row.unwrap_or((10, "rich".into()));
         Ok(MailSettings { undo_seconds, compose_format })
     }
 
@@ -82,11 +86,16 @@ impl Drafts {
         if !matches!(settings.compose_format.as_str(), "rich" | "plain") {
             return Err(Error::Config("Messages are written as rich text or plain text.".into()));
         }
-        sqlx::query("UPDATE mail_settings SET undo_seconds = ?, compose_format = ? WHERE id = 1")
-            .bind(settings.undo_seconds)
-            .bind(&settings.compose_format)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO mail_settings (user_id, undo_seconds, compose_format) VALUES (?, ?, ?)
+             ON CONFLICT (user_id) DO UPDATE SET undo_seconds = excluded.undo_seconds,
+                                                compose_format = excluded.compose_format",
+        )
+        .bind(self.user.0)
+        .bind(settings.undo_seconds)
+        .bind(&settings.compose_format)
+        .execute(&self.pool)
+        .await?;
         self.mail_settings().await
     }
 
@@ -113,9 +122,11 @@ impl Drafts {
     pub async fn unschedule(&self, id: i64) -> Result<Draft> {
         let changed = sqlx::query(
             "UPDATE drafts SET send_at = NULL, send_state = NULL, send_error = NULL, server_version = NULL
-             WHERE id = ? AND send_state IN ('waiting', 'failed')",
+             WHERE id = ? AND send_state IN ('waiting', 'failed')
+               AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
         )
         .bind(id)
+        .bind(self.user.0)
         .execute(&self.pool)
         .await?
         .rows_affected();
@@ -146,9 +157,12 @@ impl Drafts {
     /// The drafts whose time has come, oldest first.
     async fn due(&self, now: i64) -> Result<Vec<(i64, i64)>> {
         Ok(sqlx::query_as(
-            "SELECT id, send_at FROM drafts WHERE send_state = 'waiting' AND send_at <= ? ORDER BY send_at LIMIT 20",
+            "SELECT id, send_at FROM drafts WHERE send_state = 'waiting' AND send_at <= ?
+               AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)
+             ORDER BY send_at LIMIT 20",
         )
         .bind(now)
+        .bind(self.user.0)
         .fetch_all(&self.pool)
         .await?)
     }
@@ -163,13 +177,14 @@ impl Drafts {
     }
 
     /// At start: drafts left `sending` (Havre stopped in the middle) become
-    /// failed, never sent again on their own. Returns how many.
-    async fn interrupted(&self) -> Result<u64> {
+    /// failed, never sent again on their own. Returns how many. Everyone's:
+    /// it runs once, before anyone can send.
+    async fn interrupted(pool: &sqlx::SqlitePool) -> Result<u64> {
         Ok(sqlx::query(
             "UPDATE drafts SET send_state = 'failed', send_error = ? WHERE send_state = 'sending'",
         )
         .bind(INTERRUPTED)
-        .execute(&self.pool)
+        .execute(pool)
         .await?
         .rows_affected())
     }
@@ -189,10 +204,14 @@ impl Drafts {
 
     /// Messages waiting to be sent (and those that failed), soonest first.
     pub async fn scheduled(&self) -> Result<Vec<Draft>> {
-        let ids: Vec<i64> =
-            sqlx::query_scalar("SELECT id FROM drafts WHERE send_at IS NOT NULL ORDER BY send_at, id")
-                .fetch_all(&self.pool)
-                .await?;
+        let ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT id FROM drafts WHERE send_at IS NOT NULL
+                   AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)
+                 ORDER BY send_at, id",
+        )
+        .bind(self.user.0)
+        .fetch_all(&self.pool)
+        .await?;
         let mut out = Vec::new();
         for id in ids {
             out.push(self.get(id).await?);
@@ -214,8 +233,8 @@ fn check_recipients(draft: &Draft) -> Result<()> {
 impl AccountManager {
     /// "Send" (`at`: `None`) or "Send later" (`at`: a time). Without an undo
     /// delay, "Send" sends right away and answers what happened.
-    pub async fn send_draft_at(&self, id: i64, at: Option<i64>) -> Result<SendReply> {
-        let drafts = self.drafts();
+    pub async fn send_draft_at(&self, user: UserId, id: i64, at: Option<i64>) -> Result<SendReply> {
+        let drafts = self.drafts(user);
         let draft = drafts.get(id).await?;
         check_recipients(&draft)?;
         let now = now();
@@ -226,7 +245,7 @@ impl AccountManager {
         };
         drafts.schedule(id, at).await?;
         if at <= now {
-            let outcome = self.send_due(id, at).await?;
+            let outcome = self.send_due(&drafts, id, at).await?;
             return Ok(SendReply { send_at: at, outcome: Some(outcome) });
         }
         if at > now + SCHEDULED {
@@ -237,34 +256,34 @@ impl AccountManager {
                 drafts.forget_server_copy(id).await?;
             }
         }
-        announce(self, id, &draft.subject, Outcome::Scheduled);
+        announce(self, user, id, &draft.subject, Outcome::Scheduled);
         Ok(SendReply { send_at: at, outcome: None })
     }
 
     /// Undo / Don't send.
-    pub async fn unsend(&self, id: i64) -> Result<Draft> {
-        let draft = self.drafts().unschedule(id).await?;
-        announce(self, id, &draft.subject, Outcome::Scheduled);
+    pub async fn unsend(&self, user: UserId, id: i64) -> Result<Draft> {
+        let draft = self.drafts(user).unschedule(id).await?;
+        announce(self, user, id, &draft.subject, Outcome::Scheduled);
         Ok(draft)
     }
 
     /// Sends a draft whose time has come, if this call wins the claim.
-    async fn send_due(&self, id: i64, send_at: i64) -> Result<SendOutcome> {
-        let drafts = self.drafts();
+    async fn send_due(&self, drafts: &Drafts, id: i64, send_at: i64) -> Result<SendOutcome> {
+        let user = drafts.user();
         let subject = drafts.get(id).await?.subject;
         if !drafts.claim(id, now()).await? {
             return Err(Error::Config("This message is already being sent.".into()));
         }
-        match self.send_draft(id).await {
+        match self.send_draft(user, id).await {
             Ok(outcome) => {
                 let late = now() - send_at > LATE;
-                announce(self, id, &subject, Outcome::Sent { late, warning: outcome.warning.clone() });
+                announce(self, user, id, &subject, Outcome::Sent { late, warning: outcome.warning.clone() });
                 Ok(outcome)
             }
             Err(err) => {
                 let message = shown(&err);
                 drafts.send_failed(id, &message).await?;
-                announce(self, id, &subject, Outcome::Failed(message));
+                announce(self, user, id, &subject, Outcome::Failed(message));
                 Err(err)
             }
         }
@@ -293,21 +312,21 @@ enum Outcome {
 }
 
 /// Tells the page (and push) what the outbox did.
-fn announce(manager: &AccountManager, draft: i64, subject: &str, outcome: Outcome) {
+fn announce(manager: &AccountManager, user: UserId, draft: i64, subject: &str, outcome: Outcome) {
     let (sent, late, error) = match outcome {
         Outcome::Scheduled => (false, false, None),
         Outcome::Sent { late, warning } => (true, late, warning),
         Outcome::Failed(error) => (false, false, Some(error)),
     };
     let event = SyncEvent::Outbox { draft, subject: subject.to_owned(), sent, late, error };
-    let _ = manager.sender().send(AccountEvent { account: 0, event });
+    let _ = manager.sender().send(AccountEvent { account: 0, user, event });
 }
 
 /// Every 2 s: sends the messages whose time has come. A `Weak` pointer,
 /// like the drafts loop: it mustn't keep the manager alive.
 pub(crate) async fn outbox_loop(manager: Weak<AccountManager>) {
     if let Some(manager) = manager.upgrade() {
-        match manager.drafts().interrupted().await {
+        match Drafts::interrupted(&manager.database().pool()).await {
             Ok(0) => {}
             Ok(n) => tracing::warn!("{n} message(s) were being sent when Havre stopped: marked to check"),
             Err(err) => tracing::warn!("outbox: {err}"),
@@ -316,17 +335,27 @@ pub(crate) async fn outbox_loop(manager: Weak<AccountManager>) {
     loop {
         tokio::time::sleep(EVERY).await;
         let Some(manager) = manager.upgrade() else { return };
-        let due = match manager.drafts().due(now()).await {
-            Ok(due) => due,
+        let users = match manager.database().users().all().await {
+            Ok(users) => users,
             Err(err) => {
                 tracing::warn!(%err, "outbox");
                 continue;
             }
         };
-        for (id, send_at) in due {
-            // A failure is kept on the draft and announced: nothing else to do here.
-            if let Err(err) = manager.send_due(id, send_at).await {
-                tracing::warn!(draft = id, "not sent: {err}");
+        for user in users {
+            let drafts = manager.drafts(user);
+            let due = match drafts.due(now()).await {
+                Ok(due) => due,
+                Err(err) => {
+                    tracing::warn!(%err, "outbox");
+                    continue;
+                }
+            };
+            for (id, send_at) in due {
+                // A failure is kept on the draft and announced: nothing else to do here.
+                if let Err(err) = manager.send_due(&drafts, id, send_at).await {
+                    tracing::warn!(draft = id, "not sent: {err}");
+                }
             }
         }
     }
@@ -336,27 +365,31 @@ pub(crate) async fn outbox_loop(manager: Weak<AccountManager>) {
 mod tests {
     use super::*;
     use crate::compose::{DraftKind, DraftUpdate, Prefill};
+    use crate::users::UserId;
 
     #[tokio::test]
     async fn scheduling_claiming_and_undoing() {
         let db = crate::store::Database::in_memory().await.unwrap();
         let account = db
-            .insert_account(&crate::store::NewAccount {
-                name: "Me".into(),
-                email: "me@example.org".into(),
-                imap_host: "mail.example.org".into(),
-                imap_port: 993,
-                imap_user: "me".into(),
-                color: "work".into(),
-                password: "x".into(),
-                sender_name: String::new(),
-                smtp_host: None,
-                smtp_port: None,
-                smtp_security: None,
-            })
+            .insert_account(
+                UserId::ADMIN,
+                &crate::store::NewAccount {
+                    name: "Me".into(),
+                    email: "me@example.org".into(),
+                    imap_host: "mail.example.org".into(),
+                    imap_port: 993,
+                    imap_user: "me".into(),
+                    color: "work".into(),
+                    password: "x".into(),
+                    sender_name: String::new(),
+                    smtp_host: None,
+                    smtp_port: None,
+                    smtp_security: None,
+                },
+            )
             .await
             .unwrap();
-        let drafts = db.drafts();
+        let drafts = db.drafts(UserId::ADMIN);
         let id = drafts.insert(account.id, DraftKind::New, &Prefill::default(), None).await.unwrap();
         let update = DraftUpdate { to: Some("anna@example.com".into()), ..Default::default() };
         let draft = drafts.update(id, &update).await.unwrap();
@@ -378,7 +411,7 @@ mod tests {
         assert!(drafts.schedule(id, 2000).await.is_err());
 
         // Havre stopped meanwhile: at the next start it's failed, not sent again.
-        assert_eq!(drafts.interrupted().await.unwrap(), 1);
+        assert_eq!(Drafts::interrupted(&db.pool()).await.unwrap(), 1);
         let failed = drafts.get(id).await.unwrap();
         assert_eq!(failed.send_state.as_deref(), Some("failed"));
         assert!(failed.send_error.unwrap().contains("may have gone"));

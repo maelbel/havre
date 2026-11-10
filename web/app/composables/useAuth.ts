@@ -9,6 +9,8 @@ export interface AuthStatus {
   /** First run: no password chosen yet. */
   setup_needed: boolean
   signed_in: boolean
+  /** The admin (who set Havre up): AI, backups and connections are theirs only. */
+  admin: boolean
 }
 
 export interface SessionInfo {
@@ -21,6 +23,12 @@ export interface SessionInfo {
 /** Shared across pages; `null` until first asked. */
 export function useAuthStatus() {
   return useState<AuthStatus | null>('auth-status', () => null)
+}
+
+/** Is the person signed in the admin? (Demo mode: yes, there's only one.) */
+export function useIsAdmin() {
+  const status = useAuthStatus()
+  return computed(() => !status.value?.enabled || status.value.admin)
 }
 
 export async function refreshAuthStatus() {

@@ -3,7 +3,7 @@
 //! | Method | Path                                             | What                              |
 //! |--------|--------------------------------------------------|-----------------------------------|
 //! | GET    | /health                                          | server status                     |
-//! | GET    | /auth/status                                     | first run? signed in?             |
+//! | GET    | /auth/status                                     | first run? signed in? admin?      |
 //! | POST   | /auth/setup · /auth/login  `{password}`          | choose the password · sign in     |
 //! | POST   | /auth/logout                                     | sign out                          |
 //! | POST   | /auth/password  `{current, new}`                 | change it (signs out other browsers) |
@@ -72,12 +72,17 @@ use havre_core::{
     oauth::{self, Provider},
     store::{Account, AccountUpdate, Contact, FolderInfo, NewAccount},
     sync::{AccountEvent, Action, SyncEvent, SyncStatus},
+    users::UserId,
 };
 use serde::Deserialize;
 use serde_json::json;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 
-use crate::{AppState, auth, mail_source::MailSource};
+use crate::{
+    AppState,
+    auth::{self, CurrentUser},
+    mail_source::MailSource,
+};
 
 /// The API. Everything but `/health` and `/auth/{status,setup,login,logout}`
 /// needs a session (see `auth.rs`).
@@ -148,29 +153,38 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
 
 // ---- Accounts -------------------------------------------------------------------
 
-async fn accounts(State(state): State<AppState>) -> Result<Json<Vec<AccountView>>, ApiError> {
-    Ok(Json(state.mail.accounts().await?))
+async fn accounts(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<AccountView>>, ApiError> {
+    Ok(Json(state.mail.accounts(user).await?))
 }
 
 /// `POST /api/accounts` — tests the login first: a wrong password is
 /// reported right away (400) and nothing is saved.
 async fn add_account(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(new): Json<NewAccount>,
 ) -> Result<(StatusCode, Json<Account>), ApiError> {
-    Ok((StatusCode::CREATED, Json(state.mail.add_account(new).await?)))
+    Ok((StatusCode::CREATED, Json(state.mail.add_account(user, new).await?)))
 }
 
 async fn update_account(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(update): Json<AccountUpdate>,
 ) -> Result<Json<Account>, ApiError> {
-    Ok(Json(state.mail.update_account(id, update).await?))
+    Ok(Json(state.mail.update_account(user, id, update).await?))
 }
 
-async fn remove_account(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
-    state.mail.remove_account(id).await?;
+async fn remove_account(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    state.mail.remove_account(user, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -192,16 +206,18 @@ async fn detect_account(Query(q): Query<DetectQuery>) -> Json<serde_json::Value>
 /// Microsoft with `mode: "code"`, a code), and a flow id to poll.
 async fn start_oauth(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(request): Json<OAuthRequest>,
 ) -> Result<Json<SignInStart>, ApiError> {
-    Ok(Json(state.mail.start_oauth(request).await?))
+    Ok(Json(state.mail.start_oauth(user, request).await?))
 }
 
 async fn poll_oauth(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(flow): Path<String>,
 ) -> Result<Json<SignInState>, ApiError> {
-    Ok(Json(state.mail.poll_oauth(&flow).await?))
+    Ok(Json(state.mail.poll_oauth(user, &flow).await?))
 }
 
 #[derive(Deserialize)]
@@ -273,42 +289,56 @@ struct ContactQuery {
 
 async fn contacts(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(q): Query<ContactQuery>,
 ) -> Result<Json<Vec<Contact>>, ApiError> {
     if q.q.trim().len() < 2 {
         return Ok(Json(Vec::new()));
     }
-    Ok(Json(state.mail.contacts(&q.q).await?))
+    Ok(Json(state.mail.contacts(user, &q.q).await?))
 }
 
-async fn list_drafts(State(state): State<AppState>) -> Result<Json<Vec<Draft>>, ApiError> {
-    Ok(Json(state.mail.drafts()?.list().await?))
+async fn list_drafts(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<Draft>>, ApiError> {
+    Ok(Json(state.mail.drafts(user)?.list().await?))
 }
 
 /// `POST /api/drafts` — a new message, or a reply / forward of
 /// `{folder, uid}` (prefilled: recipients, subject, quoted text…).
 async fn create_draft(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(start): Json<NewDraft>,
 ) -> Result<(StatusCode, Json<Draft>), ApiError> {
-    Ok((StatusCode::CREATED, Json(state.mail.new_draft(start).await?)))
+    Ok((StatusCode::CREATED, Json(state.mail.new_draft(user, start).await?)))
 }
 
-async fn get_draft(State(state): State<AppState>, Path(id): Path<i64>) -> Result<Json<Draft>, ApiError> {
-    Ok(Json(state.mail.drafts()?.get(id).await?))
+async fn get_draft(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Draft>, ApiError> {
+    Ok(Json(state.mail.drafts(user)?.get(id).await?))
 }
 
 /// `PATCH /api/drafts/{id}` — autosave while typing.
 async fn update_draft(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(update): Json<DraftUpdate>,
 ) -> Result<Json<Draft>, ApiError> {
-    Ok(Json(state.mail.drafts()?.update(id, &update).await?))
+    Ok(Json(state.mail.drafts(user)?.update(id, &update).await?))
 }
 
-async fn delete_draft(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
-    state.mail.discard_draft(id).await?;
+async fn delete_draft(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    state.mail.discard_draft(user, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -321,13 +351,18 @@ struct FromMessage {
 
 async fn draft_from_message(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(m): Json<FromMessage>,
 ) -> Result<Json<Draft>, ApiError> {
-    Ok(Json(state.mail.draft_from_message(m.account, &m.folder, m.uid).await?))
+    Ok(Json(state.mail.draft_from_message(user, m.account, &m.folder, m.uid).await?))
 }
 
-async fn close_draft(State(state): State<AppState>, Path(id): Path<i64>) -> Result<Json<Draft>, ApiError> {
-    Ok(Json(state.mail.save_draft_to_server(id).await?))
+async fn close_draft(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Draft>, ApiError> {
+    Ok(Json(state.mail.save_draft_to_server(user, id).await?))
 }
 
 #[derive(Deserialize)]
@@ -339,6 +374,7 @@ struct AttachmentQuery {
 /// the request body, its type the `Content-Type` header.
 async fn add_attachment(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Query(q): Query<AttachmentQuery>,
     headers: axum::http::HeaderMap,
@@ -351,14 +387,15 @@ async fn add_attachment(
         .unwrap_or("application/octet-stream")
         .to_owned();
     let file = AttachmentData { filename: q.filename, mime, bytes: body.to_vec() };
-    Ok((StatusCode::CREATED, Json(state.mail.drafts()?.add_attachment(id, &file).await?)))
+    Ok((StatusCode::CREATED, Json(state.mail.drafts(user)?.add_attachment(id, &file).await?)))
 }
 
 async fn remove_attachment(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path((id, attachment)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    state.mail.drafts()?.remove_attachment(id, attachment).await?;
+    state.mail.drafts(user)?.remove_attachment(id, attachment).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -372,39 +409,52 @@ struct SendAt {
 /// `POST /api/drafts/{id}/send`
 async fn send_draft(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(body): Json<SendAt>,
 ) -> Result<Json<SendReply>, ApiError> {
-    Ok(Json(state.mail.manager()?.send_draft_at(id, body.at).await?))
+    Ok(Json(state.mail.manager()?.send_draft_at(user, id, body.at).await?))
 }
 
 /// `POST /api/drafts/{id}/unsend` — Undo, or "Don't send".
-async fn unsend_draft(State(state): State<AppState>, Path(id): Path<i64>) -> Result<Json<Draft>, ApiError> {
-    Ok(Json(state.mail.manager()?.unsend(id).await?))
+async fn unsend_draft(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Draft>, ApiError> {
+    Ok(Json(state.mail.manager()?.unsend(user, id).await?))
 }
 
-async fn scheduled(State(state): State<AppState>) -> Result<Json<Vec<Draft>>, ApiError> {
-    Ok(Json(state.mail.drafts()?.scheduled().await?))
+async fn scheduled(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<Draft>>, ApiError> {
+    Ok(Json(state.mail.drafts(user)?.scheduled().await?))
 }
 
-async fn mail_settings(State(state): State<AppState>) -> Result<Json<MailSettings>, ApiError> {
-    Ok(Json(state.mail.drafts()?.mail_settings().await?))
+async fn mail_settings(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<MailSettings>, ApiError> {
+    Ok(Json(state.mail.drafts(user)?.mail_settings().await?))
 }
 
 async fn set_mail_settings(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(settings): Json<MailSettings>,
 ) -> Result<Json<MailSettings>, ApiError> {
-    Ok(Json(state.mail.drafts()?.set_mail_settings(&settings).await?))
+    Ok(Json(state.mail.drafts(user)?.set_mail_settings(&settings).await?))
 }
 
 // ---- Mail -------------------------------------------------------------------------
 
 /// The `?account=` of a request, or the first account.
-async fn account(state: &AppState, requested: Option<i64>) -> Result<i64, ApiError> {
+/// Whose it is gets checked where it's used (the sync engine is the user's).
+async fn account(state: &AppState, user: UserId, requested: Option<i64>) -> Result<i64, ApiError> {
     match requested {
         Some(id) => Ok(id),
-        None => Ok(state.mail.default_account().await?),
+        None => Ok(state.mail.default_account(user).await?),
     }
 }
 
@@ -426,10 +476,11 @@ struct AccountOnly {
 
 async fn folders(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(q): Query<AccountOnly>,
 ) -> Result<Json<Vec<FolderInfo>>, ApiError> {
-    let id = account(&state, q.account).await?;
-    Ok(Json(state.mail.folders(id).await?))
+    let id = account(&state, user, q.account).await?;
+    Ok(Json(state.mail.folders(user, id).await?))
 }
 
 #[derive(Deserialize)]
@@ -449,11 +500,12 @@ struct MessagesQuery {
 
 async fn messages(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(q): Query<MessagesQuery>,
 ) -> Result<Json<MessagePage>, ApiError> {
-    let id = account(&state, q.account).await?;
+    let id = account(&state, user, q.account).await?;
     let query = ListQuery { limit: q.limit.unwrap_or(50).clamp(1, 500), before_uid: q.before, search: q.q };
-    Ok(Json(state.mail.messages(id, &q.folder, &query, q.remote == 1).await?))
+    Ok(Json(state.mail.messages(user, id, &q.folder, &query, q.remote == 1).await?))
 }
 
 #[derive(Deserialize)]
@@ -475,17 +527,18 @@ fn one() -> u8 {
 
 async fn message(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(uid): Path<u32>,
     Query(q): Query<MessageQuery>,
 ) -> Result<Json<MessageDetail>, ApiError> {
-    let id = account(&state, q.account).await?;
+    let id = account(&state, user, q.account).await?;
     let folder = q.folder.clone();
     // Embedded images point back to our own attachment endpoint.
     let attachment_url = move |index: usize| {
         format!("/api/mail/messages/{uid}/attachments/{index}?account={id}&folder={}", encode(&folder))
     };
     let options = RenderOptions { allow_remote_images: q.images == 1, attachment_url: &attachment_url };
-    Ok(Json(state.mail.message(id, &q.folder, uid, q.mark_read == 1, &options).await?))
+    Ok(Json(state.mail.message(user, id, &q.folder, uid, q.mark_read == 1, &options).await?))
 }
 
 #[derive(Deserialize)]
@@ -495,12 +548,13 @@ struct SeenBody {
 
 async fn set_seen(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(uid): Path<u32>,
     Query(q): Query<Where>,
     Json(body): Json<SeenBody>,
 ) -> Result<StatusCode, ApiError> {
-    let id = account(&state, q.account).await?;
-    state.mail.set_seen(id, &q.folder, uid, body.seen).await?;
+    let id = account(&state, user, q.account).await?;
+    state.mail.set_seen(user, id, &q.folder, uid, body.seen).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -525,21 +579,22 @@ struct Applied {
 /// `POST /api/mail/actions` — archive, delete or move messages.
 async fn apply_action(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(body): Json<ActionBody>,
 ) -> Result<Json<Applied>, ApiError> {
     if body.uids.is_empty() {
         return Err(ApiError::BadRequest("no messages selected".into()));
     }
-    let id = account(&state, body.account).await?;
+    let id = account(&state, user, body.account).await?;
     let (outcome, message_ids) = match &state.mail {
         MailSource::Accounts(m) => {
-            m.engine(id)
+            m.engine(user, id)
                 .await?
                 .apply_undoable(body.action, &body.folder, &body.uids, body.to.as_deref())
                 .await?
         }
         MailSource::Demo(_) => (
-            state.mail.apply(id, body.action, &body.folder, &body.uids, body.to.as_deref()).await?,
+            state.mail.apply(user, id, body.action, &body.folder, &body.uids, body.to.as_deref()).await?,
             Vec::new(),
         ),
     };
@@ -554,9 +609,13 @@ struct SyncQuery {
 
 /// `POST /api/mail/sync` — sync now (one folder, or everything) and answer
 /// when done. Gives up waiting after 60 s; the sync itself goes on.
-async fn sync_now(State(state): State<AppState>, Query(q): Query<SyncQuery>) -> Result<StatusCode, ApiError> {
-    let id = account(&state, q.account).await?;
-    match tokio::time::timeout(Duration::from_secs(60), state.mail.sync_now(id, q.folder)).await {
+async fn sync_now(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Query(q): Query<SyncQuery>,
+) -> Result<StatusCode, ApiError> {
+    let id = account(&state, user, q.account).await?;
+    match tokio::time::timeout(Duration::from_secs(60), state.mail.sync_now(user, id, q.folder)).await {
         Ok(result) => result?,
         Err(_) => return Ok(StatusCode::ACCEPTED),
     }
@@ -566,29 +625,42 @@ async fn sync_now(State(state): State<AppState>, Query(q): Query<SyncQuery>) -> 
 /// `GET /api/mail/status`
 async fn status(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(q): Query<AccountOnly>,
 ) -> Result<Json<SyncStatus>, ApiError> {
-    let id = account(&state, q.account).await?;
-    Ok(Json(state.mail.status(id).await?))
+    let id = account(&state, user, q.account).await?;
+    Ok(Json(state.mail.status(user, id).await?))
 }
 
 /// `GET /api/events` — Server-Sent Events: the browser keeps this request
-/// open and receives a line of JSON each time something changes, in any
-/// account. Each event carries its `account` id.
-async fn events(State(state): State<AppState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+/// open and receives a line of JSON each time something changes, in any of
+/// the user's accounts. Each event carries its `account` id. Events of other
+/// users (their new mail, their reminders) are never sent here.
+async fn events(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     // First, the current status of every account.
     let initial: Vec<AccountEvent> = state
         .mail
-        .accounts()
+        .accounts(user)
         .await
         .unwrap_or_default()
         .into_iter()
-        .map(|a| AccountEvent { account: a.account.id, event: SyncEvent::Status { status: a.status } })
+        .map(|a| AccountEvent { account: a.account.id, user, event: SyncEvent::Status { status: a.status } })
         .collect();
-    let updates = BroadcastStream::new(state.mail.subscribe()).map(|item| match item {
-        Ok(event) => event,
-        // We were too slow and missed events: tell the UI to reload everything.
-        Err(BroadcastStreamRecvError::Lagged(_)) => AccountEvent { account: 0, event: SyncEvent::Accounts },
+    let updates = BroadcastStream::new(state.mail.subscribe()).filter_map(move |item| {
+        let event = match item {
+            // Everyone's events go through the channel: this user's only.
+            Ok(event) if event.user == user => Some(event),
+            Ok(_) => None,
+            // We were too slow and missed events: tell the UI to reload everything.
+            Err(BroadcastStreamRecvError::Lagged(_)) => {
+                Some(AccountEvent { account: 0, user, event: SyncEvent::Accounts })
+            }
+        };
+        // `filter_map` on a stream wants a future: `ready` is one that's already done.
+        std::future::ready(event)
     });
     let stream = futures::stream::iter(initial)
         .chain(updates)
@@ -606,11 +678,12 @@ async fn events(State(state): State<AppState>) -> Sse<impl Stream<Item = Result<
 /// else is forced to download, and the browser is told not to guess types.
 async fn attachment(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path((uid, index)): Path<(u32, usize)>,
     Query(q): Query<Where>,
 ) -> Result<Response, ApiError> {
-    let id = account(&state, q.account).await?;
-    let data = state.mail.attachment(id, &q.folder, uid, index).await?;
+    let id = account(&state, user, q.account).await?;
+    let data = state.mail.attachment(user, id, &q.folder, uid, index).await?;
 
     let safe_inline = matches!(data.mime.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp");
     let content_type = if safe_inline { data.mime.as_str() } else { "application/octet-stream" };
@@ -654,6 +727,11 @@ fn encode(s: &str) -> String {
 pub enum ApiError {
     BadRequest(String),
     Core(havre_core::Error),
+    /// No session on a route that needs one.
+    Unauthorized,
+    /// An admin-only route asked by someone else: answered like a route
+    /// that doesn't exist.
+    NotFound,
 }
 
 // Lets `?` convert a core error into an ApiError.
@@ -667,6 +745,8 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "Sign in to Havre first.".into()),
+            Self::NotFound => (StatusCode::NOT_FOUND, "Not found.".into()),
             Self::Core(err @ havre_core::Error::NotFound(_)) => (StatusCode::NOT_FOUND, err.to_string()),
             // Config errors here are user mistakes ("already in this folder",
             // "wrong password" when adding an account…).

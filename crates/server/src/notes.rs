@@ -30,7 +30,7 @@ use havre_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{AppState, api::ApiError};
+use crate::{AppState, api::ApiError, auth::CurrentUser};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -46,26 +46,28 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// Notes live in the database, so they need the real one (not demo mode).
-fn store(state: &AppState) -> Result<NoteStore, ApiError> {
+fn store(state: &AppState, user: havre_core::users::UserId) -> Result<NoteStore, ApiError> {
     state
         .mail
         .manager()
-        .map(|m| m.database().notes())
+        .map(|m| m.database().notes(user))
         .map_err(|_| ApiError::BadRequest("Notes aren't available in demo mode.".into()))
 }
 
 async fn list(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Query(q): Query<NoteQuery>,
 ) -> Result<Json<Vec<NoteSummary>>, ApiError> {
-    Ok(Json(store(&state)?.notes(&q).await?))
+    Ok(Json(store(&state, user)?.notes(&q).await?))
 }
 
 async fn create(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(input): Json<NoteInput>,
 ) -> Result<(StatusCode, Json<NoteView>), ApiError> {
-    Ok((StatusCode::CREATED, Json(store(&state)?.create(&input).await?)))
+    Ok((StatusCode::CREATED, Json(store(&state, user)?.create(&input).await?)))
 }
 
 #[derive(Deserialize)]
@@ -78,17 +80,18 @@ struct FromEvent {
 /// trusting what the browser sends) and leaves you out of its people.
 async fn from_event(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(r): Json<FromEvent>,
 ) -> Result<(StatusCode, Json<NoteView>), ApiError> {
-    let notes = store(&state)?;
+    let notes = store(&state, user)?;
     let agenda =
         state.agenda.as_ref().ok_or_else(|| ApiError::BadRequest("No Agenda in demo mode.".into()))?;
-    let event = agenda.store().event(r.event).await?;
+    let event = agenda.for_user(user).store().event(r.event).await?;
     let mine: Vec<String> = state
         .mail
         .manager()?
         .database()
-        .accounts()
+        .accounts(user)
         .await?
         .into_iter()
         .map(|a| a.email.to_lowercase())
@@ -118,10 +121,11 @@ struct FromMail {
 /// with its subject, linked to it (by `Message-ID`) and to its sender.
 async fn from_mail(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Json(r): Json<FromMail>,
 ) -> Result<(StatusCode, Json<NoteView>), ApiError> {
-    let notes = store(&state)?;
-    let mail_store = state.mail.manager()?.database().store(r.account);
+    let notes = store(&state, user)?;
+    let mail_store = state.mail.manager()?.database().mailbox(user, r.account).await?;
     let (subject, from_name, from_address, message_id) = mail_store.mail_link(&r.folder, r.uid).await?;
     // Already a note about this email (found by Message-ID, wherever the
     // email is now)? Open that one rather than making a second.
@@ -158,20 +162,28 @@ async fn from_mail(
     Ok((StatusCode::CREATED, Json(notes.create(&input).await?)))
 }
 
-async fn people(State(state): State<AppState>) -> Result<Json<Vec<NotePerson>>, ApiError> {
-    Ok(Json(store(&state)?.people().await?))
+async fn people(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<NotePerson>>, ApiError> {
+    Ok(Json(store(&state, user)?.people().await?))
 }
 
-async fn one(State(state): State<AppState>, Path(id): Path<i64>) -> Result<Json<NoteView>, ApiError> {
-    Ok(Json(store(&state)?.view(id).await?))
+async fn one(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<NoteView>, ApiError> {
+    Ok(Json(store(&state, user)?.view(id).await?))
 }
 
 async fn update(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(input): Json<NoteInput>,
 ) -> Result<Json<NoteView>, ApiError> {
-    Ok(Json(store(&state)?.update(id, &input).await?))
+    Ok(Json(store(&state, user)?.update(id, &input).await?))
 }
 
 #[derive(Deserialize)]
@@ -181,10 +193,11 @@ struct Pin {
 
 async fn pin(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
     Json(p): Json<Pin>,
 ) -> Result<Json<NoteView>, ApiError> {
-    Ok(Json(store(&state)?.set_pinned(id, p.pinned).await?))
+    Ok(Json(store(&state, user)?.set_pinned(id, p.pinned).await?))
 }
 
 #[derive(Deserialize)]
@@ -196,17 +209,18 @@ struct Done {
 /// if Microsoft or Google refuses, nothing changes and you see why.
 async fn tick(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path((id, line)): Path<(i64, usize)>,
     Json(d): Json<Done>,
 ) -> Result<Json<NoteView>, ApiError> {
-    let notes = store(&state)?;
+    let notes = store(&state, user)?;
     let view = notes.view(id).await?;
     let task = view.blocks.iter().find_map(|b| match b {
         notes::markdown::Block::Todo { line: l, task, .. } if *l == line => *task,
         _ => None,
     });
     if let (Some(task), Some(tasks)) = (task, state.tasks.as_ref()) {
-        tasks.set_done(task, d.done).await?;
+        tasks.set_done(user, task, d.done).await?;
     }
     let (view, _) = notes.set_todo(id, line, d.done).await?;
     Ok(Json(view))
@@ -224,20 +238,25 @@ struct MakeTask {
 /// email.
 async fn make_task(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path((id, line)): Path<(i64, usize)>,
     Json(m): Json<MakeTask>,
 ) -> Result<(StatusCode, Json<NoteView>), ApiError> {
-    let notes = store(&state)?;
+    let notes = store(&state, user)?;
     let tasks = state.tasks.as_ref().ok_or_else(|| ApiError::BadRequest("No Tasks in demo mode.".into()))?;
     let text = notes.todo_text(id, line).await?;
     let note = notes.note(id).await?;
     let links = Links { mail: note.mail, person: note.people.into_iter().next(), event: note.event };
-    let task = tasks.quick_add(&text, m.utc_offset, Some(links)).await?;
+    let task = tasks.quick_add(user, &text, m.utc_offset, Some(links)).await?;
     Ok((StatusCode::CREATED, Json(notes.link_task(id, &text, task.id).await?)))
 }
 
-async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> Result<StatusCode, ApiError> {
-    store(&state)?.delete(id).await?;
+async fn delete(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    store(&state, user)?.delete(id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -252,13 +271,14 @@ struct MailLocation {
 /// been archived or moved), else where it was. Same as for a task.
 async fn locate_mail(
     State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
 ) -> Result<Json<MailLocation>, ApiError> {
-    let note = store(&state)?.note(id).await?;
+    let note = store(&state, user)?.note(id).await?;
     let mail = note.mail.ok_or_else(|| {
         ApiError::Core(havre_core::Error::NotFound("This note isn't about an email.".into()))
     })?;
-    let mail_store = state.mail.manager()?.database().store(mail.account);
+    let mail_store = state.mail.manager()?.database().mailbox(user, mail.account).await?;
     if let Some(message_id) = &mail.message_id
         && let Some((folder, uid)) = mail_store.locate(message_id).await?
     {

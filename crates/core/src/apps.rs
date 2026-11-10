@@ -12,7 +12,7 @@
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-use crate::{Error, Result};
+use crate::{Error, Result, users::UserId};
 
 /// How an app describes itself.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -119,23 +119,33 @@ pub struct App {
     pub position: i64,
 }
 
-/// Your choices, stored in `app_settings` (no row = default: enabled, in
-/// the built-in order).
+/// One user's choices, stored in `user_apps` (no row = default: enabled, in
+/// the built-in order). Each user has their own dock.
 #[derive(Clone)]
 pub struct AppSettings {
     pool: SqlitePool,
+    user: UserId,
 }
 
 impl AppSettings {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: SqlitePool, user: UserId) -> Self {
+        Self { pool, user }
     }
 
     /// Every app, in dock order (disabled ones too: the library shows them).
     pub async fn list(&self) -> Result<Vec<App>> {
         let rows: Vec<(String, bool, i64)> =
-            sqlx::query_as("SELECT id, enabled, position FROM app_settings").fetch_all(&self.pool).await?;
-        Ok(apply(&rows))
+            sqlx::query_as("SELECT id, enabled, position FROM user_apps WHERE user_id = ?")
+                .bind(self.user.0)
+                .fetch_all(&self.pool)
+                .await?;
+        let mut apps = apply(&rows);
+        // AI is the admin's only (it costs money and has limits): nobody
+        // else sees it, so nobody else can add it to their dock either.
+        if self.user != UserId::ADMIN {
+            apps.retain(|a| a.manifest.id != "ai");
+        }
+        Ok(apps)
     }
 
     /// Shows or hides an app in the dock. At least one app stays.
@@ -169,9 +179,10 @@ impl AppSettings {
 
     async fn save(&self, id: &str, enabled: bool, position: i64) -> Result<()> {
         sqlx::query(
-            "INSERT INTO app_settings (id, enabled, position) VALUES (?, ?, ?)
-             ON CONFLICT (id) DO UPDATE SET enabled = excluded.enabled, position = excluded.position",
+            "INSERT INTO user_apps (user_id, id, enabled, position) VALUES (?, ?, ?, ?)
+             ON CONFLICT (user_id, id) DO UPDATE SET enabled = excluded.enabled, position = excluded.position",
         )
+        .bind(self.user.0)
         .bind(id)
         .bind(enabled)
         .bind(position)
@@ -209,7 +220,7 @@ mod tests {
     #[tokio::test]
     async fn choose_and_order_apps() {
         let db = Database::in_memory().await.unwrap();
-        let apps = db.apps();
+        let apps = db.apps(UserId::ADMIN);
         let ids = |list: &[App]| list.iter().map(|a| a.manifest.id).collect::<Vec<_>>();
 
         let list = apps.list().await.unwrap();

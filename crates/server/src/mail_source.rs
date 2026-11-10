@@ -17,6 +17,7 @@ use havre_core::{
     oauth::Provider,
     store::{Account, AccountUpdate, Contact, FolderInfo, NewAccount},
     sync::{AccountEvent, Action, SyncState, SyncStatus},
+    users::UserId,
 };
 use tokio::sync::broadcast;
 
@@ -39,13 +40,14 @@ impl MailSource {
 
     // ---- Accounts -------------------------------------------------------------
 
-    pub async fn accounts(&self) -> Result<Vec<AccountView>> {
+    pub async fn accounts(&self, user: UserId) -> Result<Vec<AccountView>> {
         match self {
             Self::Demo(store) => {
                 let unread = lock(store).folders().first().map_or(0, |f| f.unread);
                 Ok(vec![AccountView {
                     account: Account {
                         id: DEMO_ACCOUNT,
+                        user: Some(user),
                         name: "Demo".into(),
                         email: "mael@example.org".into(),
                         color: "work".into(),
@@ -69,24 +71,24 @@ impl MailSource {
                     unread,
                 }])
             }
-            Self::Accounts(manager) => manager.accounts().await,
+            Self::Accounts(manager) => manager.accounts(user).await,
         }
     }
 
-    pub async fn add_account(&self, new: NewAccount) -> Result<Account> {
-        self.manager()?.add(new).await
+    pub async fn add_account(&self, user: UserId, new: NewAccount) -> Result<Account> {
+        self.manager()?.add(user, new).await
     }
 
-    pub async fn update_account(&self, id: i64, update: AccountUpdate) -> Result<Account> {
-        self.manager()?.update(id, update).await
+    pub async fn update_account(&self, user: UserId, id: i64, update: AccountUpdate) -> Result<Account> {
+        self.manager()?.update(user, id, update).await
     }
 
-    pub async fn remove_account(&self, id: i64) -> Result<()> {
-        self.manager()?.remove(id).await
+    pub async fn remove_account(&self, user: UserId, id: i64) -> Result<()> {
+        self.manager()?.remove(user, id).await
     }
 
-    pub async fn start_oauth(&self, request: OAuthRequest) -> Result<SignInStart> {
-        self.manager()?.start_oauth(request).await
+    pub async fn start_oauth(&self, user: UserId, request: OAuthRequest) -> Result<SignInStart> {
+        self.manager()?.start_oauth(user, request).await
     }
 
     /// The provider sent the browser back (to the pop-up window).
@@ -94,39 +96,45 @@ impl MailSource {
         self.manager()?.oauth_callback(flow, code, error).await
     }
 
-    pub async fn poll_oauth(&self, flow: &str) -> Result<SignInState> {
-        self.manager()?.poll_oauth(flow).await
+    pub async fn poll_oauth(&self, user: UserId, flow: &str) -> Result<SignInState> {
+        self.manager()?.poll_oauth(user, flow).await
     }
 
     // ---- Writing ---------------------------------------------------------------
 
-    pub fn drafts(&self) -> Result<Drafts> {
-        Ok(self.manager()?.drafts())
+    pub fn drafts(&self, user: UserId) -> Result<Drafts> {
+        Ok(self.manager()?.drafts(user))
     }
 
-    pub async fn new_draft(&self, start: NewDraft) -> Result<Draft> {
-        self.manager()?.new_draft(start).await
+    pub async fn new_draft(&self, user: UserId, start: NewDraft) -> Result<Draft> {
+        self.manager()?.new_draft(user, start).await
     }
 
     /// A draft from the server's Drafts folder, to finish in Havre.
-    pub async fn draft_from_message(&self, account: i64, folder: &str, uid: u32) -> Result<Draft> {
-        self.manager()?.draft_from_message(account, folder, uid).await
+    pub async fn draft_from_message(
+        &self,
+        user: UserId,
+        account: i64,
+        folder: &str,
+        uid: u32,
+    ) -> Result<Draft> {
+        self.manager()?.draft_from_message(user, account, folder, uid).await
     }
 
     /// Saves a draft on the server now (its window closed).
-    pub async fn save_draft_to_server(&self, id: i64) -> Result<Draft> {
-        self.manager()?.save_draft_to_server(id).await
+    pub async fn save_draft_to_server(&self, user: UserId, id: i64) -> Result<Draft> {
+        self.manager()?.save_draft_to_server(user, id).await
     }
 
     /// Discards a draft, in Havre and on the server.
-    pub async fn discard_draft(&self, id: i64) -> Result<()> {
-        self.manager()?.discard_draft(id).await
+    pub async fn discard_draft(&self, user: UserId, id: i64) -> Result<()> {
+        self.manager()?.discard_draft(user, id).await
     }
 
-    pub async fn contacts(&self, query: &str) -> Result<Vec<Contact>> {
+    pub async fn contacts(&self, user: UserId, query: &str) -> Result<Vec<Contact>> {
         match self {
             Self::Demo(_) => Ok(Vec::new()),
-            Self::Accounts(m) => m.database().contacts(query, 8).await,
+            Self::Accounts(m) => m.database().contacts(user, query, 8).await,
         }
     }
 
@@ -148,12 +156,12 @@ impl MailSource {
     }
 
     /// The account to use when the request doesn't say: the first one.
-    pub async fn default_account(&self) -> Result<i64> {
+    pub async fn default_account(&self, user: UserId) -> Result<i64> {
         match self {
             Self::Demo(_) => Ok(DEMO_ACCOUNT),
             Self::Accounts(manager) => manager
                 .database()
-                .accounts()
+                .accounts(user)
                 .await?
                 .first()
                 .map(|a| a.id)
@@ -163,10 +171,10 @@ impl MailSource {
 
     // ---- Mail -------------------------------------------------------------------
 
-    pub async fn folders(&self, account: i64) -> Result<Vec<FolderInfo>> {
+    pub async fn folders(&self, user: UserId, account: i64) -> Result<Vec<FolderInfo>> {
         match self {
             Self::Demo(store) => Ok(lock(store).folders()),
-            Self::Accounts(m) => m.engine(account).await?.folders().await,
+            Self::Accounts(m) => m.engine(user, account).await?.folders().await,
         }
     }
 
@@ -174,6 +182,7 @@ impl MailSource {
     /// of the local store (sender and subject, instant).
     pub async fn messages(
         &self,
+        user: UserId,
         account: i64,
         folder: &str,
         query: &ListQuery,
@@ -182,7 +191,7 @@ impl MailSource {
         match self {
             Self::Demo(store) => Ok(lock(store).page(folder, query)),
             Self::Accounts(m) => {
-                let engine = m.engine(account).await?;
+                let engine = m.engine(user, account).await?;
                 if remote {
                     engine.search_server(folder, query).await
                 } else {
@@ -194,6 +203,7 @@ impl MailSource {
 
     pub async fn message(
         &self,
+        user: UserId,
         account: i64,
         folder: &str,
         uid: u32,
@@ -210,22 +220,32 @@ impl MailSource {
                 }
                 Ok(MessageDetail::parse(uid, folder, unread, &raw, options))
             }
-            Self::Accounts(m) => m.engine(account).await?.message(folder, uid, mark_read, options).await,
+            Self::Accounts(m) => {
+                m.engine(user, account).await?.message(folder, uid, mark_read, options).await
+            }
         }
     }
 
-    pub async fn set_seen(&self, account: i64, folder: &str, uid: u32, seen: bool) -> Result<()> {
+    pub async fn set_seen(
+        &self,
+        user: UserId,
+        account: i64,
+        folder: &str,
+        uid: u32,
+        seen: bool,
+    ) -> Result<()> {
         match self {
             Self::Demo(store) => {
                 lock(store).set_seen(uid, seen);
                 Ok(())
             }
-            Self::Accounts(m) => m.engine(account).await?.set_seen(folder, uid, seen).await,
+            Self::Accounts(m) => m.engine(user, account).await?.set_seen(folder, uid, seen).await,
         }
     }
 
     pub async fn apply(
         &self,
+        user: UserId,
         account: i64,
         action: Action,
         folder: &str,
@@ -245,12 +265,13 @@ impl MailSource {
                     ),
                 })
             }
-            Self::Accounts(m) => m.engine(account).await?.apply(action, folder, uids, to).await,
+            Self::Accounts(m) => m.engine(user, account).await?.apply(action, folder, uids, to).await,
         }
     }
 
     pub async fn attachment(
         &self,
+        user: UserId,
         account: i64,
         folder: &str,
         uid: u32,
@@ -261,22 +282,22 @@ impl MailSource {
                 let raw = lock(store).raw(folder, uid).ok_or_else(|| not_found(uid))?;
                 mail::extract_attachment(&raw, index).ok_or_else(|| not_found(uid))
             }
-            Self::Accounts(m) => m.engine(account).await?.attachment(folder, uid, index).await,
+            Self::Accounts(m) => m.engine(user, account).await?.attachment(folder, uid, index).await,
         }
     }
 
     /// Syncs now and waits (the refresh button). Instant in demo mode.
-    pub async fn sync_now(&self, account: i64, folder: Option<String>) -> Result<()> {
+    pub async fn sync_now(&self, user: UserId, account: i64, folder: Option<String>) -> Result<()> {
         match self {
             Self::Demo(_) => Ok(()),
-            Self::Accounts(m) => m.engine(account).await?.sync_now(folder).await,
+            Self::Accounts(m) => m.engine(user, account).await?.sync_now(folder).await,
         }
     }
 
-    pub async fn status(&self, account: i64) -> Result<SyncStatus> {
+    pub async fn status(&self, user: UserId, account: i64) -> Result<SyncStatus> {
         match self {
             Self::Demo(_) => Ok(idle_status()),
-            Self::Accounts(m) => Ok(m.engine(account).await?.status()),
+            Self::Accounts(m) => Ok(m.engine(user, account).await?.status()),
         }
     }
 

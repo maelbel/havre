@@ -38,6 +38,7 @@ use super::{
 use crate::{
     Error, Result,
     agenda::Event,
+    ai::AI_USER,
     notes::{NoteQuery, NoteSummary, markdown::Block},
     tasks::{EventLink, PersonLink, Task, TaskQuery},
 };
@@ -654,7 +655,7 @@ impl Ai {
     /// (with an error) when nobody reads any more.
     pub async fn ask_live(&self, turns: &[Turn], local: LocalTime, live: Option<Live>) -> Result<Answer> {
         let client = self.client().await?;
-        let accounts = self.db().accounts().await?;
+        let accounts = self.db().accounts(AI_USER).await?;
         let me = accounts
             .iter()
             .map(|a| {
@@ -877,7 +878,7 @@ impl Session<'_> {
                     .ok_or_else(|| Error::NotFound(format!("email {id}")))?;
                 let subject = self.st.answer.messages.get(&id).map(|h| h.subject.clone()).unwrap_or_default();
                 self.step("read_email", format!("Read “{subject}”"));
-                let raw = self.ai.accounts().engine(account).await?.raw(&folder, uid).await?;
+                let raw = self.ai.accounts().engine(AI_USER, account).await?.raw(&folder, uid).await?;
                 Ok(format!("<email id=\"{id}\">\n{}\n</email>", full_text(&raw, 6_000)))
             }
             "list_events" => {
@@ -902,7 +903,7 @@ impl Session<'_> {
             "search_people" => {
                 let query = text("query");
                 self.step("search_people", format!("Looked up “{query}” in People"));
-                let people = self.ai.db().people().search(&query, 8).await?;
+                let people = self.ai.db().people(AI_USER).search(&query, 8).await?;
                 if people.is_empty() {
                     return Ok("Nobody found.".into());
                 }
@@ -1022,7 +1023,7 @@ impl Session<'_> {
             "read_note" => {
                 let id = text("id");
                 let note = self.note_id(&id)?;
-                let view = self.ai.db().notes().view(note).await?;
+                let view = self.ai.db().notes(AI_USER).view(note).await?;
                 self.step("read_note", format!("Read the note “{}”", view.note.title));
                 let mut out =
                     format!("<note id=\"{id}\" title=\"{}\">\n{}\n</note>", view.note.title, view.note.body);
@@ -1079,7 +1080,7 @@ impl Session<'_> {
                 if added.is_empty() {
                     return Err(Error::Config("say what to add to the note".into()));
                 }
-                let title = self.ai.db().notes().view(note).await?.note.title;
+                let title = self.ai.db().notes(AI_USER).view(note).await?.note.title;
                 self.step("propose_note_append", format!("Prepared an addition to “{title}”"));
                 self.st.answer.proposals.push(Proposal::AppendNote { note, title, text: added });
                 Ok("Shown to the user with a Confirm button. It is not added yet.".into())
@@ -1118,7 +1119,7 @@ impl Session<'_> {
                 if find == replace {
                     return Err(Error::Config("`find` and `replace` are the same: nothing changes".into()));
                 }
-                let view = self.ai.db().notes().view(note).await?;
+                let view = self.ai.db().notes(AI_USER).view(note).await?;
                 match view.note.body.matches(find.as_str()).count() {
                     0 => {
                         return Err(Error::Config(
@@ -1181,9 +1182,9 @@ impl Session<'_> {
         // By meaning when the index is set up, else by words.
         let hits = match self.ai.search(query, 12).await {
             Ok(hits) if !hits.is_empty() => hits,
-            _ => self.ai.db().search_all(query, 12).await?,
+            _ => self.ai.db().search_all(AI_USER, query, 12).await?,
         };
-        let accounts = self.ai.db().accounts().await?;
+        let accounts = self.ai.db().accounts(AI_USER).await?;
         let mut lines = Vec::new();
         for hit in hits {
             let unread: bool = sqlx::query_scalar(
@@ -1227,7 +1228,7 @@ impl Session<'_> {
     }
 
     async fn unread_mail(&mut self) -> Result<String> {
-        let unread = self.ai.db().unread_inbox(15).await?;
+        let unread = self.ai.db().unread_inbox(AI_USER, 15).await?;
         let mut lines = Vec::new();
         for m in unread.messages {
             let hit = Hit {
@@ -1254,7 +1255,7 @@ impl Session<'_> {
     }
 
     async fn create_draft(&mut self, from: &str, to: &str, subject: &str, body: &str) -> Result<String> {
-        let accounts = self.ai.db().accounts().await?;
+        let accounts = self.ai.db().accounts(AI_USER).await?;
         let account = accounts
             .iter()
             .filter(|a| a.can_send)
@@ -1264,18 +1265,21 @@ impl Session<'_> {
         let draft = self
             .ai
             .accounts()
-            .new_draft(crate::compose::NewDraft {
-                account: account.id,
-                kind: crate::compose::DraftKind::New,
-                folder: None,
-                uid: None,
-                to: to.to_owned(),
-                subject: subject.to_owned(),
-            })
+            .new_draft(
+                AI_USER,
+                crate::compose::NewDraft {
+                    account: account.id,
+                    kind: crate::compose::DraftKind::New,
+                    folder: None,
+                    uid: None,
+                    to: to.to_owned(),
+                    subject: subject.to_owned(),
+                },
+            )
             .await?;
         self.ai
             .db()
-            .drafts()
+            .drafts(AI_USER)
             .update(
                 draft.id,
                 &crate::compose::DraftUpdate { body: Some(body.to_owned()), ..Default::default() },
@@ -1384,16 +1388,22 @@ impl Session<'_> {
             self.st.message_ids.get(id).cloned().ok_or_else(|| {
                 Error::NotFound(format!("email {id} (use search_mail or unread_mail first)"))
             })?;
-        let raw = self.ai.accounts().engine(account).await?.raw(&folder, uid).await?;
+        let raw = self.ai.accounts().engine(AI_USER, account).await?.raw(&folder, uid).await?;
         let digest = crate::mail::Digest::of(&raw);
         let ics = digest
             .files
             .iter()
             .find(|f| f.mime == "text/calendar" || f.name.to_lowercase().ends_with(".ics"))
             .ok_or_else(|| Error::Config(format!("{id} has no invitation")))?;
-        let view =
-            crate::invitations::view(self.ai.accounts(), self.ai.agenda(), account, &folder, uid, ics.index)
-                .await?;
+        let view = crate::invitations::view(
+            self.ai.accounts(),
+            &self.ai.agenda().for_user(AI_USER),
+            account,
+            &folder,
+            uid,
+            ics.index,
+        )
+        .await?;
         if view.method == "CANCEL" {
             return Err(Error::Config(format!("{id} is a cancellation: there's nothing to answer")));
         }
@@ -1440,7 +1450,7 @@ impl Session<'_> {
     }
 
     async fn search_notes(&mut self, query: &str, person: &str) -> Result<String> {
-        let store = self.ai.db().notes();
+        let store = self.ai.db().notes(AI_USER);
         let base = NoteQuery {
             person: (!person.is_empty()).then(|| person.to_owned()),
             limit: Some(8),
@@ -1502,7 +1512,7 @@ impl Session<'_> {
         due_by: Option<NaiveDate>,
         done: bool,
     ) -> Result<String> {
-        let store = self.ai.db().tasks();
+        let store = self.ai.db().tasks(AI_USER);
         let lists = store.lists().await?;
         let tasks = store
             .tasks(&TaskQuery {
@@ -1564,7 +1574,7 @@ impl Session<'_> {
 
     async fn propose_task(&mut self, input: &serde_json::Value) -> Result<String> {
         let text = |key: &str| input[key].as_str().unwrap_or_default().trim().to_owned();
-        let store = self.ai.db().tasks();
+        let store = self.ai.db().tasks(AI_USER);
         let lists = store.lists().await?;
         // New tasks go to the default list (the one quick add uses).
         let list = lists
@@ -1587,7 +1597,7 @@ impl Session<'_> {
                 .as_u64()
                 .ok_or_else(|| Error::Config("give the to-do's line number from read_note".into()))?
                 as usize;
-            let view = self.ai.db().notes().view(note).await?;
+            let view = self.ai.db().notes(AI_USER).view(note).await?;
             // An open to-do on that line, not already a task.
             let todo = view
                 .blocks
@@ -1691,7 +1701,7 @@ impl Session<'_> {
             let name = self
                 .ai
                 .db()
-                .people()
+                .people(AI_USER)
                 .search(&email, 1)
                 .await?
                 .into_iter()
@@ -1709,6 +1719,7 @@ impl Session<'_> {
         Ok(self
             .ai
             .agenda()
+            .for_user(AI_USER)
             .events(start, end)
             .await?
             .into_iter()
@@ -1818,6 +1829,7 @@ fn time(s: &str) -> Result<NaiveTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::users::UserId;
     use crate::{accounts::AccountManager, agenda::Agenda, notes::NoteInput, store::Database};
     use std::sync::Arc;
 
@@ -1834,12 +1846,16 @@ mod tests {
     }
 
     async fn dock(db: &Database, app: &str, on: bool) {
-        sqlx::query("INSERT INTO app_settings (id, enabled, position) VALUES (?, ?, 9) ON CONFLICT (id) DO UPDATE SET enabled = excluded.enabled")
-            .bind(app)
-            .bind(on)
-            .execute(&db.pool())
-            .await
-            .unwrap();
+        // The admin's dock: AI and its tools are theirs.
+        sqlx::query(
+            "INSERT INTO user_apps (user_id, id, enabled, position) VALUES (1, ?, ?, 9)
+             ON CONFLICT (user_id, id) DO UPDATE SET enabled = excluded.enabled",
+        )
+        .bind(app)
+        .bind(on)
+        .execute(&db.pool())
+        .await
+        .unwrap();
     }
 
     /// A pretend AI server: answers each request with the next of `replies`
@@ -1959,7 +1975,7 @@ mod tests {
         dock(&db, "tasks", true).await;
         let ai = ai(&db).await;
         let note = db
-            .notes()
+            .notes(AI_USER)
             .create(&NoteInput {
                 title: "Lyon kick-off".into(),
                 body: "Three sites.".into(),
@@ -2003,7 +2019,7 @@ mod tests {
             ]
         );
         // Nothing changed yet: the user confirms.
-        assert_eq!(db.notes().view(note.note.id).await.unwrap().note.body, "Three sites.");
+        assert_eq!(db.notes(AI_USER).view(note.note.id).await.unwrap().note.body, "Three sites.");
         let done: Option<i64> = sqlx::query_scalar("SELECT done_at FROM tasks WHERE id = ?")
             .bind(task)
             .fetch_one(&db.pool())
@@ -2034,7 +2050,7 @@ mod tests {
     async fn mailbox(db: &Database, me: &str, mail: &[(u32, &str, &str)]) -> i64 {
         use crate::mail::{FolderRole, MessageSummary, Person};
         use crate::store::tests::{folder, new_account};
-        let account = db.insert_account(&new_account(me)).await.unwrap().id;
+        let account = db.insert_account(UserId::ADMIN, &new_account(me)).await.unwrap().id;
         let store = db.store(account);
         store
             .replace_folders(&[
@@ -2226,7 +2242,7 @@ mod tests {
         let ai = ai(&db).await;
         let body = "Atelier le 14 novembre.\n\n- Salle 3\n- Salle 3\n";
         let note = db
-            .notes()
+            .notes(AI_USER)
             .create(&NoteInput { title: "Atelier Lyon".into(), body: body.into(), ..Default::default() })
             .await
             .unwrap();
@@ -2255,7 +2271,7 @@ mod tests {
                 replace: "le 20 novembre".into(),
             }]
         );
-        assert_eq!(db.notes().view(note.note.id).await.unwrap().note.body, body, "not changed yet");
+        assert_eq!(db.notes(AI_USER).view(note.note.id).await.unwrap().note.body, body, "not changed yet");
     }
 
     #[test]
@@ -2294,7 +2310,7 @@ mod tests {
         dock(&db, "notes", true).await;
         dock(&db, "tasks", true).await;
         let ai = ai(&db).await;
-        db.notes()
+        db.notes(AI_USER)
             .create(&NoteInput {
                 title: "Lyon kick-off — prep".into(),
                 body: "Planning for three sites.\n\n## To-dos\n- [x] Book the train\n- [ ] Send Claire the draft planning"

@@ -146,14 +146,14 @@ impl std::fmt::Debug for AiConfig {
 }
 
 pub(crate) async fn load(pool: &SqlitePool, secrets: &Secrets) -> Result<AiConfig> {
-    // `installed` comes from the dock: the AI app's row in app_settings
-    // (no row: not added yet). Subqueries read it, and whether Notes and
+    // `installed` comes from the dock: the AI app's row in the admin's
+    // dock (no row: not added yet). AI is the admin's only (user 1). Subqueries read it, and whether Notes and
     // Tasks are in the dock, in the same request.
     let r = sqlx::query(
         "SELECT s.*,
-                COALESCE((SELECT enabled FROM app_settings WHERE id = 'ai'), 0) AS installed,
-                COALESCE((SELECT enabled FROM app_settings WHERE id = 'notes'), 0) AS notes_app,
-                COALESCE((SELECT enabled FROM app_settings WHERE id = 'tasks'), 0) AS tasks_app
+                COALESCE((SELECT enabled FROM user_apps WHERE user_id = 1 AND id = 'ai'), 0) AS installed,
+                COALESCE((SELECT enabled FROM user_apps WHERE user_id = 1 AND id = 'notes'), 0) AS notes_app,
+                COALESCE((SELECT enabled FROM user_apps WHERE user_id = 1 AND id = 'tasks'), 0) AS tasks_app
          FROM ai_settings s WHERE s.id = 1",
     )
     .fetch_one(pool)
