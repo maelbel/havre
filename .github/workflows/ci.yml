@@ -30,7 +30,7 @@ jobs:
       - run: cargo test
 
   web:
-    name: Web UI (typecheck, build)
+    name: Web UI (typecheck, tests, build)
     runs-on: ubuntu-latest
     defaults:
       run: { working-directory: web }
@@ -42,4 +42,5 @@ jobs:
         with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      - run: pnpm test
       - run: pnpm build
