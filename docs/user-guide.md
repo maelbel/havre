@@ -560,8 +560,8 @@ can't be reached” until you're connected again.
 
 ### Notifications
 
-**Settings › Notifications** sends new mail and task reminders to your phone
-or computer, even when Havre is closed:
+**Settings › Notifications** sends new mail, invitations and reminders to
+your phone or computer, even when Havre is closed:
 
 1. On the device, open Settings › Notifications and press **Turn on
    notifications**; the browser asks for permission. On an iPhone or iPad,
@@ -572,9 +572,31 @@ or computer, even when Havre is closed:
 *What to send* applies to every device: **new mail** in your inboxes (unread
 mail that just arrived; more than three at once make one notification), with
 or without **the sender and subject** (off: just “New email”, for a lock
-screen others can see), and **task reminders**. A device where Havre is open
-and in front gets nothing: the page shows its own toast. Tapping a
-notification opens the email or the task.
+screen others can see), **invitations**, **event reminders** and **task
+reminders**. A device where Havre is open and in front gets nothing: the page
+shows its own toast. Tapping a notification opens the email, event or task.
+
+**Buttons** do the thing without opening Havre:
+
+| Notification | Buttons |
+|---|---|
+| New email | **Archive**, **Mark as read** |
+| Several new emails | **Mark all as read** |
+| Invitation | **Accept**, **Decline** |
+| Event reminder | **Join** (an online meeting) and **In 10 min**, or **In 5 min** and **In 10 min** |
+| Task reminder | **Done**, **In 1 hour** |
+
+- **Invitations**: a meeting invitation in an inbox takes the place of its
+  email's notification a moment after it arrives (*Invitation: Kick-off* · the
+  day, time and organizer). Accept and Decline answer like Mail's buttons: the
+  organizer gets your answer, and an accepted meeting goes into your calendar.
+  Not for your own meetings, updates you already answered, or cancellations.
+- **In 10 min** and the others bring the reminder back then, once, everywhere a
+  reminder rings (unless the task is done by then).
+- If a button can't do it (you were signed out, the email was already moved),
+  a notification says so; tapping it opens the email, event or task.
+- Buttons show on Chrome, Edge and Android. Safari (iPhone, iPad, Mac) and
+  Firefox show notifications without them: tap the notification instead.
 
 Notifications travel through the device's push service (Google's for Chrome
 and Android, Apple's for Safari, Mozilla's for Firefox), **encrypted on your

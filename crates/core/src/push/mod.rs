@@ -7,10 +7,16 @@
 //! with Havre's own key ([`crypto`]). The browser wakes Havre's service worker
 //! (`web/public/sw.js`), which shows it — even when no Havre page is open.
 //!
-//! What sends one ([`Push::start`]): a task reminder, and new mail in an inbox.
-//! A device where Havre is open and in front says so every half minute
-//! ([`Push::seen`]) and gets nothing: the page shows its own toast.
+//! What sends one ([`Push::start`]): a task or event reminder, new mail in an
+//! inbox, a new invitation, a scheduled message that couldn't go. A device
+//! where Havre is open and in front says so every half minute ([`Push::seen`])
+//! and gets nothing: the page shows its own toast.
+//!
+//! Notifications have buttons (step 26, [`actions`]): *Archive*, *Done*, *In
+//! 10 min*, *Accept*… The service worker sends the tapped one back to the
+//! server, which does the work like the app's own buttons.
 
+pub mod actions;
 pub mod crypto;
 
 use std::{
@@ -28,6 +34,7 @@ use crate::{
     store::Database,
     sync::{AccountEvent, SyncEvent},
 };
+pub use actions::{Action, Button, Target};
 use crypto::{BrowserKeys, Vapid};
 
 /// Who to contact about this server's pushes (the VAPID `sub` claim): the
@@ -37,9 +44,15 @@ const CONTACT: &str = "https://github.com/maelbel/havre";
 const IN_FRONT: Duration = Duration::from_secs(70);
 /// More new emails than this at once: one notification for all of them.
 const SUMMARY_ABOVE: usize = 3;
+/// How long new mail is watched for an invitation (its body is read a moment
+/// after its headers: the invitation is only known then).
+const INVITATION_WATCH: Duration = Duration::from_secs(3600);
+/// How often snoozed reminders are looked at.
+const SNOOZE_EVERY: Duration = Duration::from_secs(30);
 
-/// What the service worker shows.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// What the service worker shows. `Default` lets a notification without
+/// buttons say only what it has (`..Default::default()`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Notification {
     pub title: String,
     pub body: String,
@@ -47,6 +60,18 @@ pub struct Notification {
     pub url: String,
     /// A notification with the same tag replaces the previous one.
     pub tag: String,
+    /// Its buttons (none: tapping it only opens `url`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<Button>,
+    /// What the buttons act on; sent back to the server with the tapped one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Target>,
+    /// An online meeting's link: the *Join* button opens it (no server needed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_url: Option<String>,
+    /// Buzz even when it replaces one with the same tag (a reminder coming back).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub renotify: bool,
 }
 
 /// A browser subscribing (what `PushSubscription.toJSON()` gives, plus a name).
@@ -82,6 +107,7 @@ pub struct PushSettings {
     pub mail_details: bool,
     pub reminders: bool,
     pub event_reminders: bool,
+    pub invitations: bool,
 }
 
 /// A partial update: only the fields that are present change.
@@ -91,6 +117,16 @@ pub struct PushSettingsUpdate {
     pub mail_details: Option<bool>,
     pub reminders: Option<bool>,
     pub event_reminders: Option<bool>,
+    pub invitations: Option<bool>,
+}
+
+/// An email notified a moment ago, watched until its body is read: it may
+/// carry an invitation.
+struct Recent {
+    account: i64,
+    folder: String,
+    uid: u32,
+    at: Instant,
 }
 
 pub struct Push {
@@ -104,12 +140,27 @@ pub struct Push {
     /// (account, inbox) → the highest UID already looked at: mail at or
     /// below it is never notified (it was there before, or already sent).
     seen_uids: tokio::sync::Mutex<HashMap<(i64, String), i64>>,
+    /// New mail that may still turn out to be an invitation.
+    recent: tokio::sync::Mutex<Vec<Recent>>,
+    /// Havre's event channel: a snoozed reminder is announced on it again,
+    /// so it rings everywhere a reminder rings (here, the open page, Desktop).
+    events: broadcast::Sender<AccountEvent>,
 }
 
 impl Push {
     /// Starts listening to Havre's events (new mail, reminders) and pushes.
     pub fn start(db: Database, events: &broadcast::Sender<AccountEvent>) -> Arc<Self> {
-        let push = Arc::new(Self::new(db));
+        let push = Arc::new(Self::new(db, events.clone()));
+        // Snoozed reminders: looked at every half minute.
+        let me = Arc::clone(&push);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(SNOOZE_EVERY).await;
+                if let Err(err) = me.ring_snoozed(now()).await {
+                    tracing::warn!("push: snoozed reminders: {err}");
+                }
+            }
+        });
         let mut rx = events.subscribe();
         let me = Arc::clone(&push);
         tokio::spawn(async move {
@@ -133,13 +184,15 @@ impl Push {
         push
     }
 
-    fn new(db: Database) -> Self {
+    fn new(db: Database, events: broadcast::Sender<AccountEvent>) -> Self {
         Self {
             db,
             http: reqwest::Client::builder().timeout(Duration::from_secs(20)).build().expect("HTTP client"),
             vapid: OnceCell::new(),
             in_front: Mutex::new(HashMap::new()),
             seen_uids: tokio::sync::Mutex::new(HashMap::new()),
+            recent: tokio::sync::Mutex::new(Vec::new()),
+            events,
         }
     }
 
@@ -245,7 +298,7 @@ impl Push {
 
     pub async fn settings(&self) -> Result<PushSettings> {
         let r = sqlx::query(
-            "SELECT new_mail, mail_details, reminders, event_reminders FROM push_settings WHERE id = 1",
+            "SELECT new_mail, mail_details, reminders, event_reminders, invitations FROM push_settings WHERE id = 1",
         )
         .fetch_one(&self.pool())
         .await?;
@@ -254,6 +307,7 @@ impl Push {
             mail_details: r.get("mail_details"),
             reminders: r.get("reminders"),
             event_reminders: r.get("event_reminders"),
+            invitations: r.get("invitations"),
         })
     }
 
@@ -261,12 +315,14 @@ impl Push {
         // `COALESCE(?, column)`: a missing field (NULL) keeps what's there.
         sqlx::query(
             "UPDATE push_settings SET new_mail = COALESCE(?, new_mail), mail_details = COALESCE(?, mail_details),
-             reminders = COALESCE(?, reminders), event_reminders = COALESCE(?, event_reminders) WHERE id = 1",
+             reminders = COALESCE(?, reminders), event_reminders = COALESCE(?, event_reminders),
+             invitations = COALESCE(?, invitations) WHERE id = 1",
         )
         .bind(u.new_mail)
         .bind(u.mail_details)
         .bind(u.reminders)
         .bind(u.event_reminders)
+        .bind(u.invitations)
         .execute(&self.pool())
         .await?;
         self.settings().await
@@ -292,6 +348,7 @@ impl Push {
             body: "Notifications work on this device.".into(),
             url: "/settings/notifications".into(),
             tag: "havre-test".into(),
+            ..Default::default()
         };
         let row = sqlx::query("SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE endpoint = ?")
             .bind(endpoint)
@@ -374,19 +431,15 @@ impl Push {
         match &event.event {
             SyncEvent::Reminder { task, title } => {
                 if self.settings().await?.reminders {
-                    self.notify(&Notification {
-                        title: "Reminder".into(),
-                        body: title.clone(),
-                        url: format!("/tasks?task={task}"),
-                        tag: format!("havre-task-{task}"),
-                    })
-                    .await?;
+                    self.notify(&task_notification(*task, title)).await?;
                 }
             }
-            SyncEvent::EventReminder { event: id, title, start, all_day, location, .. } => {
+            SyncEvent::EventReminder { event: id, title, start, all_day, location, join_url } => {
                 if self.settings().await?.event_reminders {
                     let tz = self.time_zone().await?;
-                    self.notify(&event_notification(*id, title, *start, *all_day, location, tz)).await?;
+                    let when = When { start: *start, all_day: *all_day, tz };
+                    self.notify(&event_notification(*id, title, &when, location, join_url.as_deref()))
+                        .await?;
                 }
             }
             // A scheduled message couldn't go: always said (you may count on it).
@@ -397,13 +450,23 @@ impl Push {
                     body: error.chars().take(160).collect(),
                     url: "/mail?view=scheduled".into(),
                     tag: format!("havre-outbox-{draft}"),
+                    ..Default::default()
                 })
                 .await?;
             }
             SyncEvent::Folder { path } => {
                 let notes = self.new_mail(event.account, path).await?;
-                if self.settings().await?.new_mail {
+                let settings = self.settings().await?;
+                if settings.new_mail {
                     for note in notes {
+                        self.notify(&note).await?;
+                    }
+                }
+                // Invitations come a moment later (once the body is read), and
+                // take the place of the email's notification (the same tag).
+                let invitations = self.new_invitations(event.account, path).await?;
+                if settings.invitations {
+                    for note in invitations {
                         self.notify(&note).await?;
                     }
                 }
@@ -481,6 +544,14 @@ impl Push {
         .fetch_all(&self.pool())
         .await?;
         drop(seen);
+        // Watched for a while: one of them may be an invitation.
+        let mut recent = self.recent.lock().await;
+        recent.retain(|r| r.at.elapsed() < INVITATION_WATCH);
+        for r in &rows {
+            let uid = r.get::<i64, _>("uid") as u32;
+            recent.push(Recent { account, folder: folder.to_owned(), uid, at: Instant::now() });
+        }
+        drop(recent);
         let details = self.settings().await?.mail_details;
         let mail: Vec<(i64, String, String)> = rows
             .iter()
@@ -495,33 +566,316 @@ impl Push {
             .collect();
         Ok(mail_notifications(account, folder, &mail, details))
     }
+
+    /// The invitations among the mail notified a moment ago in `folder`, now
+    /// that their bodies are read. Each email is looked at once: when its
+    /// body is in, it's either an invitation (a notification) or forgotten.
+    async fn new_invitations(&self, account: i64, folder: &str) -> Result<Vec<Notification>> {
+        let mut recent = self.recent.lock().await;
+        let mut notes = Vec::new();
+        let mut done: Vec<u32> = Vec::new();
+        for r in recent.iter().filter(|r| r.account == account && r.folder == folder) {
+            let row = sqlx::query(
+                "SELECT files, has_invite FROM messages WHERE account_id = ? AND folder = ? AND uid = ?",
+            )
+            .bind(account)
+            .bind(folder)
+            .bind(r.uid as i64)
+            .fetch_optional(&self.pool())
+            .await?;
+            let Some(row) = row else {
+                done.push(r.uid); // gone (moved, deleted)
+                continue;
+            };
+            // `files` is filled when the body is read: until then, wait.
+            let Some(files) = row.get::<Option<String>, _>("files") else { continue };
+            done.push(r.uid);
+            if row.get::<bool, _>("has_invite") {
+                // An invitation that can't be read keeps the email's notification.
+                match self.invitation_notification(account, folder, r.uid, &files).await {
+                    Ok(Some(note)) => notes.push(note),
+                    Ok(None) => {}
+                    Err(err) => tracing::debug!("push: invitation in message {}: {err}", r.uid),
+                }
+            }
+        }
+        recent.retain(|r| !(r.account == account && r.folder == folder && done.contains(&r.uid)));
+        Ok(notes)
+    }
+
+    /// The notification for the invitation in an email (read from Havre's
+    /// copy of it), or `None` when there's nothing to answer: a cancellation,
+    /// an update, your own meeting, or one you already answered.
+    async fn invitation_notification(
+        &self,
+        account: i64,
+        folder: &str,
+        uid: u32,
+        files: &str,
+    ) -> Result<Option<Notification>> {
+        let files: Vec<crate::mail::FileInfo> = serde_json::from_str(files).unwrap_or_default();
+        let Some(ics) =
+            files.iter().find(|f| f.mime == "text/calendar" || f.name.to_lowercase().ends_with(".ics"))
+        else {
+            return Ok(None);
+        };
+        let raw: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT raw FROM bodies WHERE account_id = ? AND folder = ? AND uid = ?")
+                .bind(account)
+                .bind(folder)
+                .bind(uid as i64)
+                .fetch_optional(&self.pool())
+                .await?;
+        let Some(raw) = raw else { return Ok(None) };
+        let Some(file) = crate::mail::extract_attachment(&raw, ics.index) else { return Ok(None) };
+        let invitation = crate::agenda::ics::read_invitation(&String::from_utf8_lossy(&file.bytes))?;
+        let Some(first) = invitation.events.first() else { return Ok(None) };
+        let me: String = sqlx::query_scalar("SELECT email FROM accounts WHERE id = ?")
+            .bind(account)
+            .fetch_one(&self.pool())
+            .await?;
+        let mine = invitation.organizer_email.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(&me));
+        if invitation.method != "REQUEST" || mine {
+            return Ok(None);
+        }
+        // Already in your calendars with your answer: an update, nothing to ask.
+        if let Some(uid) = &invitation.uid {
+            let agenda = self.db.agenda();
+            if agenda.events_by_uid(uid).await?.iter().any(|e| e.my_response.is_some()) {
+                return Ok(None);
+            }
+        }
+        let when = When { start: first.start, all_day: first.all_day, tz: self.time_zone().await? };
+        Ok(Some(invitation_notification(
+            account,
+            folder,
+            uid,
+            ics.index,
+            &first.title,
+            &when,
+            invitation.organizer.as_deref(),
+        )))
+    }
+
+    // ---- Buttons --------------------------------------------------------------------
+
+    /// What a mail button may act on: the emails still in that folder. An
+    /// unknown UID would be ignored by the mail server, and the button would
+    /// seem to work; here it's said instead. Other targets are returned as
+    /// they are (their own functions look them up).
+    pub async fn still_there(&self, target: &Target) -> Result<Target> {
+        let gone = || Error::Config("That email isn't there any more.".into());
+        match target {
+            Target::Mail { account, folder, uid } => {
+                if self.has_message(*account, folder, *uid).await? {
+                    Ok(target.clone())
+                } else {
+                    Err(gone())
+                }
+            }
+            Target::Inbox { account, folder, uids } => {
+                let mut there = Vec::new();
+                for uid in uids {
+                    if self.has_message(*account, folder, *uid).await? {
+                        there.push(*uid);
+                    }
+                }
+                if there.is_empty() {
+                    return Err(gone());
+                }
+                Ok(Target::Inbox { account: *account, folder: folder.clone(), uids: there })
+            }
+            _ => Ok(target.clone()),
+        }
+    }
+
+    async fn has_message(&self, account: i64, folder: &str, uid: u32) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM messages WHERE account_id = ? AND folder = ? AND uid = ?)",
+        )
+        .bind(account)
+        .bind(folder)
+        .bind(uid as i64)
+        .fetch_one(&self.pool())
+        .await?)
+    }
+
+    // ---- Snoozing -------------------------------------------------------------------
+
+    /// A reminder again in `minutes` (a notification's *In 10 min*). The task
+    /// or event must exist; it's looked up again when the time comes.
+    pub async fn snooze(&self, target: &Target, minutes: i64) -> Result<()> {
+        let (kind, id, start) = match target {
+            Target::Task { task } => {
+                self.db.tasks().task(*task).await?;
+                ("task", *task, None)
+            }
+            Target::Event { event, start } => {
+                self.db.agenda().event(*event).await?;
+                ("event", *event, Some(*start))
+            }
+            _ => return Err(Error::Config("Only reminders can come back later.".into())),
+        };
+        sqlx::query("INSERT INTO push_snoozed (kind, ref_id, start, due_at) VALUES (?, ?, ?, ?)")
+            .bind(kind)
+            .bind(id)
+            .bind(start)
+            .bind(now() + minutes * 60)
+            .execute(&self.pool())
+            .await?;
+        Ok(())
+    }
+
+    /// Announces the snoozed reminders whose time has come, once each: the
+    /// row is deleted first, and only the one who deleted it rings.
+    async fn ring_snoozed(&self, now: i64) -> Result<()> {
+        let due = sqlx::query("SELECT id, kind, ref_id, start FROM push_snoozed WHERE due_at <= ?")
+            .bind(now)
+            .fetch_all(&self.pool())
+            .await?;
+        for row in due {
+            let gone = sqlx::query("DELETE FROM push_snoozed WHERE id = ?")
+                .bind(row.get::<i64, _>("id"))
+                .execute(&self.pool())
+                .await?;
+            if gone.rows_affected() == 0 {
+                continue;
+            }
+            let id: i64 = row.get("ref_id");
+            // Done or deleted since: nothing to remind.
+            let event = match row.get::<String, _>("kind").as_str() {
+                "task" => match self.db.tasks().task(id).await {
+                    Ok(task) if task.done_at.is_none() => SyncEvent::Reminder { task: id, title: task.title },
+                    _ => continue,
+                },
+                _ => match self.db.agenda().event(id).await {
+                    Ok(e) => SyncEvent::EventReminder {
+                        event: id,
+                        title: e.title,
+                        start: row.get::<Option<i64>, _>("start").unwrap_or(e.start),
+                        all_day: e.all_day,
+                        location: e.location,
+                        join_url: e.join_url,
+                    },
+                    Err(_) => continue,
+                },
+            };
+            // Nobody listening (no page open): fine, `on_event` below still pushes.
+            let _ = self.events.send(AccountEvent { account: 0, event });
+        }
+        Ok(())
+    }
+}
+
+/// When something happens, and the time zone to say it in.
+struct When {
+    start: i64,
+    all_day: bool,
+    tz: chrono_tz::Tz,
+}
+
+impl When {
+    /// The day (an all-day event's is its UTC date; a timed one's, where you are).
+    fn date(&self) -> chrono::NaiveDate {
+        if self.all_day {
+            chrono::DateTime::from_timestamp(self.start, 0).unwrap_or_default().date_naive()
+        } else {
+            self.local().date_naive()
+        }
+    }
+
+    fn local(&self) -> chrono::DateTime<chrono_tz::Tz> {
+        use chrono::TimeZone;
+        self.tz.timestamp_opt(self.start, 0).single().unwrap_or_else(|| self.tz.timestamp_opt(0, 0).unwrap())
+    }
+
+    /// "Thu 14 Nov, 10:00", "Thu 14 Nov, all day".
+    fn day_and_time(&self) -> String {
+        let day = self.date().format("%a %-d %b");
+        if self.all_day {
+            format!("{day}, all day")
+        } else {
+            format!("{day}, {}", self.local().format("%H:%M"))
+        }
+    }
+}
+
+/// A task reminder: *Done*, *In 1 hour*.
+fn task_notification(task: i64, title: &str) -> Notification {
+    Notification {
+        title: "Reminder".into(),
+        body: title.to_owned(),
+        url: format!("/tasks?task={task}"),
+        tag: format!("havre-task-{task}"),
+        actions: vec![Action::Done.button("Done"), Action::Snooze(60).button(&actions::snooze_title(60))],
+        data: Some(Target::Task { task }),
+        renotify: true,
+        ..Default::default()
+    }
+}
+
+/// A new invitation: *Accept*, *Decline*. It has the email's tag, so it takes
+/// the place of the email's own notification.
+fn invitation_notification(
+    account: i64,
+    folder: &str,
+    uid: u32,
+    index: usize,
+    title: &str,
+    when: &When,
+    organizer: Option<&str>,
+) -> Notification {
+    let title = if title.trim().is_empty() { "(no title)" } else { title.trim() };
+    // "Claire Dubois <claire@example.org>": the name is enough here.
+    let organizer = organizer.map(|o| o.split(" <").next().unwrap_or(o).trim());
+    let body = match organizer.filter(|o| !o.is_empty()) {
+        Some(o) => format!("{} · from {o}", when.day_and_time()),
+        None => when.day_and_time(),
+    };
+    Notification {
+        title: format!("Invitation: {title}"),
+        body,
+        url: format!("/mail?account={account}&folder={}&uid={uid}", url_part(folder)),
+        tag: format!("havre-mail-{account}-{uid}"),
+        actions: vec![Action::Accept.button("Accept"), Action::Decline.button("Decline")],
+        data: Some(Target::Invitation { account, folder: folder.to_owned(), uid, index }),
+        ..Default::default()
+    }
 }
 
 /// An event reminder: "Kick-off" / "10:00 · Room 3" (your time), opening the
-/// event in the Agenda.
+/// event in the Agenda. Buttons: *Join* and *In 10 min* for an online
+/// meeting, else *In 5 min* and *In 10 min*.
 fn event_notification(
     id: i64,
     title: &str,
-    start: i64,
-    all_day: bool,
+    when: &When,
     location: &str,
-    tz: chrono_tz::Tz,
+    join_url: Option<&str>,
 ) -> Notification {
-    use chrono::TimeZone;
-    // An all-day event's date is its UTC date; a timed one's, the date where you are.
-    let (date, when) = if all_day {
-        let day = chrono::DateTime::from_timestamp(start, 0).unwrap_or_default().date_naive();
-        (day, format!("All day, {}", day.format("%a %-d %b")))
+    let date = when.date();
+    let time = if when.all_day {
+        format!("All day, {}", date.format("%a %-d %b"))
     } else {
-        let local = tz.timestamp_opt(start, 0).single().unwrap_or_else(|| tz.timestamp_opt(0, 0).unwrap());
-        (local.date_naive(), local.format("%H:%M").to_string())
+        when.local().format("%H:%M").to_string()
     };
-    let body = if location.trim().is_empty() { when } else { format!("{when} · {}", location.trim()) };
+    let body = if location.trim().is_empty() { time } else { format!("{time} · {}", location.trim()) };
+    // Only a web address is opened by the service worker.
+    let join_url = join_url.filter(|u| u.starts_with("https://")).map(str::to_owned);
+    let snooze = |m: i64| Action::Snooze(m).button(&actions::snooze_title(m));
+    let actions = match join_url {
+        Some(_) => vec![Button { action: "join".into(), title: "Join".into() }, snooze(10)],
+        None => vec![snooze(5), snooze(10)],
+    };
     Notification {
         title: title.to_owned(),
         body,
         url: format!("/agenda?date={}&event={id}", date.format("%Y-%m-%d")),
-        tag: format!("havre-event-{id}-{start}"),
+        tag: format!("havre-event-{id}-{}", when.start),
+        actions,
+        data: Some(Target::Event { event: id, start: when.start }),
+        join_url,
+        renotify: true,
     }
 }
 
@@ -550,6 +904,13 @@ fn mail_notifications(
             },
             url: inbox_url,
             tag: format!("havre-mail-{account}"),
+            actions: vec![Action::Read.button("Mark all as read")],
+            data: Some(Target::Inbox {
+                account,
+                folder: folder.to_owned(),
+                uids: mail.iter().map(|(uid, _, _)| *uid as u32).collect(),
+            }),
+            ..Default::default()
         }];
     }
     mail.iter()
@@ -562,6 +923,9 @@ fn mail_notifications(
             },
             url: format!("{inbox_url}&uid={uid}"),
             tag: format!("havre-mail-{account}-{uid}"),
+            actions: vec![Action::Archive.button("Archive"), Action::Read.button("Mark as read")],
+            data: Some(Target::Mail { account, folder: folder.to_owned(), uid: *uid as u32 }),
+            ..Default::default()
         })
         .collect()
 }
@@ -604,6 +968,11 @@ mod tests {
     use crypto::tests::{AUTH, UA_PRIVATE, UA_PUBLIC, b64, open};
 
     type Requests = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
+    /// A `Push` with an event channel nobody else listens to.
+    fn new_push(db: Database) -> Push {
+        Push::new(db, broadcast::channel(16).0)
+    }
 
     /// A pretend push service: answers each request with the next status of
     /// `statuses`, and keeps what it received (headers, body).
@@ -685,7 +1054,7 @@ mod tests {
             .unwrap();
         store.upsert_messages("INBOX", &[mail(1, "Old", "Already there", true, 1)]).await.unwrap();
 
-        let push = Push::new(db.clone());
+        let push = new_push(db.clone());
         push.remember_inboxes().await.unwrap();
         let (endpoint, got) = push_service(vec![201, 201]).await;
         subscribe(&push, &endpoint).await;
@@ -718,13 +1087,212 @@ mod tests {
         assert_eq!(note["title"], "Claire Dubois");
         assert_eq!(note["body"], "Kick-off planning");
         assert_eq!(note["url"], format!("/mail?account={account}&folder=INBOX&uid=2"));
+        // Its buttons, and what they act on.
+        assert_eq!(note["actions"][0], serde_json::json!({"action": "archive", "title": "Archive"}));
+        assert_eq!(note["actions"][1]["action"], "read");
+        assert_eq!(
+            note["data"],
+            serde_json::json!({"kind": "mail", "account": account, "folder": "INBOX", "uid": 2})
+        );
         assert!(push.devices(Some(&endpoint)).await.unwrap()[0].last_ok_at.is_some());
+    }
+
+    #[test]
+    fn each_notification_has_its_buttons() {
+        let names = |n: &Notification| n.actions.iter().map(|b| b.action.clone()).collect::<Vec<_>>();
+        let task = task_notification(7, "Call Thomas");
+        assert_eq!(names(&task), ["done", "snooze-60"]);
+        assert_eq!(task.actions[1].title, "In 1 hour");
+        assert_eq!(task.data, Some(Target::Task { task: 7 }));
+        assert!(task.renotify);
+
+        let when = When { start: 1_791_230_400, all_day: false, tz: chrono_tz::Tz::UTC };
+        let online = event_notification(4, "Kick-off", &when, "", Some("https://meet.example/abc"));
+        assert_eq!(names(&online), ["join", "snooze-10"]);
+        assert_eq!(online.join_url.as_deref(), Some("https://meet.example/abc"));
+        assert_eq!(online.data, Some(Target::Event { event: 4, start: 1_791_230_400 }));
+        // No link, or not a web page: no *Join*.
+        for link in [None, Some("javascript:alert(1)"), Some("http://meet.example/abc")] {
+            let note = event_notification(4, "Kick-off", &when, "", link);
+            assert_eq!(names(&note), ["snooze-5", "snooze-10"]);
+            assert_eq!(note.join_url, None);
+        }
+
+        let mail: Vec<(i64, String, String)> =
+            (1..=5).map(|i| (i, "Claire".to_owned(), "s".to_owned())).collect();
+        let summary = &mail_notifications(1, "INBOX", &mail, true)[0];
+        assert_eq!(names(summary), ["read"]);
+        assert_eq!(summary.actions[0].title, "Mark all as read");
+        assert_eq!(
+            summary.data,
+            Some(Target::Inbox { account: 1, folder: "INBOX".into(), uids: vec![1, 2, 3, 4, 5] })
+        );
+
+        // Without buttons, the JSON stays as it was.
+        let plain =
+            Notification { title: "t".into(), url: "/".into(), tag: "x".into(), ..Default::default() };
+        let json = serde_json::to_value(&plain).unwrap();
+        assert_eq!(json, serde_json::json!({"title": "t", "body": "", "url": "/", "tag": "x"}));
+    }
+
+    #[tokio::test]
+    async fn mail_buttons_only_act_on_mail_still_there() {
+        let db = Database::in_memory().await.unwrap();
+        let account = db.insert_account(&new_account("me@x.test")).await.unwrap().id;
+        let store = db.store(account);
+        store.replace_folders(&[folder("INBOX", FolderRole::Inbox)]).await.unwrap();
+        store
+            .upsert_messages("INBOX", &[mail(1, "A", "a", true, 0), mail(3, "C", "c", true, 0)])
+            .await
+            .unwrap();
+        let push = new_push(db);
+        let one = |uid| Target::Mail { account, folder: "INBOX".into(), uid };
+        assert_eq!(push.still_there(&one(1)).await.unwrap(), one(1));
+        assert!(push.still_there(&one(2)).await.is_err(), "archived elsewhere since");
+        let all = Target::Inbox { account, folder: "INBOX".into(), uids: vec![1, 2, 3] };
+        assert_eq!(
+            push.still_there(&all).await.unwrap(),
+            Target::Inbox { account, folder: "INBOX".into(), uids: vec![1, 3] }
+        );
+        let none = Target::Inbox { account, folder: "INBOX".into(), uids: vec![2] };
+        assert!(push.still_there(&none).await.is_err());
+        assert_eq!(push.still_there(&Target::Task { task: 9 }).await.unwrap(), Target::Task { task: 9 });
+    }
+
+    #[tokio::test]
+    async fn snoozed_reminders_come_back_once_after_their_time() {
+        let db = Database::in_memory().await.unwrap();
+        let list: i64 =
+            sqlx::query_scalar("SELECT id FROM task_lists LIMIT 1").fetch_one(&db.pool()).await.unwrap();
+        let task: i64 = sqlx::query_scalar(
+            "INSERT INTO tasks (list_id, remote_id, title, updated_at) VALUES (?, 'r1', 'Call Thomas', 0) RETURNING id",
+        )
+        .bind(list)
+        .fetch_one(&db.pool())
+        .await
+        .unwrap();
+        let calendar: i64 =
+            sqlx::query_scalar("SELECT id FROM calendars LIMIT 1").fetch_one(&db.pool()).await.unwrap();
+        let event = db
+            .agenda()
+            .save_event(
+                calendar,
+                &crate::agenda::RemoteEvent {
+                    remote_id: "e1".into(),
+                    title: "Kick-off".into(),
+                    start: 1_791_230_400,
+                    end: 1_791_234_000,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let (tx, mut rx) = broadcast::channel(16);
+        let push = Push::new(db.clone(), tx);
+
+        push.snooze(&Target::Task { task }, 60).await.unwrap();
+        push.snooze(&Target::Event { event: event.id, start: event.start }, 10).await.unwrap();
+        // Only reminders, and only things that exist.
+        assert!(push.snooze(&Target::Task { task: 999 }, 10).await.is_err());
+        assert!(push.snooze(&Target::Mail { account: 1, folder: "INBOX".into(), uid: 1 }, 10).await.is_err());
+
+        let t = now();
+        push.ring_snoozed(t + 5 * 60).await.unwrap();
+        assert!(rx.try_recv().is_err(), "not yet");
+        push.ring_snoozed(t + 10 * 60).await.unwrap();
+        match rx.try_recv().unwrap().event {
+            SyncEvent::EventReminder { event: id, title, start, .. } => {
+                assert_eq!((id, title.as_str(), start), (event.id, "Kick-off", event.start));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(rx.try_recv().is_err(), "the task's hour isn't over");
+        push.ring_snoozed(t + 10 * 60).await.unwrap();
+        assert!(rx.try_recv().is_err(), "once");
+
+        // Done in the meantime: nothing to remind.
+        sqlx::query("UPDATE tasks SET done_at = 1 WHERE id = ?")
+            .bind(task)
+            .execute(&db.pool())
+            .await
+            .unwrap();
+        push.ring_snoozed(t + 61 * 60).await.unwrap();
+        assert!(rx.try_recv().is_err());
+        let left: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM push_snoozed").fetch_one(&db.pool()).await.unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[tokio::test]
+    async fn a_new_invitation_takes_the_place_of_its_email() {
+        let db = Database::in_memory().await.unwrap();
+        sqlx::query("UPDATE agenda_settings SET time_zone = 'Europe/Paris'")
+            .execute(&db.pool())
+            .await
+            .unwrap();
+        // The invitation is for mael@example.net, from Claire.
+        let account = db.insert_account(&new_account("mael@example.net")).await.unwrap().id;
+        let store = db.store(account);
+        store.replace_folders(&[folder("INBOX", FolderRole::Inbox)]).await.unwrap();
+        let push = new_push(db.clone());
+        push.remember_inboxes().await.unwrap();
+        let (endpoint, got) = push_service(vec![201, 201, 201]).await;
+        subscribe(&push, &endpoint).await;
+
+        // 1. Its headers arrive: an email notification.
+        store
+            .upsert_messages(
+                "INBOX",
+                &[mail(5, "Claire Dubois", "Kick-off", true, 0), mail(6, "Thomas", "Hi", true, 0)],
+            )
+            .await
+            .unwrap();
+        push.on_event(&inbox_event(account)).await.unwrap();
+        assert_eq!(got.lock().unwrap().len(), 2);
+        // 2. Their bodies are read: one is an invitation.
+        let invite = include_bytes!("../mail/testdata/5-invitation.eml");
+        store.store_body("INBOX", 5, invite).await.unwrap();
+        store.store_body("INBOX", 6, b"Subject: Hi\r\n\r\nJust a note.\r\n").await.unwrap();
+        push.on_event(&inbox_event(account)).await.unwrap();
+        push.on_event(&inbox_event(account)).await.unwrap(); // once
+        let requests = got.lock().unwrap().clone();
+        assert_eq!(requests.len(), 3, "the invitation, and nothing for the plain email");
+        let note = shown(&requests[2].1);
+        assert_eq!(note["title"], "Invitation: Kick-off atelier Lyon");
+        assert_eq!(note["body"], "Tue 20 Oct, 10:00 · from Claire Dubois");
+        assert_eq!(note["tag"], format!("havre-mail-{account}-5"), "replaces the email's notification");
+        assert_eq!(note["actions"][0]["action"], "accept");
+        assert_eq!(note["actions"][1]["action"], "decline");
+        assert_eq!(note["data"]["kind"], "invitation");
+        assert_eq!(note["data"]["uid"], 5);
+    }
+
+    #[tokio::test]
+    async fn invitations_follow_their_setting_and_skip_your_own() {
+        let db = Database::in_memory().await.unwrap();
+        // This time the organizer is you: nothing to answer.
+        let account = db.insert_account(&new_account("claire@example.org")).await.unwrap().id;
+        let store = db.store(account);
+        store.replace_folders(&[folder("INBOX", FolderRole::Inbox)]).await.unwrap();
+        let push = new_push(db.clone());
+        push.remember_inboxes().await.unwrap();
+        push.update_settings(&PushSettingsUpdate { new_mail: Some(false), ..Default::default() })
+            .await
+            .unwrap();
+        let (endpoint, got) = push_service(vec![201]).await;
+        subscribe(&push, &endpoint).await;
+        store.upsert_messages("INBOX", &[mail(5, "Claire", "Kick-off", true, 0)]).await.unwrap();
+        push.on_event(&inbox_event(account)).await.unwrap();
+        store.store_body("INBOX", 5, include_bytes!("../mail/testdata/5-invitation.eml")).await.unwrap();
+        push.on_event(&inbox_event(account)).await.unwrap();
+        assert!(got.lock().unwrap().is_empty(), "new mail off, and your own meeting");
+        assert!(push.settings().await.unwrap().invitations, "on by default");
     }
 
     #[tokio::test]
     async fn reminders_follow_the_setting() {
         let db = Database::in_memory().await.unwrap();
-        let push = Push::new(db);
+        let push = new_push(db);
         let (endpoint, got) = push_service(vec![201]).await;
         subscribe(&push, &endpoint).await;
         let ring =
@@ -742,7 +1310,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_scheduled_message_is_pushed() {
         let db = Database::in_memory().await.unwrap();
-        let push = Push::new(db);
+        let push = new_push(db);
         let (endpoint, got) = push_service(vec![201]).await;
         subscribe(&push, &endpoint).await;
         let outbox = |sent: bool, error: Option<&str>| AccountEvent {
@@ -769,10 +1337,10 @@ mod tests {
     #[tokio::test]
     async fn a_device_in_front_gets_nothing_and_a_gone_one_is_removed() {
         let db = Database::in_memory().await.unwrap();
-        let push = Push::new(db);
+        let push = new_push(db);
         let (endpoint, got) = push_service(vec![410]).await;
         subscribe(&push, &endpoint).await;
-        let note = Notification { title: "t".into(), body: "b".into(), url: "/".into(), tag: "x".into() };
+        let note = Notification { title: "t".into(), url: "/".into(), tag: "x".into(), ..Default::default() };
 
         push.seen(&endpoint);
         assert_eq!(push.notify(&note).await.unwrap(), 0);
@@ -787,9 +1355,9 @@ mod tests {
     #[tokio::test]
     async fn keeps_one_vapid_key_and_checks_subscriptions() {
         let db = Database::in_memory().await.unwrap();
-        let first = Push::new(db.clone()).public_key().await.unwrap();
-        assert_eq!(Push::new(db.clone()).public_key().await.unwrap(), first, "saved, encrypted, and reused");
-        let push = Push::new(db);
+        let first = new_push(db.clone()).public_key().await.unwrap();
+        assert_eq!(new_push(db.clone()).public_key().await.unwrap(), first, "saved, encrypted, and reused");
+        let push = new_push(db);
         let bad = |endpoint: &str, p256dh: &str| NewSubscription {
             endpoint: endpoint.into(),
             keys: SubscriptionKeys { p256dh: p256dh.into(), auth: AUTH.into() },
@@ -807,7 +1375,7 @@ mod tests {
             .execute(&db.pool())
             .await
             .unwrap();
-        let push = Push::new(db);
+        let push = new_push(db);
         let (endpoint, got) = push_service(vec![201]).await;
         subscribe(&push, &endpoint).await;
         let ring = AccountEvent {

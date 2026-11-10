@@ -213,7 +213,8 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - ✅ In the other apps: *All files from …* in People, *An earlier version came … · Compare in Files* under an email's
   attachments, a Files section in Ctrl+K. Without the app, none of it shows and nothing is read in the background.
 - Later: the assistant finding files (a `search_files` tool), files from Agenda invitations, attaching a file from
-  Files when writing an email, previews for PDFs.
+  Files when writing an email, previewing files (PDFs, text, audio and video) in Files and under an email's
+  attachments.
 - *Learned:* SQL over JSON with `json_each` (one row per attachment), a partial index (`WHERE files IS NOT NULL`),
   grouping in Rust with a `HashMap` keyed by a tuple, `LIMIT -1` in SQLite, background work that only keeps what it
   needs.
@@ -316,7 +317,8 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
   removes the device.
 - ✅ Tested with a pretend push service (headers, decrypting what it received, 410), and in Chromium (manifest,
   service worker, its push and click handlers).
-- Later: notification buttons (Archive, Mark as read), agenda reminders, new invitations.
+- Later: ~~notification buttons (Archive, Mark as read)~~, ~~agenda reminders~~ (step 21), ~~new invitations~~
+  (step 26).
 - *Learned:* elliptic-curve Diffie–Hellman, HKDF, AES-GCM and ECDSA in practice, JWTs, testing against an RFC's
   example; `OnceCell`; service workers, the Push and Notifications APIs, web app manifests.
 
@@ -417,3 +419,24 @@ Every screen rebuilt to the design (dock, Today, Mail, Agenda, Apps, Settings, t
 - *Learned:* allowlist sanitizing on the server, walking HTML to write text, one source of truth with a derived
   form, how an editor's schema limits what it can produce, lazy-loaded components, Vue's single-root rule for
   `class` and scoped styles.
+
+## 26 · Notifications that act ✅
+- ✅ Buttons on push notifications, done on the server without opening Havre: *Archive* / *Mark as read* (new
+  mail), *Mark all as read* (several), *Done* / *In 1 hour* (tasks), *Join* or *In 5 / 10 min* (events), *Accept* /
+  *Decline* (invitations). Chrome, Edge and Android show them; Safari and Firefox don't (tapping still works).
+- ✅ `push/actions.rs`: a notification carries its buttons and a `Target` (a `serde` tagged enum: the email, task,
+  event or invitation); `POST /api/push/action` takes them back from the service worker with the session cookie.
+  The server only knows Havre's buttons (`Action::parse`), refuses a button on the wrong target (`check`), checks the
+  email is still there, then uses the app's own functions (archive, flags, `set_done`, `invitations::respond`).
+- ✅ Invitations: new mail is watched until its body is read; an invitation (read from Havre's copy, not the mail
+  server) replaces the email's notification (the same tag). Not your own meetings, cancellations or updates you
+  already answered. A switch in Settings › Notifications (migration `0027`).
+- ✅ Snoozing: a `push_snoozed` row; every 30 s the due ones are deleted, then announced again on the event channel,
+  so the reminder rings everywhere a reminder rings (push, the open page, Desktop), once, unless the task is done.
+- ✅ Tested: names and targets (unknown buttons, wrong pairs, the JSON), each notification's buttons, *Join* only for
+  `https`, snoozes coming back once and not for a done task, an invitation replacing its email (and not for your own
+  meeting), mail buttons only on mail still there; in Chromium the service worker's own handlers (buttons shown,
+  *Done* ticking the task, snoozing, a missing email, a wrong or unknown button, *Join*, signed out), the settings.
+- Later: buttons on Havre Desktop's notifications, replying from a notification, choosing the buttons.
+- *Learned:* notification actions and `notificationclick`, a small action API that never trusts its payload, `serde`
+  tagged enums, matching on a pair, "once for every device" with a table, a notification replacing another (tags).

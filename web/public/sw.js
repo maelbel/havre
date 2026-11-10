@@ -3,7 +3,10 @@
 //
 // 1. Push notifications: the server sends an encrypted message through the
 //    phone's push service; the browser decrypts it and gives it here as JSON
-//    `{title, body, url, tag}`; we show it, and open `url` when it's tapped.
+//    `{title, body, url, tag, actions?, data?, join_url?, renotify?}`; we show
+//    it, and open `url` when it's tapped. Its buttons (`actions`: Archive,
+//    Done, In 10 min…) call the server without opening Havre. Chrome, Edge and
+//    Android show buttons; Safari and Firefox don't (tapping still works).
 // 2. A small "Havre can't be reached" page when opening Havre offline.
 //
 // It caches nothing else: your mail, events and notes are never stored in
@@ -39,7 +42,7 @@ self.addEventListener('fetch', (event) => {
 })
 
 self.addEventListener('push', (event) => {
-  let note = { title: 'Havre', body: '', url: '/', tag: undefined }
+  let note = { title: 'Havre', body: '', url: '/', tag: undefined, actions: [], data: null, join_url: null, renotify: false }
   try {
     note = { ...note, ...event.data.json() }
   } catch {
@@ -50,13 +53,64 @@ self.addEventListener('push', (event) => {
       body: note.body,
       tag: note.tag,
       icon: '/icon-192.png',
-      data: { url: note.url },
+      actions: note.actions || [],
+      // `renotify` without a tag is an error: only with one.
+      renotify: Boolean(note.renotify && note.tag),
+      data: { url: note.url, target: note.data, joinUrl: note.join_url },
     }),
   )
 })
 
+// What a button failed to do, in words ("Couldn't archive").
+const VERBS = {
+  archive: 'archive',
+  read: 'mark as read',
+  done: 'tick the task',
+  accept: 'accept',
+  decline: 'decline',
+}
+
+/** A button: done on the server, without opening Havre. */
+async function act(notification, action) {
+  const { url, target, joinUrl } = notification.data || {}
+  // Join an online meeting: its page, nothing to ask the server.
+  if (action === 'join') {
+    if (joinUrl?.startsWith('https://')) await self.clients.openWindow(joinUrl)
+    return
+  }
+  let error = null
+  try {
+    // The session cookie goes with it: the server knows it's you.
+    const response = await fetch('/api/push/action', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, target }),
+    })
+    if (response.status === 401) error = 'Sign in to Havre again.'
+    else if (!response.ok) error = (await response.json().catch(() => null))?.error || 'Havre answered with an error.'
+  } catch {
+    error = "Havre can't be reached."
+  }
+  if (error) {
+    const verb = VERBS[action] || (action.startsWith('snooze-') ? 'remind you later' : 'do that')
+    // Tapping it opens what it was about.
+    await self.registration.showNotification(`Couldn't ${verb}`, {
+      body: `${error} Tap to open.`,
+      tag: notification.tag || undefined,
+      icon: '/icon-192.png',
+      data: { url },
+    })
+  }
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
+  // A button (`event.action` is its name), not the notification itself.
+  if (event.action) {
+    event.waitUntil(act(event.notification, event.action))
+    return
+  }
   const url = new URL(event.notification.data?.url || '/', self.location.origin).href
   event.waitUntil(
     (async () => {

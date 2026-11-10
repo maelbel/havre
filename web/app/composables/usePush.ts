@@ -20,6 +20,7 @@ export interface PushSettings {
   mail_details: boolean
   reminders: boolean
   event_reminders: boolean
+  invitations: boolean
 }
 
 /** Can this browser get push notifications? (Not Havre Desktop, not plain HTTP.) */
