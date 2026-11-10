@@ -129,7 +129,10 @@ function since(seconds: number) {
     <article v-if="settings" class="card">
       <div class="info">
         <strong>What to send</strong>
-        <span class="faint">To every device below.</span>
+        <span class="faint">
+          To every device below. Buttons (Archive, Done, In 10 min, Accept…) show on Chrome, Edge and Android; on
+          Safari and Firefox, tap the notification instead.
+        </span>
       </div>
       <USwitch
         :model-value="settings.new_mail"
@@ -144,6 +147,12 @@ function since(seconds: number) {
         description="Off: just “New email”, for a lock screen others can see."
         class="indent"
         @update:model-value="(v) => change({ mail_details: v })"
+      />
+      <USwitch
+        :model-value="settings.invitations"
+        label="Invitations"
+        description="A meeting invitation in your inbox, with Accept and Decline."
+        @update:model-value="(v) => change({ invitations: v })"
       />
       <USwitch
         :model-value="settings.event_reminders"
