@@ -11,6 +11,9 @@ All notable changes to Havre are listed here. The format follows
 - **Notifications that act**: buttons on push notifications, without opening Havre: *Archive* and *Mark as read*
   on new mail (*Mark all as read* on several), *Done* and *In 1 hour* on task reminders, *Join* or *In 5/10 min* on
   event reminders. Shown by Chrome, Edge and Android.
+- **The assistant organizes your mail, with your click**: it prepares archiving, moving, trashing, marking read or
+  unread and starring the emails it found, answers to invitations, and changes to a passage of a note; you see what
+  each card touches, nothing happens before **Confirm**, and mail actions can be undone.
 - **File previews**: PDFs (pages, zoom), text files, audio and video players, and larger images, in Mail (tap an
   attachment) and in Files (the pane, and *Open*). Shown by the page itself: attachments are still never served for
   display.
