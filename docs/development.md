@@ -45,7 +45,7 @@ Before committing:
 
 ```sh
 cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
-cd web && pnpm typecheck && pnpm build
+cd web && pnpm typecheck && pnpm test && pnpm build
 ```
 
 **Reading mail** has a snapshot test: the sample emails in `crates/core/src/mail/testdata/` go through every
@@ -147,3 +147,13 @@ Read in this order — each file is short and commented:
 Good first exercises: add a `--unread` flag to `mail list`; show the number
 of unread messages next to each folder (IMAP `STATUS`); add `mail archive <uid>`
 to the CLI (the core function already exists).
+
+## Previewing attachments
+
+Attachments are strangers' files, so the server never serves them for display (only common images): everything
+else is `Content-Disposition: attachment` with `Content-Security-Policy: sandbox`. Previews (`FilePreview.vue`) keep
+that rule by fetching the bytes and showing them in the page: text through Vue's escaping (`decodeText`), audio and
+video from a `blob:` URL released on close, PDFs drawn on `<canvas>` by pdf.js (`PdfPages.vue`, its legacy build,
+lazy-loaded with its worker). pdf.js's fonts, image decoders and character maps are copied from `pdfjs-dist` into
+`/pdfjs/` at build time (`nitro.publicAssets`), so nothing is fetched from elsewhere. Which files get a preview:
+`app/utils/preview.ts`, tested with Node's test runner (`pnpm test`, files in `web/tests/`).

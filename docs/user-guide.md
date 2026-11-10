@@ -82,6 +82,9 @@ and folders are listed directly.
 - On a wide screen, the sender's card sits beside the message: your next
   meetings with them, your other conversations and the files they sent, with
   *Email*, *Schedule* (a new event with them as guest) and *Profile*.
+- **Attachments**: tap a PDF, a text file, audio, video or an image to see it
+  (see [Previews](#previews)); the arrow beside it downloads it. Others
+  download when tapped.
 
 ### Organizing mail
 
@@ -482,11 +485,28 @@ presentations, images, archives) and the people who send you the most.
 - **Versions:** `devis.pdf`, `devis-v2.pdf` and `devis final.pdf` are linked
   under *Other versions* (Havre leaves out `v2`, `final`, `draft`, `copy`,
   `(1)`… when it compares names).
-- **Open a file** to see where it came from, a preview for images, *Download*
-  (`D`) and *Open the email* (`O`). `/` searches by name, sender or subject.
+- **Open a file** to see where it came from, a preview (see *Previews* below),
+  *Download* (`D`) and *Open the email* (`O`). **Open** shows the preview
+  larger. `/` searches by name, sender or subject.
 - **In the other apps:** People links to *All files from …*; under an
   email's attachments, Mail says when an earlier or newer version came, with
   *Compare in Files*; Ctrl+K finds files by name.
+
+### Previews
+
+In Mail, tap an attachment to see it (the arrow beside it downloads it); in
+Files, the pane shows it and **Open** shows it larger. `Esc` closes it; on a
+phone it fills the screen.
+
+- **PDFs**: the pages, drawn as you scroll, the page you're on (*3 / 12*),
+  zoom in and out, *Fit width*.
+- **Text** (`.txt`, `.csv`, `.md`, `.json`, `.log`, `.xml`, `.ics`, `.vcf`…):
+  as plain text; long files show their first 1 MB.
+- **Audio** and **video** (MP3, M4A, OGG, WAV, WebM, MP4…): a player, when
+  your browser can play that format.
+- **Images**: larger.
+- Word, Excel, PowerPoint, archives, HTML and SVG files, and anything above
+  25 MB: download only.
 
 **Where files live.** On your mail server, where they already are. Havre
 keeps only the list (name, kind, size, which email) and fetches a file when
@@ -764,3 +784,6 @@ to make Havre your mail app: [desktop/README.md](../desktop/README.md).
   *Load images*.
 - Attachments are always downloaded, never opened inside Havre — except
   plain images — so a malicious `.html` attachment can't run in your session.
+  Previews keep this: the page fetches the file and shows it itself (text as
+  text, audio and video from memory, PDFs drawn by pdf.js, which ignores a
+  PDF's scripts and forms); HTML and SVG files are never previewed.
