@@ -45,7 +45,11 @@ Each step teaches something and leaves the app working.
 - ✅ Local copy kept in sync (5 min, live updates); Havre's own local calendar.
 - ✅ `.ics` invitations detected in mail → "Add to Agenda".
 - ✅ Reply to invitations (accept / maybe / decline) and a shared People list with Mail: see step 5.
-- Later: drag to move, reminders. (Repeating events: step 16.)
+- Later: ~~drag to move, reminders~~ (step 21). (Repeating events: step 16.)
+- Later: **import into Havre's own calendar**, to keep your agenda local: copy the events of the calendars Havre
+  can manage (Microsoft, Google, CalDAV) or of an `.ics` file into it, choosing how: which calendars, how far back
+  and ahead, a one-time copy or kept in step, what to do with duplicates, and whether repeating events, reminders,
+  guests and online-meeting links come along.
 - *Learned:* REST APIs, WebDAV/XML, iCalendar and `RRULE` expansion, time zones.
 
 ## 5 · App platform ✅
