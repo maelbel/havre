@@ -7,9 +7,10 @@
 **Your mail, calendars and everyday apps — self-hosted, private, and working together.**
 
 [![CI](https://github.com/maelbel/havre/actions/workflows/ci.yml/badge.svg)](https://github.com/maelbel/havre/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/maelbel/havre?sort=semver)](https://github.com/maelbel/havre/releases/latest)
+[![Docker image](https://img.shields.io/badge/docker-ghcr.io%2Fmaelbel%2Fhavre-2496ED.svg?logo=docker&logoColor=white)](docs/installation.md#with-the-ready-made-image)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2024-orange.svg?logo=rust)](https://www.rust-lang.org)
-![Status](https://img.shields.io/badge/status-early%20development-yellow.svg)
 
 [Installation](docs/installation.md) · [User guide](docs/user-guide.md) · [Roadmap](docs/ROADMAP.md) ·
 [Contributing](CONTRIBUTING.md)
@@ -28,9 +29,21 @@ calm interface, and lets the apps share what they know: the people you write to,
 exchange. It runs on your own server as a single Rust binary with a SQLite database, talks directly to your mail and
 calendar providers, and loads nothing from third-party servers.
 
-> [!WARNING]
-> Havre is in early development (0.x) and has no release yet. It is usable day to day, but expect changes — and keep
-> backups (Havre makes nightly ones for you).
+> [!NOTE]
+> Havre is young (0.x). It is used day to day, but things still change between releases: read the
+> [changelog](CHANGELOG.md) before updating, and keep backups (Havre makes nightly ones for you). Grab the
+> [latest release](https://github.com/maelbel/havre/releases/latest).
+
+### Why Havre
+
+- **Yours, end to end** — one Rust binary and one SQLite file on your own machine; it talks straight to your mail
+  and calendar providers and loads nothing from third-party servers. Credentials are encrypted at rest.
+- **Apps that know each other** — a person links to your mail with them, your meetings, notes, tasks and files;
+  an invitation is answered from Mail; a note becomes tasks.
+- **Calm by design** — one inbox for every account, one agenda for every calendar, a Today page, and Ctrl+K to
+  reach anything.
+- **AI if you want it, never in charge** — off unless you add it, local with Ollama if you prefer, and it only
+  *proposes*: nothing is sent, created or deleted without your click.
 
 ## Features
 
@@ -60,7 +73,8 @@ calendar providers, and loads nothing from third-party servers.
   - Only *proposes* actions: nothing is sent, created or changed without your confirmation
 - **Made for self-hosting**
   - Docker image, nightly backups with a recovery key, credentials encrypted at rest
-  - Havre Desktop for Windows, macOS and Linux (tray, notifications, default mail app)
+  - Havre Desktop for Windows, macOS and Linux (tray, notifications, default mail app), and an installable web
+    app for your phone with push notifications
   - An [MCP](https://modelcontextprotocol.io) endpoint so AI tools can use your data, with your permission
   - A Ctrl+K command palette, keyboard shortcuts, dark and light themes
 
@@ -104,6 +118,23 @@ Building from source, configuration, HTTPS and backups are covered in the [insta
 - [Havre Desktop](desktop/README.md) — installers, notifications, default mail app
 - [Development](docs/development.md) — code layout, local development, learning Rust with the codebase
 
+## Architecture
+
+```
+  Browser / phone (PWA)        Havre Desktop (Tauri)        AI tools (MCP clients)
+            └──────────────────────────┼─────────────────────────────┘
+                                       ▼
+              havre (Axum): JSON API /api · MCP /mcp · the Nuxt UI
+                                       ▼
+              havre-core: sync engines, agenda, people, tasks, notes, files, AI
+                 │                                │
+                 ▼                                ▼
+          SQLite (one file)        IMAP / SMTP · Microsoft Graph · Google · CalDAV
+```
+
+The server only parses requests; all the logic lives in `havre-core`, plain Rust with no HTTP. The code is written
+to be read by someone learning Rust — see [Development](docs/development.md).
+
 ## Built with
 
 [Rust](https://www.rust-lang.org) · [Axum](https://github.com/tokio-rs/axum) · [Tokio](https://tokio.rs) ·
@@ -112,8 +143,9 @@ Building from source, configuration, HTTPS and backups are covered in the [insta
 
 ## Roadmap
 
-Mail, Agenda, People, Today, Tasks, Notes, Files, AI, Havre Desktop and off-site backups are built. See the
-full [roadmap](docs/ROADMAP.md) for the rest.
+Mail, Agenda, People, Today, Tasks, Notes, Files, AI, Havre Desktop and off-site backups are built. Next up:
+**several users on one Havre** — every piece of data already has an owner; adding family members and signing in
+with Authentik (OpenID Connect) come next. See the full [roadmap](docs/ROADMAP.md).
 
 ## Contributing
 
