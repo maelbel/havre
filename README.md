@@ -17,7 +17,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/screenshots/mail-light.webp">
-  <img src="docs/assets/screenshots/mail-dark.webp" alt="Havre Mail: the inbox, grouped by day, with a message open">
+  <img src="docs/assets/screenshots/mail-dark.webp" alt="Havre Mail: the inbox, grouped by day, with a meeting invitation open">
 </picture>
 
 </div>
@@ -82,16 +82,38 @@ calendar providers, and loads nothing from third-party servers.
 
 <table>
   <tr>
-    <td width="33%"><img src="docs/assets/screenshots/agenda.webp" alt="Agenda: the week view with events from several calendars"></td>
-    <td width="33%"><img src="docs/assets/screenshots/today.webp" alt="Today: the day's overview and unread mail"></td>
-    <td width="33%"><img src="docs/assets/screenshots/command-palette.webp" alt="Ctrl+K: people, tasks and mail found as you type"></td>
+    <td width="33%"><img src="docs/assets/screenshots/today.webp" alt="Today: the day's meetings, a short brief, tasks due and unread mail"></td>
+    <td width="33%"><img src="docs/assets/screenshots/agenda.webp" alt="Agenda: the week view, with an invitation found in mail"></td>
+    <td width="33%"><img src="docs/assets/screenshots/people.webp" alt="People: a contact's page with your mail, files, tasks and notes together"></td>
   </tr>
   <tr>
-    <td align="center"><sub>Agenda</sub></td>
     <td align="center"><sub>Today</sub></td>
+    <td align="center"><sub>Agenda</sub></td>
+    <td align="center"><sub>People</sub></td>
+  </tr>
+  <tr>
+    <td width="33%"><img src="docs/assets/screenshots/tasks.webp" alt="Tasks: upcoming to-dos with dates and the people they are about"></td>
+    <td width="33%"><img src="docs/assets/screenshots/notes.webp" alt="Notes: a Markdown note for a meeting, with to-dos that become tasks"></td>
+    <td width="33%"><img src="docs/assets/screenshots/files.webp" alt="Files: every attachment from your mail, versions grouped, with a preview"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Tasks</sub></td>
+    <td align="center"><sub>Notes</sub></td>
+    <td align="center"><sub>Files</sub></td>
+  </tr>
+  <tr>
+    <td width="33%"><img src="docs/assets/screenshots/command-palette.webp" alt="Ctrl+K: people, notes, files and mail found as you type"></td>
+    <td width="33%"><img src="docs/assets/screenshots/ai.webp" alt="AI: the assistant answers from your notes and tasks and prepares actions you confirm"></td>
+    <td width="33%" align="center"><img src="docs/assets/screenshots/phone.webp" alt="Havre on a phone: the Today page as an installed web app" width="62%"></td>
+  </tr>
+  <tr>
     <td align="center"><sub>Ctrl+K</sub></td>
+    <td align="center"><sub>AI, with your click</sub></td>
+    <td align="center"><sub>On your phone</sub></td>
   </tr>
 </table>
+
+<sub>Screenshots use made-up people and data.</sub>
 
 ## Getting started
 
